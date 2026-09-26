@@ -956,3 +956,30 @@ The failure drill (kill the webhook → the defaults path → detected in ≤ 23
 - Transfer-target mustache (the review refuted the concern; still verify)
 - Whether the fraud prefix plays on inbound calls
 - Shared-tool creation via the API for transfer and hangup (fallback: the Portal)
+
+---
+
+## 18. Probe results (2026-09-26): evidence that resolves §17
+
+Sources: `noc-probe` logs (`research/probe/run1.jsonl`), Telnyx conversation transcripts (5 web calls + 1 chat), canary experiments. Each row has two independent witnesses.
+
+| # | Question | Result | Design consequence |
+|---|---|---|---|
+| P0-1 | Credit | $5.00 start → $4.78 after all Plan 0 coding (GLM-5.3-Flash); Kimi-K3 reserved | Flash is the default implementer |
+| P0-2a | Ingress (#12), cold start | Routed (`x-envoy-upstream-service-time`); DV 839 ms first call, 9-11 ms warm | §5.5: `timeout_ms = 2500` is safe; keep-warm stays |
+| P0-2b | Which env carries KV | **Both** imported env and fetch-arg env (`kvViaImported ok`, `kvViaFetchArg ok`) | Either works; keep the imported `env` |
+| P0-2c | `/health/*` | **Intercepted by the platform** (plain `ok`, our handler never runs) | Use `/ops/*` for our own health checks |
+| P0-2d | Unhandled rejection | Survived (`unhandled_caught` logged, same instance) | `deadline()` discipline still required, not fatal |
+| P0-2e | **Actors** | ❌ Every `ProbeActor` RPC: ~30 s then `502 bad gateway`. The stock `Counter` works on the same account, even with the MCP SDK (3.18 MB) and KV. Actor types are **account-scoped** (a 2nd function declaring the same type becomes a `reference` binder). A reference binder holding a `[[secrets]]` binding calls the owner's actor fine. | **Topology change:** a binding-free actor-owner function `noc-actors` (classes only) plus `noc-edge` as a **reference binder** holding KV, secrets, routes and MCP. Least privilege: actor processes get no secrets. Root cause bisection continues (DEBUGLOG #4). |
+| P0-3a | DV on web calls; conversation-id key | Fires (3/5 calls; 2/5 never arrived → defaults worked). Key `data.payload.telnyx_conversation_id`; also `call_control_id`, `call_session_id`, `rtc_*`; channel reports `phone_call`; web caller is a SIP URI; Ed25519 (raw 32-byte base64 key) **valid** | §5.1 conversation-id join is direct; defaults path is proven live |
+| P0-3b | Tool-webhook identity | `x-telnyx-call-control-id` header present on sync tool calls; every preset `{{…}}` resolves in the **signed body**, incl. `{{telnyx_conversation_id}}` | §7 identity design confirmed; add `conversation_id` to presets |
+| P0-3c | Tool node running a shared tool NOT in `tool_ids` | Works (webhook and hangup) | §4.1 `tool_ids = [capture_details]` confirmed; hangup is creatable via API |
+| P0-3d | Does `tools_mode:"replace"` hide MCP? | **No.** In chat, `n_word` (replace, `[probe_capture]`) called the MCP tool `echo_probe` instead of its own scoped tool | MCP is visible in every node → authz below the model is the only real control; minimal `allowed_tools`; must-happen actions stay tool nodes |
+| P0-3e | Speak-start expression edges; typing | Fire on voice; string `"3"` ≥ number `3` evaluates **true** (coercion) | `number_literal` usable on DV strings; keep string enums for routing |
+| P0-3f | Turn model | Consecutive speak nodes merge into one utterance; a prompt node speaks immediately on entry; **LLM edges fire on existing history** (a node was skipped because the previous reply satisfied its exit condition); Kimi-K2.6 skips "call tool, then…" compound instructions | LLM conditions must describe the **caller's latest utterance**; prompt instructions are single-purpose; mandatory actions are tool nodes |
+| P0-3g | `store_fields_as_variables` → later speak | Works (the minted `call_key` overwrote the default and was spoken) | `s_confirm` / `s_pin_retry` stay speak nodes |
+| P0-3h | Greeting sentinel with speak start | Works (s_start spoke first) | Keep the sentinel |
+| MCP wire | Client behaviour | Protocol `2025-11-25`; `Accept: application/json, text/event-stream`; Bearer auth; **initialize + initialized + tools/list on every turn** (~10 ms each warm); `_meta.telnyx_conversation_id` on initialize and tools/call; a 5 s tool call succeeded | Stateless server is correct; keep per-request cost minimal |
+| Voice UX | Reading IDs | TTS read a raw 60-char call id → unintelligible | Never speak internal ids; spell ticket ids (§7.2) |
+| API shapes | Read-back | Tools GET nests the per-type body under `tool_definition`; assistant GET returns `tools[]`, not `tool_ids` | `apply.ts` needs per-resource read-back normalisers (false DRIFT otherwise) |
+| Ship | Timing | Build ~3 min; deploy 15-35 min; CLI status monitor times out at 10 min while the function already serves | Budget ship time; verify by revision `ACTIVE` flag, not CLI exit |
