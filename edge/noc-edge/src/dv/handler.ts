@@ -80,6 +80,64 @@ function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
+function defaultVariables(trace_id: string, call_key: string): Record<string, string> {
+  return {
+    msp_name: MSP_NAME,
+    route_hint: "unverified",
+    caller_name: "there",
+    customer_name: KEYLESS_ORG,
+    site_id: "unknown",
+    site_label: KEYLESS_SKETCH,
+    incident_region: "your area",
+    incident_started: "earlier today",
+    incident_summary: "a network incident",
+    incident_eta: "shortly",
+    open_ticket_note: "none",
+    repeat_note: "none",
+    calls_today: "1",
+    trace_id,
+    call_key,
+  };
+}
+
+async function failOpenResponse(
+  deps: DvDeps,
+  started: number,
+  reason: "bad_json" | "no_payload",
+): Promise<Response> {
+  const call_key = crypto.randomUUID();
+  const k = (await sessionKey({ call_key })) as string;
+  const trace_id = traceId(k);
+  const total = deps.now() - started;
+  logEvent("dv.route", {
+    hop: "dv",
+    trace_id,
+    k,
+    route_hint: "unverified",
+    kv_ms: 0,
+    actor_ms: 0,
+    total_ms: total,
+    outcome: "fallback",
+    reason,
+  });
+  if (total > deps.timeoutMs - 200) {
+    logEvent("dv.late", {
+      hop: "dv",
+      trace_id,
+      total_ms: total,
+      outcome: "fallback",
+      fault_injected: false,
+    });
+  }
+  return Response.json(
+    {
+      dynamic_variables: defaultVariables(trace_id, call_key),
+      conversation: { metadata: { trace_id, call_key } },
+    },
+    { status: 200 },
+  );
+}
+
 let keyLogBudget = KEY_LOG_LIMIT;
 
 export async function handleDv(request: Request, deps: DvDeps): Promise<Response> {
@@ -110,21 +168,25 @@ export async function handleDv(request: Request, deps: DvDeps): Promise<Response
   let parsed: unknown;
   try {
     parsed = JSON.parse(raw);
-  } catch (err) {
-    logEvent("error", { hop: "dv", outcome: "error", err: String(err) });
-    return Response.json({ error: "bad_request" }, { status: 400 });
+  } catch {
+    return failOpenResponse(deps, started, "bad_json");
   }
 
   const data = (parsed as { data?: unknown } | null)?.data;
   const dataKeys = data !== null && typeof data === "object" ? Object.keys(data) : [];
-  const payload =
+  const rawPayload =
     data !== null && typeof data === "object"
-      ? ((data as { payload?: unknown }).payload as Record<string, unknown> | undefined)
+      ? (data as { payload?: unknown }).payload
       : undefined;
-  if (payload === undefined || payload === null || typeof payload !== "object") {
-    logEvent("error", { hop: "dv", outcome: "error", reason: "no_payload" });
-    return Response.json({ error: "bad_request" }, { status: 400 });
+  if (
+    rawPayload === undefined ||
+    rawPayload === null ||
+    typeof rawPayload !== "object" ||
+    Array.isArray(rawPayload)
+  ) {
+    return failOpenResponse(deps, started, "no_payload");
   }
+  const payload = rawPayload as Record<string, unknown>;
 
   const convId = usable(payload.telnyx_conversation_id)
     ? payload.telnyx_conversation_id
@@ -241,23 +303,23 @@ export async function handleDv(request: Request, deps: DvDeps): Promise<Response
 
   const hint = routeHint({ sessionWritten, flags, contact, incident });
 
-  const variables: Record<string, string> = {
-    msp_name: MSP_NAME,
-    route_hint: hint,
-    caller_name: str(contact?.name, "there"),
-    customer_name: str(contact?.customer_name, KEYLESS_ORG),
-    site_id: str(contact?.site_id, "unknown"),
-    site_label: str(contact?.site_label, KEYLESS_SKETCH),
-    incident_region: str(incident?.region_label, "your area"),
-    incident_started: str(incident?.started_local, "earlier today"),
-    incident_summary: str(incident?.summary, "a network incident"),
-    incident_eta: str(incident?.eta_local, "shortly"),
-    open_ticket_note: openTicketNote(openTicket === null ? null : { id: openTicket }),
-    repeat_note: repeatNote(callsToday),
-    calls_today: String(callsToday),
-    trace_id,
-    call_key,
-  };
+  const variables: Record<string, string> = defaultVariables(trace_id, call_key);
+  variables.route_hint = hint;
+  if (contact !== null) {
+    variables.caller_name = str(contact.name, "there");
+    variables.customer_name = str(contact.customer_name, KEYLESS_ORG);
+    variables.site_id = str(contact.site_id, "unknown");
+    variables.site_label = str(contact.site_label, KEYLESS_SKETCH);
+  }
+  if (incident !== null) {
+    variables.incident_region = str(incident.region_label, "your area");
+    variables.incident_started = str(incident.started_local, "earlier today");
+    variables.incident_summary = str(incident.summary, "a network incident");
+    variables.incident_eta = str(incident.eta_local, "shortly");
+  }
+  variables.open_ticket_note = openTicketNote(openTicket === null ? null : { id: openTicket });
+  variables.repeat_note = repeatNote(callsToday);
+  variables.calls_today = String(callsToday);
 
   let faultInjected = false;
   const delayMs = flags.fault_dv_delay_ms;

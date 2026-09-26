@@ -371,11 +371,63 @@ describe("handleDv", () => {
     expect(eventsWith("dv.late")).toHaveLength(0);
   });
 
-  it("returns 400 for an unparsable body", async () => {
+  it("fails open with safe defaults on unparsable JSON", async () => {
     const keys = await makeKeys();
+    const kv = new FakeKv();
     const req = await signedRequest("{not json", keys);
-    const res = await handleDv(req, makeDeps(new FakeKv(), hangingActors(), keys));
-    expect(res.status).toBe(400);
-    expect(eventsWith("dv.route")).toHaveLength(0);
+    const res = await handleDv(req, makeDeps(kv, hangingActors(), keys));
+    expect(res.status).toBe(200);
+    const out = await jsonOf(res);
+    expect(out.dynamic_variables.route_hint).toBe("unverified");
+    expect(out.dynamic_variables.caller_name).toBe("there");
+    expect(out.dynamic_variables.site_id).toBe("unknown");
+    expect(out.dynamic_variables.repeat_note).toBe("none");
+    expect(out.dynamic_variables.calls_today).toBe("1");
+    expect(out.dynamic_variables.trace_id).toBe(out.conversation.metadata.trace_id);
+    expect(out.conversation.metadata.call_key).not.toBe("");
+    expect(kv.calls.filter((c) => c.op === "put")).toHaveLength(0);
+    const routes = eventsWith("dv.route");
+    expect(routes).toHaveLength(1);
+    expect(routes[0].outcome).toBe("fallback");
+    expect(routes[0].reason).toBe("bad_json");
+    expect(eventsWith("dv.late")).toHaveLength(0);
+  });
+
+  it("fails open when data.payload is missing or not an object", async () => {
+    const keys = await makeKeys();
+    const kv = new FakeKv();
+    const missing = await handleDv(
+      await signedRequest(
+        JSON.stringify({ data: { event_type: "assistant.initialization" } }),
+        keys,
+      ),
+      makeDeps(kv, hangingActors(), keys),
+    );
+    expect(missing.status).toBe(200);
+    const missingOut = await jsonOf(missing);
+    expect(missingOut.dynamic_variables.route_hint).toBe("unverified");
+    expect(kv.calls.filter((c) => c.op === "put")).toHaveLength(0);
+    const nonObject = await handleDv(
+      await signedRequest(JSON.stringify({ data: { payload: 42 } }), keys),
+      makeDeps(kv, hangingActors(), keys),
+    );
+    expect(nonObject.status).toBe(200);
+    const routes = eventsWith("dv.route").filter((r) => r.reason === "no_payload");
+    expect(routes).toHaveLength(2);
+    expect(routes.every((r) => r.outcome === "fallback")).toBe(true);
+  });
+
+  it("identifies a SIP caller through the demo_caller flag", async () => {
+    const keys = await makeKeys();
+    const kv = new FakeKv();
+    kv.setNow(0);
+    await kv.put(kvKey("flag", "demo_caller"), "c-ahmed");
+    const req = await signedRequest(bodyOf(payloadOf(SIP)), keys);
+    const res = await handleDv(req, makeDeps(kv, new FakeActorPort(), keys));
+    const out = await jsonOf(res);
+    expect(out.dynamic_variables.route_hint).toBe("verified");
+    expect(out.dynamic_variables.caller_name).toBe("Ahmed");
+    expect(out.dynamic_variables.customer_name).toBe("Al-Waha Pharmacies");
+    expect(out.dynamic_variables.site_id).toBe("RUH-114");
   });
 });
