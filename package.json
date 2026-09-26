@@ -1,0 +1,14 @@
+{
+  "name": "noc-front-door",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "test": "node --test scripts/*.test.mjs",
+    "scan": "node scripts/secret-scan.mjs"
+  },
+  "devDependencies": {
+    "@types/node": "26.6.3",
+    "tsx": "4.23.15",
+    "typescript": "7.0.2"
+  }
+}

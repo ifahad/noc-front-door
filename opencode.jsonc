@@ -1,0 +1,51 @@
+{
+  // OpenCode config for the NOC Front Door repo.
+  // No literal secrets anywhere: values come from {env:...} substitution.
+  "$schema": "https://opencode.ai/config.json",
+  "plugin": ["@telnyx/opencode@0.1.5"],
+  "model": "telnyx/zai-org/GLM-5.3-Flash",
+  "small_model": "telnyx/zai-org/GLM-5.3-Flash",
+  "instructions": ["AGENTS.md"],
+  "permission": {
+    "edit": "allow",
+    "read": {
+      "*": "allow",
+      "*.env": "deny",
+      "*.env.*": "deny",
+      "*.env.example": "allow"
+    },
+    "bash": {
+      "*": "ask",
+      "npm *": "allow",
+      "npx *": "allow",
+      "node *": "allow",
+      "git status*": "allow",
+      "git diff*": "allow",
+      "git log*": "allow",
+      "git add*": "allow",
+      "git commit*": "allow",
+      "telnyx-edge types*": "allow",
+      "telnyx-edge logs*": "allow",
+      "telnyx-edge inspect*": "allow",
+      "telnyx-edge list*": "allow",
+      "telnyx-edge metrics*": "allow",
+      "git push*": "deny",
+      "rm -rf *": "deny",
+      "opencode debug config*": "deny",
+      "telnyx-edge secrets*": "deny",
+      "cat .env*": "deny",
+      "cat *seed.local*": "deny"
+    },
+    "external_directory": "deny"
+  },
+  "mcp": {
+    "noc-mcp": {
+      "type": "remote",
+      "enabled": false,
+      "url": "https://REPLACE_AFTER_CORE_SHIP/mcp",
+      "headers": {
+        "Authorization": "Bearer {env:NOC_OPS_TOKEN}"
+      }
+    }
+  }
+}

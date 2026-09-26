@@ -1,0 +1,12 @@
+node_modules/
+dist/
+*.log
+.env
+.env.*
+!.env.example
+seed.local.json
+.opencode-runs/raw/
+.opencode/config.json
+.opencode/**/config.json
+.state/
+.superpowers/
