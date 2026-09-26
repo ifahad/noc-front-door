@@ -3,8 +3,39 @@ main = "src/index.ts"
 compatibility_date = "2026-05-01"
 
 [[actors]]
-binding = "COUNTER"
-type = "Counter"
+binding = "SITES"
+type = "SiteActor"
+
+[[actors]]
+binding = "REGIONS"
+type = "RegionActor"
+
+[storage.kv.CACHE]
+id = "f08b8bc7-4208-4c63-9e8f-0f851d02cd0f"
+
+[[secrets]]
+binding = "TELNYX_PUBLIC_KEY"
+name = "TELNYX_PUBLIC_KEY"
+
+[[secrets]]
+binding = "MCP_TOKEN"
+name = "MCP_TOKEN"
+
+[[secrets]]
+binding = "OPS_TOKEN"
+name = "OPS_TOKEN"
+
+[[secrets]]
+binding = "PIN_PEPPER"
+name = "PIN_PEPPER"
+
+[[secrets]]
+binding = "ONCALL_NUMBER"
+name = "ONCALL_NUMBER"
+
+[[secrets]]
+binding = "SEED_LOCAL"
+name = "SEED_LOCAL"
 
 [edge_compute]
 func_id = "41d2a334-70ab-4bd3-b9a9-b47a8179602c"

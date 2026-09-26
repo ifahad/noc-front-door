@@ -1,13 +1,24 @@
-// Re-export the actor class from the entry point so it is bundled and shipped
-// with the function (the runtime resolves the [[actors]] type here; the
-// exported class name must equal the type).
-export { Counter } from "./counter";
+import { routeOpsActorPing, makeOpsTokenGetter } from "./router";
+import type { NocEdgeEnv } from "./actors";
+import { logEvent } from "./log";
 
 export default {
-  async fetch(_req: Request, env: Env): Promise<Response> {
-    const counter = env.COUNTER.idFromName("demo");
-    const value = await counter.increment(1);
-
-    return Response.json({ value });
+  async fetch(request: Request, env: Env): Promise<Response> {
+    try {
+      const url = new URL(request.url);
+      if (request.method === "GET" && url.pathname === "/ops/actor-ping") {
+        const nocEnv = env as NocEdgeEnv;
+        return await routeOpsActorPing(
+          request,
+          nocEnv,
+          makeOpsTokenGetter(nocEnv),
+        );
+      }
+      return Response.json({ error: "not_found" }, { status: 404 });
+    } catch (err) {
+      const detail = err instanceof Error ? err.message : String(err);
+      logEvent("request_failed", { lvl: "error", error: detail });
+      return Response.json({ error: "internal", detail }, { status: 500 });
+    }
   },
 };

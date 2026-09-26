@@ -5,7 +5,8 @@
   "type": "module",
   "private": true,
   "scripts": {
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run"
   },
   "dependencies": {
     "@telnyx/edge-runtime": "0.15.3"
