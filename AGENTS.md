@@ -59,3 +59,8 @@ Read the sections a task names before you start.
 
    Never use `--no-verify`. If the pre-commit hook blocks a commit, fix the cause.
 10. **Report:** when you finish, write a short report stating what you changed (files), the exact test command and its output, and any doubts.
+11. **Be terse. Act through tools.** Each of your responses is capped at about 8K output tokens by the provider, and a response that hits the cap ends the run.
+    - Never write out plans, todo lists or explanations longer than 5 lines in chat.
+    - Put file content only in write/edit tool calls, with **one file per tool call**.
+    - Do not repeat file contents back in chat.
+    - For large files, write a skeleton first, then edit.
