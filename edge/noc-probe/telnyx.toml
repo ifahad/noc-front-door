@@ -1,0 +1,11 @@
+name = "noc-probe"
+main = "src/index.ts"
+compatibility_date = "2026-05-01"
+
+[[actors]]
+binding = "COUNTER"
+type = "Counter"
+
+[edge_compute]
+func_id = "fdb23ad0-790d-4fab-8879-efd040281dad"
+func_name = "noc-probe"
