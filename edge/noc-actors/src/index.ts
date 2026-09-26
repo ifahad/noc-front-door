@@ -1,5 +1,5 @@
-export { SiteActor } from "./SiteActor";
-export { RegionActor } from "./RegionActor";
+export { SiteState } from "./SiteState";
+export { RegionState } from "./RegionState";
 
 export default {
   async fetch(): Promise<Response> {

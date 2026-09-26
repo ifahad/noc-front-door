@@ -4,11 +4,11 @@ compatibility_date = "2026-05-01"
 
 [[actors]]
 binding = "SITES"
-type = "SiteActor"
+type = "SiteState"
 
 [[actors]]
 binding = "REGIONS"
-type = "RegionActor"
+type = "RegionState"
 
 [edge_compute]
 func_id = "235a3ef5-a493-4074-81bb-b65c5cce7e0e"
