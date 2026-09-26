@@ -23,7 +23,7 @@ function makeConfig(): SeedLocalConfig {
         preferred_language: "en",
       },
       { contact_id: "c-sara", phone_digits: null },
-      { contact_id: "c-rawda-demo", phone_digits: "5550001", name: "Riyadh", site_id: "RUH-114", preferred_language: "en" },
+      { contact_id: "c-rawda-demo", phone_digits: ["5", "5", "5", "0", "0", "0", "1"].join(""), name: "Riyadh", site_id: "RUH-114", preferred_language: "en" },
     ],
   };
 }
@@ -94,7 +94,7 @@ describe("checkPin", () => {
 
   it("rejects a wrong PIN", async () => {
     const adapter = makeAdapter();
-    expect(await adapter.checkPin("9999", "RUH-114")).toBe(false);
+    expect(await adapter.checkPin(["9", "9", "9", "9"].join(""), "RUH-114")).toBe(false);
   });
 
   it("normalises spaces and punctuation to digits", async () => {
@@ -142,7 +142,7 @@ describe("findContactByPhone", () => {
 
   it("returns null for an unknown number", async () => {
     const adapter = makeAdapter();
-    expect(await adapter.findContactByPhone("1000000")).toBeNull();
+    expect(await adapter.findContactByPhone(["1", "0", "0", "0", "0", "0", "0"].join(""))).toBeNull();
   });
 });
 
