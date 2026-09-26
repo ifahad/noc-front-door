@@ -84,7 +84,12 @@ fi
 
 TELNYX_PUBLIC_KEY="$(env_get TELNYX_PUBLIC_KEY)"
 if [ -z "$TELNYX_PUBLIC_KEY" ]; then
-  PK_JSON="$(curl -fsS -H "Authorization: Bearer ${TELNYX_API_KEY}" https://api.telnyx.com/v2/public_key)"
+  rc=0
+  PK_JSON="$(curl -fsS -H "Authorization: Bearer ${TELNYX_API_KEY}" https://api.telnyx.com/v2/public_key 2>&1)" || rc=$?
+  if [ "$rc" -ne 0 ]; then
+    echo "error: failed to fetch Telnyx public key (curl exit $rc)" >&2
+    exit 1
+  fi
   # Store the PEM single-line with literal \n escapes.
   TELNYX_PUBLIC_KEY="$(node -e '
 let raw = "";
@@ -124,7 +129,12 @@ fs.renameSync(".env.tmp", ".env");
 # --- Edge secrets -------------------------------------------------------------
 for name in TELNYX_PUBLIC_KEY MCP_TOKEN OPS_TOKEN PIN_PEPPER; do
   eval "value=\${$name}"
-  telnyx-edge secrets add "$name" "$value" >/dev/null
+  rc=0
+  add_out="$(telnyx-edge secrets add "$name" "$value" 2>&1)" || rc=$?
+  if [ "$rc" -ne 0 ]; then
+    echo "error: failed to add secret $name (exit $rc)" >&2
+    exit 1
+  fi
 done
 
 echo "secrets:"

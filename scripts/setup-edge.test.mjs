@@ -41,3 +41,34 @@ test('setup-edge.sh never echoes secret variables', () => {
     );
   }
 });
+
+test('setup-edge.sh captures secrets add output instead of leaving stderr open', () => {
+  const lines = text.split(/\r?\n/);
+  for (const line of lines) {
+    if (!line.includes('secrets add')) continue;
+    assert.match(
+      line,
+      /"\$\{?value\}?"?\s*2>&1\)"\s*\|\|\s*rc=\$\?/,
+      'secrets add must capture combined output into a variable',
+    );
+  }
+  assert.match(
+    text,
+    /telnyx-edge secrets add "\$name" "\$value" 2>&1/,
+  );
+});
+
+test('setup-edge.sh captures curl stderr when the api key is passed', () => {
+  const lines = text.split(/\r?\n/);
+  let sawCurl = false;
+  for (const line of lines) {
+    if (!line.includes('curl -fsS')) continue;
+    sawCurl = true;
+    assert.match(
+      line,
+      /2>&1\)"\s*\|\|\s*rc=\$\?/,
+      'curl with auth header must capture combined output',
+    );
+  }
+  assert.ok(sawCurl, 'curl public_key fetch expected in script');
+});
