@@ -1,9 +1,13 @@
 import { canWrite } from "../../../shared/src/authz";
 import { spellId } from "../../../shared/src/ids";
-import type { Incident } from "../../../shared/src/types";
-import { ticketReadback, type ReadbackIncident } from "../../../shared/src/readback";
+import type { Impact, Incident, Session } from "../../../shared/src/types";
+import {
+  incidentAffects,
+  joinReadback,
+  ticketReadback,
+  type ReadbackIncident,
+} from "../../../shared/src/readback";
 import { classify } from "../../../shared/src/severity";
-import type { Impact, Session } from "../../../shared/src/types";
 import type { SeedAdapter } from "../../../shared/src/itsm";
 import { logEvent } from "../log";
 import type { ActorPort, ReportSiteInput, ReportSiteResult, SiteStateApi } from "./actorPort";
@@ -54,6 +58,19 @@ export async function open(
   session: Session,
   input: TicketInput,
 ): Promise<OpenResult> {
+  return (await openInternal(ctx, session, input)).result;
+}
+
+interface ReportMeta {
+  incident: Incident | null;
+  upgraded: boolean;
+}
+
+async function openInternal(
+  ctx: TicketCtx,
+  session: Session,
+  input: TicketInput,
+): Promise<{ result: OpenResult; report: ReportMeta | null }> {
   if (ctx.flags.fault_open_ticket !== null) {
     throw new TicketError(ctx.flags.fault_open_ticket, "fault_injected");
   }
@@ -88,7 +105,7 @@ export async function open(
     siteCode: site.code,
   });
   const ticket = opened.ticket;
-  let reported: { incident: Incident | null } | null = null;
+  let report: ReportMeta | null = null;
   if (ticket.impact === "site_down" && !ticket.regionReported) {
     const region = site.region;
     const reportInput: ReportSiteInput = {
@@ -132,7 +149,7 @@ export async function open(
           error: String(err),
         });
       }
-      reported = { incident: reportedResult.incident };
+      report = { incident: reportedResult.incident, upgraded: reportedResult.upgraded };
     }
   }
   await syncProjection({ actors: ctx.actors, kv: ctx.kv }, site.region, ctx.trace_id);
@@ -140,17 +157,20 @@ export async function open(
     ticket,
     created: opened.created,
     priorityRaised: opened.priorityRaised,
-    incident: readbackIncident(reported?.incident ?? null, site.region_label),
+    incident: readbackIncident(report?.incident ?? null, site.region_label),
     now: ctx.now,
   });
   return {
-    ticket_id: ticket.id,
-    priority: ticket.priority,
-    created: opened.created ? "true" : "false",
-    ticket_readback: readback,
-    incident_note: incidentNote(readbackIncident(reported?.incident ?? null, site.region_label)),
-    symptom: "none",
-    impact: "unknown",
+    result: {
+      ticket_id: ticket.id,
+      priority: ticket.priority,
+      created: opened.created ? "true" : "false",
+      ticket_readback: readback,
+      incident_note: incidentNote(readbackIncident(report?.incident ?? null, site.region_label)),
+      symptom: "none",
+      impact: "unknown",
+    },
+    report,
   };
 }
 
@@ -180,12 +200,27 @@ export async function joinIncident(
   if (incident === null) {
     throw new TicketError(422, "no_active_incident");
   }
-  return open(ctx, session, {
+  const joined = await openInternal(ctx, session, {
     site_id: site.site_id,
     symptom: incidentSummaryOf(incident),
     impact: "site_down",
     service_affecting: "true",
   });
+  const incidentForReadback = joined.report?.incident ?? incident;
+  const raisedToP1 = joined.report?.upgraded ?? false;
+  const readbackInc = readbackIncident(incidentForReadback, site.region_label);
+  return {
+    ...joined.result,
+    ticket_readback: joinReadback({
+      ticket: { id: joined.result.ticket_id },
+      incident: readbackInc,
+      priorityRaisedToP1: raisedToP1,
+    }),
+    incident_note:
+      readbackInc === null
+        ? "none"
+        : incidentAffects(readbackInc.siteCount, raisedToP1).trim(),
+  };
 }
 
 function truthy(raw: string): boolean {

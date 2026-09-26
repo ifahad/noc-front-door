@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { formatRiyadhTime } from "../../../shared/src/readback";
 import { kvKey } from "../../../shared/src/kvkeys";
 import type { Incident } from "../../../shared/src/types";
-import { syncProjection } from "../../src/services/incidents";
+import { incidentSummaryOf, syncProjection } from "../../src/services/incidents";
 import { FakeActorPort } from "../fakes/actors";
 import { FakeKv } from "../fakes/kv";
 
@@ -57,7 +57,7 @@ describe("incidents.syncProjection", () => {
       version: 1,
       region_label: "Riyadh North",
       started_local: formatRiyadhTime(incident.declaredAt),
-      summary: "RUH-114 and RUH-121",
+      summary: "loss of connectivity at two branches",
       eta_local: formatRiyadhTime(incident.nextUpdateAt),
       priority: "P2",
       site_count: 2,
@@ -103,5 +103,42 @@ describe("incidents.syncProjection", () => {
       .filter((l) => l.evt === "incident.sync");
     expect(events).toHaveLength(1);
     expect(events[0].outcome).toBe("error");
+  });
+});
+
+describe("incidentSummaryOf", () => {
+  const base: Incident = {
+    id: "INC-1001",
+    version: 1,
+    declaredAt: T0,
+    priority: "P2",
+    sites: {},
+    nextUpdateAt: T0 + 30 * 60_000,
+    ackAt: null,
+    esc: null,
+    pages: [],
+  };
+
+  function incidentWith(n: number): Incident {
+    const sites: Incident["sites"] = {};
+    for (let i = 1; i <= n; i++) {
+      sites[`RUH-${100 + i}`] = { ticketId: `NJD-${i}`, at: T0 };
+    }
+    return { ...base, sites };
+  }
+
+  it("speaks one branch", () => {
+    expect(incidentSummaryOf(incidentWith(1))).toBe("loss of connectivity at one branch");
+  });
+
+  it("speaks two through nine as words", () => {
+    expect(incidentSummaryOf(incidentWith(2))).toBe("loss of connectivity at two branches");
+    expect(incidentSummaryOf(incidentWith(3))).toBe("loss of connectivity at three branches");
+    expect(incidentSummaryOf(incidentWith(9))).toBe("loss of connectivity at nine branches");
+  });
+
+  it("uses digits above nine", () => {
+    expect(incidentSummaryOf(incidentWith(10))).toBe("loss of connectivity at 10 branches");
+    expect(incidentSummaryOf(incidentWith(23))).toBe("loss of connectivity at 23 branches");
   });
 });

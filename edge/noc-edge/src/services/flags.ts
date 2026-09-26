@@ -15,10 +15,11 @@ const MEMO_MS = 5000;
 const MAX_DV_DELAY_MS = 12000;
 const FAULT_STATUSES: readonly number[] = [500, 503, 504];
 
-let memo: { at: number; flags: Flags } | null = null;
+const memoByKv = new WeakMap<KvPort, { at: number; flags: Flags }>();
 
 export async function read(kv: KvPort, now: number): Promise<Flags> {
-  if (memo !== null && now - memo.at < MEMO_MS) return memo.flags;
+  const memo = memoByKv.get(kv);
+  if (memo !== undefined && now - memo.at < MEMO_MS) return memo.flags;
   const [deflection, requirePin, demo, faultOpen, faultDelay] = await Promise.all([
     kv.get(kvKey("flag", "deflection_enabled")),
     kv.get(kvKey("flag", "require_pin")),
@@ -33,7 +34,7 @@ export async function read(kv: KvPort, now: number): Promise<Flags> {
     fault_open_ticket: parseFaultStatus(faultOpen),
     fault_dv_delay_ms: parseDvDelay(faultDelay),
   };
-  memo = { at: now, flags };
+  memoByKv.set(kv, { at: now, flags });
   return flags;
 }
 

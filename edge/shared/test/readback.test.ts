@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   formatRiyadhTime,
+  joinReadback,
   openTicketNote,
   riyadhTimeToday,
   ticketReadback,
@@ -128,6 +129,42 @@ describe("openTicketNote", () => {
   it("renders a spoken note for the dynamic variables", () => {
     expect(openTicketNote({ id: "NJD-1407" })).toBe(
       "There's already an open ticket for this branch: N J D, 1 4 0 7.",
+    );
+  });
+});
+
+describe("joinReadback", () => {
+  const incident: ReadbackIncident = {
+    id: "INC-1002",
+    priority: "P2",
+    siteCount: 2,
+    regionLabel: "Riyadh North",
+  };
+
+  it("uses the join wording with the incident spelled out", () => {
+    expect(joinReadback({ ticket: { id: "NJD-1407" }, incident, priorityRaisedToP1: false })).toBe(
+      "I've added your branch to incident I N C, 1 0 0 2 affecting Riyadh North. It now affects 2 branches. Your ticket number is N J D, 1 4 0 7.",
+    );
+  });
+
+  it("mentions the P1 raise when the incident became P1 in this call", () => {
+    const p1: ReadbackIncident = { ...incident, priority: "P1", siteCount: 3 };
+    expect(joinReadback({ ticket: { id: "NJD-3301" }, incident: p1, priorityRaisedToP1: true })).toBe(
+      "I've added your branch to incident I N C, 1 0 0 2 affecting Riyadh North. It now affects 3 branches and has been raised to priority 1. Your ticket number is N J D, 3 3 0 1.",
+    );
+  });
+
+  it("an already-P1 incident without a raise in this call does not claim a raise", () => {
+    const p1: ReadbackIncident = { ...incident, priority: "P1", siteCount: 4 };
+    const out = joinReadback({ ticket: { id: "NJD-3302" }, incident: p1, priorityRaisedToP1: false });
+    expect(out).toBe(
+      "I've added your branch to incident I N C, 1 0 0 2 affecting Riyadh North. It now affects 4 branches. Your ticket number is N J D, 3 3 0 2.",
+    );
+  });
+
+  it("falls back to the ticket sentence alone without an incident", () => {
+    expect(joinReadback({ ticket: { id: "NJD-1407" }, incident: null, priorityRaisedToP1: false })).toBe(
+      "Your ticket number is N J D, 1 4 0 7.",
     );
   });
 });

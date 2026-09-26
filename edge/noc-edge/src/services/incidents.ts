@@ -27,15 +27,22 @@ export function regionCodeOf(region: string): string {
   return REGIONS.find((r) => r.region === region)?.code ?? region;
 }
 
-export function incidentSummaryOf(incident: Incident): string {
-  return listSites(Object.keys(incident.sites).sort());
-}
+const NUMBER_WORDS: Record<number, string> = {
+  2: "two",
+  3: "three",
+  4: "four",
+  5: "five",
+  6: "six",
+  7: "seven",
+  8: "eight",
+  9: "nine",
+};
 
-function listSites(siteIds: string[]): string {
-  if (siteIds.length === 0) return "unknown";
-  if (siteIds.length === 1) return siteIds[0];
-  if (siteIds.length === 2) return `${siteIds[0]} and ${siteIds[1]}`;
-  return `${siteIds.slice(0, -1).join(", ")} and ${siteIds[siteIds.length - 1]}`;
+export function incidentSummaryOf(incident: Incident): string {
+  const count = Object.keys(incident.sites).length;
+  if (count === 1) return "loss of connectivity at one branch";
+  const spoken = NUMBER_WORDS[count] ?? String(count);
+  return `loss of connectivity at ${spoken} branches`;
 }
 
 export function projectionOf(

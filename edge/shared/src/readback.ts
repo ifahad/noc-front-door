@@ -64,3 +64,27 @@ export function openTicketNote(ticket: { id: string } | null): string {
   if (ticket === null) return "none";
   return `There's already an open ticket for this branch: ${spellId(ticket.id)}.`;
 }
+
+export function incidentAffects(siteCount: number, raisedToP1: boolean): string {
+  return raisedToP1
+    ? ` It now affects ${siteCount} branches and has been raised to priority 1.`
+    : ` It now affects ${siteCount} branches.`;
+}
+
+export interface JoinReadbackInput {
+  ticket: Pick<Ticket, "id">;
+  incident: ReadbackIncident | null;
+  priorityRaisedToP1: boolean;
+}
+
+export function joinReadback(input: JoinReadbackInput): string {
+  const { ticket, incident, priorityRaisedToP1 } = input;
+  let out = "";
+  if (incident !== null) {
+    out += `I've added your branch to incident ${spellId(incident.id)} affecting ${incident.regionLabel}.`;
+    out += incidentAffects(incident.siteCount, priorityRaisedToP1);
+  }
+  if (out.length > 0) out += " ";
+  out += `Your ticket number is ${spellId(ticket.id)}.`;
+  return out;
+}

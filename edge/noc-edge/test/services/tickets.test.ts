@@ -373,6 +373,10 @@ describe("tickets.joinIncident", () => {
     expect(result.created).toBe("true");
     expect(result.ticket_id).toBe("NJD-3301");
     expect(result.priority).toBe("P2");
+    expect(result.ticket_readback).toBe(
+      "I've added your branch to incident I N C, 1 0 0 1 affecting Riyadh North. It now affects 3 branches and has been raised to priority 1. Your ticket number is N J D, 3 3 0 1.",
+    );
+    expect(result.incident_note).toBe("It now affects 3 branches and has been raised to priority 1.");
     const ticket = actors.siteTicket("RUH-133");
     expect(ticket?.regionReported).toBe(true);
     const projection = JSON.parse(kv.raw(PROJECTION_KEY) as string);
