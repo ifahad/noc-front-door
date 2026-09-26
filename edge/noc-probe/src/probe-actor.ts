@@ -21,7 +21,7 @@ export interface ActorStatus {
   actorEnvKeys: string[];
 }
 
-export class ProbeActor extends StatefulActor {
+export class ProbeActorV2 extends StatefulActor {
   async armAlarm(
     delayMs: number,
     token: string

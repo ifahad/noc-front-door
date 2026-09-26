@@ -11,7 +11,7 @@ import {
 import { verifyTelnyxSignature, type SigResult } from "./ed25519";
 import { handleMcp } from "./mcp";
 
-export { ProbeActor } from "./probe-actor";
+export { ProbeActorV2 } from "./probe-actor";
 
 const INSTANCE_ID = crypto.randomUUID();
 const STARTED_AT = Date.now();
