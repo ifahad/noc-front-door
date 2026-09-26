@@ -1,0 +1,11 @@
+name = "noc-edge"
+main = "src/index.ts"
+compatibility_date = "2026-05-01"
+
+[[actors]]
+binding = "COUNTER"
+type = "Counter"
+
+[edge_compute]
+func_id = "41d2a334-70ab-4bd3-b9a9-b47a8179602c"
+func_name = "noc-edge"

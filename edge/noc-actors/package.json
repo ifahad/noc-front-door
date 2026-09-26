@@ -1,0 +1,21 @@
+{
+  "name": "noc-actors",
+  "version": "0.1.0",
+  "description": "Telnyx Edge StatefulActor function",
+  "type": "module",
+  "private": true,
+  "scripts": {
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@telnyx/edge-runtime": "0.15.3"
+  },
+  "devDependencies": {
+    "@types/node": "22.19.1",
+    "typescript": "^5.0.0",
+    "vitest": "5.0.2"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  }
+}
