@@ -360,7 +360,7 @@ export async function handleDv(request: Request, deps: DvDeps): Promise<Response
   return Response.json(body, { status: 200 });
 }
 
-function parseProjection(raw: string | null): IncidentProjection | null {
+export function parseProjection(raw: string | null): IncidentProjection | null {
   if (raw === null) return null;
   try {
     const value = JSON.parse(raw) as Partial<IncidentProjection>;

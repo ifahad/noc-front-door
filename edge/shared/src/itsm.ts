@@ -40,6 +40,7 @@ export interface ItsmAdapter {
   getSite(siteId: string): Promise<Site | null>;
   listSites(customerId: string): Promise<Site[]>;
   resolveSite(description: string, customerId: string): Promise<Site | null>;
+  resolveSiteGlobal(description: string): Promise<Site | null>;
   pinHashFor(siteId: string): Promise<string | null>;
   checkPin(pin: string, siteId: string): Promise<boolean>;
   getNmsStatus(siteId: string): Promise<NmsStatus>;
@@ -170,6 +171,23 @@ export class SeedAdapter implements ItsmAdapter {
     }
     for (const site of candidates) {
       if (labelKeywords(site).some((keyword) => text.includes(keyword))) return site;
+    }
+    return null;
+  }
+
+  async resolveSiteGlobal(description: string): Promise<Site | null> {
+    const wanted = description.trim().toUpperCase();
+    if (wanted !== "") {
+      for (const site of SITES) {
+        if (site.hidden) continue;
+        if (site.site_id.toUpperCase() === wanted) return site;
+      }
+    }
+    const text = compact(description);
+    if (text === "") return null;
+    for (const site of SITES) {
+      if (site.hidden) continue;
+      if (idMatcher(site).test(text)) return site;
     }
     return null;
   }

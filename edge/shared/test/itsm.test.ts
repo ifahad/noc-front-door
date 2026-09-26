@@ -86,6 +86,39 @@ describe("resolveSite", () => {
   });
 });
 
+describe("resolveSiteGlobal", () => {
+  it("resolves exact ids across every customer without a scope", async () => {
+    const adapter = makeAdapter();
+    expect((await adapter.resolveSiteGlobal("RUH-114"))?.site_id).toBe("RUH-114");
+    expect((await adapter.resolveSiteGlobal("JED-900"))?.site_id).toBe("JED-900");
+  });
+
+  it.each([
+    ["RUH114"],
+    ["ruh 114"],
+    ["R U H one one four"],
+    ["ruh-114"],
+    ["RUH.114"],
+  ])("resolves the id-shaped input %j to RUH-114", async (description) => {
+    const adapter = makeAdapter();
+    expect((await adapter.resolveSiteGlobal(description))?.site_id).toBe("RUH-114");
+  });
+
+  it("never matches hidden sites", async () => {
+    const adapter = makeAdapter();
+    expect(await adapter.resolveSiteGlobal("TST-001")).toBeNull();
+    expect(await adapter.resolveSiteGlobal("t s t zero zero one")).toBeNull();
+  });
+
+  it("does not match a wrong number of digits or free text", async () => {
+    const adapter = makeAdapter();
+    expect(await adapter.resolveSiteGlobal("RUH one one four zero")).toBeNull();
+    expect(await adapter.resolveSiteGlobal("RUH1140")).toBeNull();
+    expect(await adapter.resolveSiteGlobal("a bakery down the road")).toBeNull();
+    expect(await adapter.resolveSiteGlobal("")).toBeNull();
+  });
+});
+
 describe("checkPin", () => {
   it("accepts the correct PIN", async () => {
     const adapter = makeAdapter();

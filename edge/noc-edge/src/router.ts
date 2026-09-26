@@ -5,6 +5,11 @@ import { bindingKvPort } from "./services/kvPort";
 import { bindingActorPort } from "./services/actorPort";
 import { getSecret, makeAdapter } from "./env";
 import { handleDv } from "./dv/handler";
+import { handleVerifySite } from "./tools/verifySite";
+import { handleOpenTicket } from "./tools/openTicket";
+import { handleJoinIncident } from "./tools/joinIncident";
+import { handleCallback } from "./tools/callback";
+import type { ToolDeps } from "./tools/common";
 
 export const DEFAULT_SITE = "RUH-114";
 export const DEFAULT_REGION = "riyadh-north";
@@ -93,6 +98,26 @@ async function routeDv(request: Request, env: NocEdgeEnv): Promise<Response> {
   });
 }
 
+async function routeTool(
+  request: Request,
+  env: NocEdgeEnv,
+  handler: (request: Request, deps: ToolDeps) => Promise<Response>,
+): Promise<Response> {
+  const [adapter, publicKey, pinPepper] = await Promise.all([
+    makeAdapter(env),
+    getSecret(env, "TELNYX_PUBLIC_KEY"),
+    getSecret(env, "PIN_PEPPER"),
+  ]);
+  return handler(request, {
+    kv: bindingKvPort(env.CACHE),
+    actors: bindingActorPort(env),
+    adapter,
+    publicKey: publicKey ?? "",
+    pinPepper: pinPepper ?? "",
+    now: () => Date.now(),
+  });
+}
+
 export async function route(
   request: Request,
   env: NocEdgeEnv,
@@ -100,6 +125,26 @@ export async function route(
   const url = new URL(request.url);
   if (request.method === "POST" && url.pathname === "/dv") {
     return withErrorHandling("dv", () => routeDv(request, env));
+  }
+  if (request.method === "POST" && url.pathname === "/tools/verify-site") {
+    return withErrorHandling("tools/verify-site", () =>
+      routeTool(request, env, handleVerifySite),
+    );
+  }
+  if (request.method === "POST" && url.pathname === "/tools/open-ticket") {
+    return withErrorHandling("tools/open-ticket", () =>
+      routeTool(request, env, handleOpenTicket),
+    );
+  }
+  if (request.method === "POST" && url.pathname === "/tools/join-incident") {
+    return withErrorHandling("tools/join-incident", () =>
+      routeTool(request, env, handleJoinIncident),
+    );
+  }
+  if (request.method === "POST" && url.pathname === "/tools/callback") {
+    return withErrorHandling("tools/callback", () =>
+      routeTool(request, env, handleCallback),
+    );
   }
   if (request.method === "GET" && url.pathname === "/ops/actor-ping") {
     return withErrorHandling("ops/actor-ping", () =>
