@@ -3,8 +3,23 @@ main = "src/index.ts"
 compatibility_date = "2026-05-01"
 
 [[actors]]
-binding = "COUNTER"
-type = "Counter"
+binding = "PROBE"
+type = "ProbeActor"
+
+[storage.kv.CACHE]
+id = "REPLACE_WITH_NOC_KV_ID"
+
+[[secrets]]
+binding = "TELNYX_PUBLIC_KEY"
+name = "TELNYX_PUBLIC_KEY"
+
+[[secrets]]
+binding = "MCP_TOKEN"
+name = "MCP_TOKEN"
+
+[[secrets]]
+binding = "OPS_TOKEN"
+name = "OPS_TOKEN"
 
 [edge_compute]
 func_id = "fdb23ad0-790d-4fab-8879-efd040281dad"
