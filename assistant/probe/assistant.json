@@ -1,0 +1,247 @@
+{
+  "name": "sanad-noc",
+  "model": "moonshotai/Kimi-K2.6",
+  "instructions": "You are a probe assistant. Follow the current step's instructions exactly. Keep every reply under 15 words.",
+  "greeting": "<assistant-speaks-first-with-model-generated-message>",
+  "voice_settings": {
+    "voice": "Telnyx.KokoroTTS.af_heart"
+  },
+  "transcription": {
+    "model": "deepgram/nova-3",
+    "language": "en"
+  },
+  "interruption_settings": {
+    "disable_greeting_interruption": true
+  },
+  "telephony_settings": {
+    "time_limit_secs": 300,
+    "supports_unauthenticated_web_calls": true
+  },
+  "dynamic_variables_webhook_url": "${PROBE_URL}/dv",
+  "dynamic_variables_webhook_timeout_ms": 5000,
+  "dynamic_variables": {
+    "probe_route": "a",
+    "probe_num": "0",
+    "greet_name": "default-name",
+    "probe_word": "none",
+    "echo_result": "none",
+    "call_key": "none",
+    "trace_id": "t-none"
+  },
+  "tool_ids": ["${TOOL_probe_capture}"],
+  "mcp_servers": [
+    {
+      "id": "${MCP_ID}",
+      "allowed_tools": ["echo_probe", "slow_probe"]
+    }
+  ],
+  "conversation_flow": {
+    "start_node_id": "s_start",
+    "nodes": [
+      {
+        "id": "s_start",
+        "type": "speak",
+        "name": "probe start",
+        "message": "Probe start. Hello {{greet_name}}. Route {{probe_route}}, number {{probe_num}}."
+      },
+      {
+        "id": "s_num",
+        "type": "speak",
+        "name": "numeric edge",
+        "message": "Numeric edge fired."
+      },
+      {
+        "id": "s_str",
+        "type": "speak",
+        "name": "string edge",
+        "message": "String edge fired."
+      },
+      {
+        "id": "s_def",
+        "type": "speak",
+        "name": "default edge",
+        "message": "Default edge fired."
+      },
+      {
+        "id": "n_word",
+        "type": "prompt",
+        "name": "word capture",
+        "instructions": "Ask the caller to say any single word. When they say it, call probe_capture to save it as probe_word, then say: saved.",
+        "instructions_mode": "append",
+        "shared_tool_ids": ["${TOOL_probe_capture}"],
+        "tools_mode": "replace"
+      },
+      {
+        "id": "t_echo",
+        "type": "tool",
+        "name": "probe echo",
+        "shared_tool_id": "${TOOL_probe_echo}"
+      },
+      {
+        "id": "s_echo",
+        "type": "speak",
+        "name": "echo result",
+        "message": "Echo result {{echo_result}}. Word {{probe_word}}. Key {{call_key}}."
+      },
+      {
+        "id": "n_mcp_null",
+        "type": "prompt",
+        "name": "mcp null tools",
+        "instructions": "Call the MCP tool echo_probe with text null-node, then tell the caller exactly what it returned.",
+        "instructions_mode": "append",
+        "shared_tool_ids": null
+      },
+      {
+        "id": "n_mcp_replace",
+        "type": "prompt",
+        "name": "mcp replace tools",
+        "instructions": "Call the MCP tool echo_probe with text replace-node. If no such tool is available to you, say: no tool available.",
+        "instructions_mode": "append",
+        "shared_tool_ids": ["${TOOL_probe_capture}"],
+        "tools_mode": "replace"
+      },
+      {
+        "id": "s_end",
+        "type": "speak",
+        "name": "probe end",
+        "message": "Probe complete. Goodbye."
+      },
+      {
+        "id": "t_hang",
+        "type": "tool",
+        "name": "probe hangup",
+        "shared_tool_id": "${TOOL_probe_hangup}"
+      }
+    ],
+    "edges": [
+      {
+        "id": "e1",
+        "start_node_id": "s_start",
+        "target": { "type": "node", "node_id": "s_num" },
+        "condition": {
+          "type": "expression",
+          "expression": {
+            "type": "comparison",
+            "op": ">=",
+            "left": { "type": "variable", "name": "probe_num" },
+            "right": { "type": "number_literal", "value": 3 }
+          }
+        }
+      },
+      {
+        "id": "e2",
+        "start_node_id": "s_start",
+        "target": { "type": "node", "node_id": "s_str" },
+        "condition": {
+          "type": "expression",
+          "expression": {
+            "type": "comparison",
+            "op": "==",
+            "left": { "type": "variable", "name": "probe_route" },
+            "right": { "type": "string_literal", "value": "b" }
+          }
+        }
+      },
+      {
+        "id": "e3",
+        "start_node_id": "s_start",
+        "target": { "type": "node", "node_id": "s_def" },
+        "condition": { "type": "default" }
+      },
+      {
+        "id": "e4",
+        "start_node_id": "s_num",
+        "target": { "type": "node", "node_id": "n_word" },
+        "condition": { "type": "default" }
+      },
+      {
+        "id": "e5",
+        "start_node_id": "s_str",
+        "target": { "type": "node", "node_id": "n_word" },
+        "condition": { "type": "default" }
+      },
+      {
+        "id": "e6",
+        "start_node_id": "s_def",
+        "target": { "type": "node", "node_id": "n_word" },
+        "condition": { "type": "default" }
+      },
+      {
+        "id": "e7",
+        "start_node_id": "n_word",
+        "target": { "type": "node", "node_id": "t_echo" },
+        "condition": {
+          "type": "expression",
+          "expression": {
+            "type": "comparison",
+            "op": "!=",
+            "left": { "type": "variable", "name": "probe_word" },
+            "right": { "type": "string_literal", "value": "none" }
+          }
+        }
+      },
+      {
+        "id": "e8",
+        "start_node_id": "t_echo",
+        "target": { "type": "node", "node_id": "s_echo" },
+        "condition": {
+          "type": "expression",
+          "expression": {
+            "type": "bool_op",
+            "op": "or",
+            "operands": [
+              {
+                "type": "comparison",
+                "op": "==",
+                "left": { "type": "variable", "name": "telnyx_last_tool_status_code" },
+                "right": { "type": "string_literal", "value": "200" }
+              },
+              {
+                "type": "comparison",
+                "op": "==",
+                "left": { "type": "variable", "name": "telnyx_last_tool_status_code" },
+                "right": { "type": "number_literal", "value": 200 }
+              }
+            ]
+          }
+        }
+      },
+      {
+        "id": "e9",
+        "start_node_id": "t_echo",
+        "target": { "type": "node", "node_id": "s_end" },
+        "condition": { "type": "default" }
+      },
+      {
+        "id": "e10",
+        "start_node_id": "s_echo",
+        "target": { "type": "node", "node_id": "n_mcp_null" },
+        "condition": { "type": "default" }
+      },
+      {
+        "id": "e11",
+        "start_node_id": "n_mcp_null",
+        "target": { "type": "node", "node_id": "n_mcp_replace" },
+        "condition": {
+          "type": "llm",
+          "prompt": "The assistant has told the caller what echo_probe returned, or said it could not call it."
+        }
+      },
+      {
+        "id": "e12",
+        "start_node_id": "n_mcp_replace",
+        "target": { "type": "node", "node_id": "s_end" },
+        "condition": {
+          "type": "llm",
+          "prompt": "The assistant has said the echo_probe result or said no tool is available."
+        }
+      },
+      {
+        "id": "e13",
+        "start_node_id": "s_end",
+        "target": { "type": "node", "node_id": "t_hang" },
+        "condition": { "type": "default" }
+      }
+    ]
+  }
+}

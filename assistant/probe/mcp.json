@@ -1,0 +1,13 @@
+{
+  "integration_secret": {
+    "identifier": "noc_mcp_token",
+    "type": "bearer"
+  },
+  "server": {
+    "name": "noc-mcp-probe",
+    "type": "http",
+    "url": "${PROBE_URL}/mcp",
+    "api_key_ref": "noc_mcp_token",
+    "allowed_tools": ["echo_probe", "slow_probe"]
+  }
+}

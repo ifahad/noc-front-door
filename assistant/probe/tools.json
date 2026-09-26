@@ -1,0 +1,67 @@
+[
+  {
+    "type": "update_dynamic_variables",
+    "display_name": "probe_capture",
+    "update_dynamic_variables": {
+      "name": "probe_capture",
+      "description": "Save the caller's word.",
+      "updatable_variables": [
+        {
+          "name": "probe_word",
+          "type": "string",
+          "description": "The single word the caller said."
+        }
+      ]
+    }
+  },
+  {
+    "type": "webhook",
+    "display_name": "probe_echo",
+    "timeout_ms": 5000,
+    "webhook": {
+      "name": "probe_echo",
+      "description": "Echo the saved word to the server.",
+      "url": "${PROBE_URL}/tools/echo",
+      "method": "POST",
+      "body_parameters": {
+        "type": "object",
+        "properties": {
+          "probe_word": {
+            "type": "string",
+            "description": "The saved word."
+          }
+        },
+        "required": ["probe_word"]
+      },
+      "preset_body_fields": {
+        "call_control_id": "{{call_control_id}}",
+        "call_key": "{{call_key}}",
+        "trace_id": "{{trace_id}}",
+        "conv_probe": "{{telnyx_conversation_id}}"
+      },
+      "headers": [
+        {
+          "name": "X-Trace-Id",
+          "value": "{{trace_id}}"
+        }
+      ],
+      "store_fields_as_variables": [
+        {
+          "name": "echo_result",
+          "value_path": "result"
+        },
+        {
+          "name": "call_key",
+          "value_path": "call_key"
+        }
+      ]
+    }
+  },
+  {
+    "type": "hangup",
+    "display_name": "probe_hangup",
+    "hangup": {
+      "description": "End the call."
+    }
+  }
+]
