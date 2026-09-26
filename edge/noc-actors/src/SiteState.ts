@@ -23,6 +23,7 @@ interface CallState {
   day: string;
   count: number;
   recent: { k: string; trace_id: string; at: number }[];
+  seen: string[];
 }
 
 interface PinAttemptOutcome {
@@ -177,14 +178,18 @@ export class SiteState extends StatefulActor {
         day,
         count: 0,
         recent: [],
+        seen: [],
       };
     if (calls.day !== day) {
       calls.day = day;
       calls.count = 0;
       calls.recent = [];
+      calls.seen = [];
     }
-    if (!calls.recent.some((entry) => entry.k === input.k)) {
+    if (!Array.isArray(calls.seen)) calls.seen = [];
+    if (!calls.seen.includes(input.k)) {
       calls.count += 1;
+      calls.seen.push(input.k);
       calls.recent.push({ k: input.k, trace_id: input.trace_id, at: input.at });
       while (calls.recent.length > RECENT_CALLS_LIMIT) calls.recent.shift();
       await this.ctx.storage.put("calls", calls);
@@ -243,22 +248,19 @@ export class SiteState extends StatefulActor {
     } else {
       call.failures.push(input.at);
       pin.site.failures.push({ k: input.k, ts: input.at });
-      if (call.failures.length >= CALL_TIER_LIMIT) {
+      const distinctKs = new Set(pin.site.failures.map((f) => f.k));
+      if (
+        pin.site.failures.length >= SITE_TIER_FAILURES &&
+        distinctKs.size >= SITE_TIER_DISTINCT_K
+      ) {
+        pin.site.lockedUntil = input.at + PIN_WINDOW_MS;
+      }
+      if (call.failures.length >= CALL_TIER_LIMIT || pin.site.lockedUntil !== null) {
         result = "locked";
         attemptsLeft = 0;
       } else {
-        const distinctKs = new Set(pin.site.failures.map((f) => f.k));
-        if (
-          pin.site.failures.length >= SITE_TIER_FAILURES &&
-          distinctKs.size >= SITE_TIER_DISTINCT_K
-        ) {
-          pin.site.lockedUntil = input.at + PIN_WINDOW_MS;
-          result = "locked";
-          attemptsLeft = 0;
-        } else {
-          result = "invalid";
-          attemptsLeft = CALL_TIER_LIMIT - call.failures.length;
-        }
+        result = "invalid";
+        attemptsLeft = CALL_TIER_LIMIT - call.failures.length;
       }
     }
     call.results[input.fp] = { result, attemptsLeft, at: input.at };

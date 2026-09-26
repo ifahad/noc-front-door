@@ -12,6 +12,7 @@ const fpD = ["d4", "e5", "f6", "07", "89", "9a", "ab", "bc"].join("");
 const k1 = ["1a", "2b", "3c", "4d", "5e", "6f", "7a", "8b"].join("");
 const k2 = ["2b", "3c", "4d", "5e", "6f", "7a", "8b", "9c"].join("");
 const k3 = ["3c", "4d", "5e", "6f", "7a", "8b", "9c", "ad"].join("");
+const k5 = ["5e", "6f", "7a", "8b", "9c", "ad", "be", "cf"].join("");
 
 function invalid(k: string, fp: string, at: number) {
   return { k, valid: false, fp, trace_id: "t-" + k, at };
@@ -55,6 +56,24 @@ describe("SiteState", () => {
     expect(next.callsToday).toBe(1);
   });
 
+  it("recordCall stays idempotent on k after more than 10 other callers", async () => {
+    const h = makeSiteState("RUH-114");
+    await h.actor.recordCall({ k: k1, trace_id: "t-1", at: T0 });
+    for (let i = 0; i < 11; i++) {
+      await h.actor.recordCall({
+        k: `caller-${i}`,
+        trace_id: `t-x${i}`,
+        at: T0 + (i + 1) * 1000,
+      });
+    }
+    const again = await h.actor.recordCall({
+      k: k1,
+      trace_id: "t-again",
+      at: T0 + 13000,
+    });
+    expect(again.callsToday).toBe(12);
+  });
+
   it("recordPinAttempt: 3 failures lock the call, not the site", async () => {
     const h = makeSiteState("RUH-114");
     const r1 = await h.actor.recordPinAttempt(invalid(k1, fpA, T0));
@@ -85,6 +104,25 @@ describe("SiteState", () => {
     const later = await h.actor.recordPinAttempt(invalid(k3, fpD, T0 + 16 * MIN));
     expect(later.result).toBe("invalid");
     expect(later.attemptsLeft).toBe(2);
+  });
+
+  it("recordPinAttempt: the site lock trips even when the same attempt already locked the call", async () => {
+    const h = makeSiteState("RUH-114");
+    await h.actor.recordPinAttempt(invalid(k1, fpA, T0));
+    await h.actor.recordPinAttempt(invalid(k1, fpB, T0 + 1000));
+    await h.actor.recordPinAttempt(invalid(k1, fpC, T0 + 2000));
+    await h.actor.recordPinAttempt(invalid(k2, fpA, T0 + 3000));
+    await h.actor.recordPinAttempt(invalid(k2, fpB, T0 + 4000));
+    const sixth = await h.actor.recordPinAttempt(invalid(k2, fpC, T0 + 5000));
+    expect(sixth.result).toBe("locked");
+    const validFromNewCaller = await h.actor.recordPinAttempt({
+      k: k5,
+      valid: true,
+      fp: fpD,
+      trace_id: "t-5",
+      at: T0 + 6000,
+    });
+    expect(validFromNewCaller).toMatchObject({ result: "locked", attemptsLeft: 0 });
   });
 
   it("recordPinAttempt: a repeat (k, fp) is not counted again", async () => {
