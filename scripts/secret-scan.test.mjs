@@ -33,6 +33,22 @@ test('flags a bearer credential on an authorization header line', () => {
   assert.equal(findings[0].line, 1);
 });
 
+test('flags a bearer credential spelled in lowercase', () => {
+  const lowerFixture = 'bea' + 'rer ' + '3f9a8b7c' + '6d5e4f3a2b1c';
+  const findings = scanText(`Authorization: ${lowerFixture}\n`);
+  assert.equal(findings.length, 1);
+  assert.equal(findings[0].kind, 'bearer');
+  assert.equal(findings[0].line, 1);
+});
+
+test('flags a bearer credential spelled in uppercase', () => {
+  const upperFixture = 'BEA' + 'RER ' + '3f9a8b7c' + '6d5e4f3a2b1c';
+  const findings = scanText(`Authorization: ${upperFixture}\n`);
+  assert.equal(findings.length, 1);
+  assert.equal(findings[0].kind, 'bearer');
+  assert.equal(findings[0].line, 1);
+});
+
 test('flags E.164 phone numbers on their own lines', () => {
   const text = `mobile ${ksauPhone}\ndesk ${usPhone}\n`;
   const findings = scanText(text);

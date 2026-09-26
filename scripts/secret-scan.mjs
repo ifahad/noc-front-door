@@ -6,7 +6,7 @@ import { pathToFileURL } from 'node:url';
 const KEY_BODY_RE = '[A-Za-z0-9_]{20,}';
 const PATTERNS = [
   ['telnyx-key', new RegExp(`\\bKEY${KEY_BODY_RE}\\b`, 'g')],
-  ['bearer', /\bBearer[ \t]+[A-Za-z0-9._-]{12,}/g],
+  ['bearer', /\bBearer[ \t]+[A-Za-z0-9._-]{12,}/gi],
   ['e164', /\+[0-9]{7,15}\b/g],
 ];
 
