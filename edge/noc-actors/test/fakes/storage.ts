@@ -1,4 +1,5 @@
 import type { ActorContext, ActorStorage, Env, ListOptions } from "@telnyx/edge-runtime";
+import { RegionState } from "../../src/RegionState";
 import { SiteState } from "../../src/SiteState";
 
 export class FakeStorage {
@@ -76,6 +77,26 @@ export interface ActorHarness {
   actor: SiteState;
   storage: FakeStorage;
   name: string;
+}
+
+export interface RegionStateHarness {
+  actor: RegionState;
+  storage: FakeStorage;
+  name: string;
+}
+
+export function makeRegionState(name: string): RegionStateHarness {
+  const storage = new FakeStorage();
+  const ctx: ActorContext = {
+    id: name,
+    storage: fakeStorageToActorStorage(storage),
+    blockConcurrencyWhile: <T>(fn: () => Promise<T>) => fn(),
+    setAlarm: (when: number) => storage.setAlarm(when),
+    count: () => 0,
+    broadcast: () => 0,
+    sockets: () => [],
+  };
+  return { actor: new RegionState(ctx, {} as Env), storage, name };
 }
 
 export function makeSiteState(name: string): ActorHarness {
