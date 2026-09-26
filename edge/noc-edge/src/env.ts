@@ -1,0 +1,116 @@
+import { SeedAdapter } from "../../shared/src/itsm";
+import type {
+  SeedAdapterOptions,
+  SeedLocalConfig,
+  SeedLocalContact,
+} from "../../shared/src/itsm";
+import { makeTokenCache, type SecretGetter } from "./auth";
+
+export type SecretName = Parameters<Env["SECRETS"]["get"]>[0];
+export type SecretsLike = Pick<Env, "SECRETS">;
+
+const secretGetters = new WeakMap<SecretsLike, Map<string, SecretGetter>>();
+
+export function getSecret(
+  env: SecretsLike,
+  name: SecretName,
+): Promise<string | null> {
+  let byName = secretGetters.get(env);
+  if (byName === undefined) {
+    byName = new Map<string, SecretGetter>();
+    secretGetters.set(env, byName);
+  }
+  let get = byName.get(name);
+  if (get === undefined) {
+    get = makeTokenCache(async () => {
+      try {
+        const raw = await env.SECRETS.get(name);
+        return typeof raw === "string" && raw.length > 0 ? raw : null;
+      } catch {
+        return null;
+      }
+    });
+    byName.set(name, get);
+  }
+  return get();
+}
+
+const DEFAULT_SEED_LOCAL: SeedLocalConfig = { pins: {}, contacts: [] };
+const seedLocalCache = new WeakMap<SecretsLike, SeedLocalConfig>();
+
+export async function loadSeedLocal(env: SecretsLike): Promise<SeedLocalConfig> {
+  const cached = seedLocalCache.get(env);
+  if (cached !== undefined) return cached;
+  let raw: string | null;
+  try {
+    const got = await env.SECRETS.get("SEED_LOCAL");
+    raw = typeof got === "string" && got.length > 0 ? got : null;
+  } catch {
+    return DEFAULT_SEED_LOCAL;
+  }
+  if (raw === null) return DEFAULT_SEED_LOCAL;
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(raw);
+  } catch {
+    return DEFAULT_SEED_LOCAL;
+  }
+  const config = normaliseSeedLocal(parsed);
+  seedLocalCache.set(env, config);
+  return config;
+}
+
+function normaliseSeedLocal(value: unknown): SeedLocalConfig {
+  if (value === null || typeof value !== "object" || Array.isArray(value)) {
+    return DEFAULT_SEED_LOCAL;
+  }
+  const record = value as Record<string, unknown>;
+  const pins: Record<string, string> = {};
+  const rawPins = record.pins;
+  if (rawPins !== null && typeof rawPins === "object" && !Array.isArray(rawPins)) {
+    for (const [siteId, pin] of Object.entries(rawPins)) {
+      if (typeof pin === "string" && pin.length > 0) pins[siteId] = pin;
+    }
+  }
+  const contacts: SeedLocalContact[] = [];
+  const rawContacts = record.contacts;
+  if (Array.isArray(rawContacts)) {
+    for (const raw of rawContacts) {
+      if (raw === null || typeof raw !== "object") continue;
+      const entry = raw as Record<string, unknown>;
+      if (typeof entry.contact_id !== "string" || entry.contact_id.length === 0) {
+        continue;
+      }
+      contacts.push({
+        contact_id: entry.contact_id,
+        phone_digits:
+          typeof entry.phone_digits === "string" && entry.phone_digits.length > 0
+            ? entry.phone_digits
+            : null,
+        name: typeof entry.name === "string" ? entry.name : undefined,
+        site_id: typeof entry.site_id === "string" ? entry.site_id : undefined,
+        preferred_language:
+          entry.preferred_language === "ar" ? "ar" : entry.preferred_language === "en" ? "en" : undefined,
+      });
+    }
+  }
+  return { pins, contacts };
+}
+
+const adapterCache = new WeakMap<SecretsLike, SeedAdapter>();
+
+export async function makeAdapter(env: SecretsLike): Promise<SeedAdapter> {
+  const cached = adapterCache.get(env);
+  if (cached !== undefined) return cached;
+  const [pepper, seedLocal] = await Promise.all([
+    getSecret(env, "PIN_PEPPER"),
+    loadSeedLocal(env),
+  ]);
+  const options: SeedAdapterOptions = {
+    seedLocal,
+    pepper: pepper ?? "",
+  };
+  const adapter = new SeedAdapter(options);
+  if (pepper !== null) adapterCache.set(env, adapter);
+  return adapter;
+}
