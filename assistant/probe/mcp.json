@@ -8,6 +8,6 @@
     "type": "http",
     "url": "${PROBE_URL}/mcp",
     "api_key_ref": "noc_mcp_token",
-    "allowed_tools": ["echo_probe", "slow_probe"]
+    "allowed_tools": ["echo_probe"]
   }
 }
