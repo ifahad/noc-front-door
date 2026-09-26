@@ -112,9 +112,118 @@ describe("RegionState", () => {
     expect(fourth.upgraded).toBe(false);
     expect(fourth.siteCount).toBe(4);
     expect(fourth.incident?.priority).toBe("P1");
-    expect(fourth.incident?.version).toBe(2);
+    expect(fourth.incident?.version).toBe(3);
     expect(fourth.incident?.nextUpdateAt).toBe(T0 + MIN + 30 * MIN);
-    expect(Object.keys(fourth.incident?.sites ?? {})).toHaveLength(3);
+    expect(Object.keys(fourth.incident?.sites ?? {})).toHaveLength(4);
+  });
+
+  it("a declare can happen with three live members and declares at P1", async () => {
+    const h = makeRegionState("riyadh-north");
+    await h.storage.put("members", {
+      "site-a": { ticketId: "NJD-1401", firstAt: T0, lastAt: T0 },
+      "site-b": { ticketId: "NJD-1402", firstAt: T0, lastAt: T0 },
+    });
+    const r = await h.actor.reportSite(
+      report({ siteId: "site-c", ticketId: "NJD-1403", trace_id: "t-2", at: T0 + MIN }),
+    );
+    expect(r.declared).toBe(true);
+    expect(r.upgraded).toBe(false);
+    expect(r.siteCount).toBe(3);
+    const inc = r.incident as Incident;
+    expect(inc.id).toBe("INC-1001");
+    expect(inc.priority).toBe("P1");
+    expect(inc.version).toBe(1);
+    expect(inc.declaredAt).toBe(T0 + MIN);
+    expect(inc.nextUpdateAt).toBe(T0 + MIN + 30 * MIN);
+  });
+
+  it("the incident stays P1 after a withdraw and a stale prune", async () => {
+    const h = makeRegionState("riyadh-north");
+    await h.actor.reportSite(report());
+    await h.actor.reportSite(
+      report({ siteId: "site-b", ticketId: "NJD-1402", trace_id: "t-2" }),
+    );
+    await h.actor.reportSite(
+      report({ siteId: "site-c", ticketId: "NJD-1403", trace_id: "t-3" }),
+    );
+    const w = await h.actor.withdrawSite({
+      siteId: "site-c",
+      ticketId: "NJD-1403",
+      trace_id: "t-4",
+      at: T0 + MIN,
+    });
+    expect(w.siteCount).toBe(2);
+    const afterWithdraw = await h.actor.getIncident({ trace_id: "t-5" });
+    expect(afterWithdraw.incident?.priority).toBe("P1");
+    const d = await h.actor.reportSite(
+      report({ siteId: "site-d", ticketId: "NJD-1404", trace_id: "t-6", at: T0 + 7 * HOUR }),
+    );
+    expect(d.declared).toBe(false);
+    expect(d.upgraded).toBe(false);
+    expect(d.siteCount).toBe(1);
+    const inc = d.incident as Incident;
+    expect(inc.priority).toBe("P1");
+    expect(Object.keys(inc.sites)).toEqual(["site-d"]);
+  });
+
+  it("incident.sites mirrors the live members after every membership change", async () => {
+    const h = makeRegionState("riyadh-north");
+    await h.actor.reportSite(report());
+    await h.actor.reportSite(
+      report({ siteId: "site-b", ticketId: "NJD-1402", trace_id: "t-2" }),
+    );
+    await h.actor.reportSite(
+      report({ siteId: "site-c", ticketId: "NJD-1403", trace_id: "t-3" }),
+    );
+    const up = await h.actor.getIncident({ trace_id: "t-4" });
+    expect(Object.keys(up.incident?.sites ?? {})).toHaveLength(3);
+    expect(up.incident?.version).toBe(2);
+    const d = await h.actor.reportSite(
+      report({ siteId: "site-d", ticketId: "NJD-1404", trace_id: "t-5", at: T0 + MIN }),
+    );
+    expect(d.declared).toBe(false);
+    expect(d.upgraded).toBe(false);
+    const live = await h.actor.getIncident({ trace_id: "t-6" });
+    expect(Object.keys(live.incident?.sites ?? {}).sort()).toEqual([
+      "site-a",
+      "site-b",
+      "site-c",
+      "site-d",
+    ]);
+    expect(live.incident?.version).toBe(3);
+    expect(live.incident?.priority).toBe("P1");
+    const w = await h.actor.withdrawSite({
+      siteId: "site-c",
+      ticketId: "NJD-1403",
+      trace_id: "t-7",
+      at: T0 + 2 * MIN,
+    });
+    expect(w.siteCount).toBe(3);
+    const after = await h.actor.getIncident({ trace_id: "t-8" });
+    expect(Object.keys(after.incident?.sites ?? {}).sort()).toEqual([
+      "site-a",
+      "site-b",
+      "site-d",
+    ]);
+    expect(after.incident?.priority).toBe("P1");
+    expect(after.incident?.version).toBe(4);
+    await h.actor.reportSite(
+      report({ siteId: "site-b", ticketId: "NJD-1499", trace_id: "t-9", at: T0 + 3 * MIN }),
+    );
+    const replaced = await h.actor.getIncident({ trace_id: "t-10" });
+    expect(replaced.incident?.sites["site-b"]).toEqual({
+      ticketId: "NJD-1499",
+      at: T0 + 3 * MIN,
+    });
+    expect(replaced.incident?.version).toBe(5);
+    const pruned = await h.actor.reportSite(
+      report({ siteId: "site-e", ticketId: "NJD-1405", trace_id: "t-11", at: T0 + 7 * HOUR }),
+    );
+    expect(pruned.siteCount).toBe(1);
+    const final = await h.actor.getIncident({ trace_id: "t-12" });
+    expect(Object.keys(final.incident?.sites ?? {})).toEqual(["site-e"]);
+    expect(final.incident?.priority).toBe("P1");
+    expect(final.incident?.version).toBe(6);
   });
 
   it("withdrawing below two members while an incident is open keeps the incident", async () => {

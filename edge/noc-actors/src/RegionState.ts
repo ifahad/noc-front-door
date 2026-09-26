@@ -138,15 +138,23 @@ export class RegionState extends StatefulActor {
       });
     }
     const incident = (await this.ctx.storage.get<Incident | null>("incident")) ?? null;
-    let declared = false;
-    let upgraded = false;
-    if (!incident && siteCount >= 2) {
+    if (!incident) {
+      if (siteCount < 2) {
+        return {
+          incident: null,
+          declared: false,
+          upgraded: false,
+          siteCount,
+          trace_id: input.trace_id,
+          actor_ms: Date.now() - started,
+        };
+      }
       const seq = ((await this.ctx.storage.get<number>("seq")) ?? 0) + 1;
       const created: Incident = {
         id: mintIncidentId(input.regionCode, seq),
         version: 1,
         declaredAt: input.at,
-        priority: "P2",
+        priority: siteCount >= 3 ? "P1" : "P2",
         sites: this.snapshot(members),
         nextUpdateAt: input.at + UPDATE_WINDOW_MS,
         ackAt: null,
@@ -155,7 +163,6 @@ export class RegionState extends StatefulActor {
       };
       await this.ctx.storage.put("seq", seq);
       await this.ctx.storage.put("incident", created);
-      declared = true;
       await this.pushEvent({
         evt: "incident_declared",
         at: input.at,
@@ -166,32 +173,39 @@ export class RegionState extends StatefulActor {
       });
       return {
         incident: created,
-        declared,
-        upgraded,
+        declared: true,
+        upgraded: false,
         siteCount,
         trace_id: input.trace_id,
         actor_ms: Date.now() - started,
       };
     }
-    if (incident && siteCount >= 3 && incident.priority === "P2") {
+    const nextSites = this.snapshot(members);
+    const sitesChanged = !this.sitesEqual(incident.sites, nextSites);
+    let upgraded = false;
+    if (incident.priority === "P2" && siteCount >= 3) {
       incident.priority = "P1";
-      incident.version += 1;
-      incident.sites = this.snapshot(members);
-      incident.nextUpdateAt = input.at + UPDATE_WINDOW_MS;
       upgraded = true;
+    }
+    if (sitesChanged || upgraded) {
+      incident.sites = nextSites;
+      incident.version += 1;
+      if (upgraded) {
+        incident.nextUpdateAt = input.at + UPDATE_WINDOW_MS;
+      }
       await this.ctx.storage.put("incident", incident);
       await this.pushEvent({
-        evt: "incident_upgraded",
+        evt: upgraded ? "incident_upgraded" : "incident_sites_updated",
         at: input.at,
         trace_id: input.trace_id,
         incident_id: incident.id,
         priority: incident.priority,
-        upgraded: true,
+        upgraded,
       });
     }
     return {
       incident,
-      declared,
+      declared: false,
       upgraded,
       siteCount,
       trace_id: input.trace_id,
@@ -217,6 +231,22 @@ export class RegionState extends StatefulActor {
     }
     if (membersDirty) {
       await this.ctx.storage.put("members", members);
+      const incident = (await this.ctx.storage.get<Incident | null>("incident")) ?? null;
+      if (incident) {
+        const nextSites = this.snapshot(members);
+        if (!this.sitesEqual(incident.sites, nextSites)) {
+          incident.sites = nextSites;
+          incident.version += 1;
+          await this.ctx.storage.put("incident", incident);
+          await this.pushEvent({
+            evt: "incident_sites_updated",
+            trace_id: input.trace_id,
+            incident_id: incident.id,
+            priority: incident.priority,
+            upgraded: false,
+          });
+        }
+      }
     }
     return {
       siteCount: Object.keys(members).length,
@@ -312,10 +342,26 @@ export class RegionState extends StatefulActor {
     for (const siteId of Object.keys(members).sort()) {
       sites[siteId] = {
         ticketId: members[siteId].ticketId,
-        at: members[siteId].lastAt,
+        at: members[siteId].firstAt,
       };
     }
     return sites;
+  }
+
+  private sitesEqual(
+    a: Incident["sites"],
+    b: Incident["sites"],
+  ): boolean {
+    const ka = Object.keys(a).sort();
+    const kb = Object.keys(b).sort();
+    if (ka.length !== kb.length) {
+      return false;
+    }
+    return ka.every((siteId) => {
+      const ea = a[siteId];
+      const eb = b[siteId];
+      return !!eb && ea.ticketId === eb.ticketId && ea.at === eb.at;
+    });
   }
 
   private async pushEvent(event: ActorEvent): Promise<void> {
