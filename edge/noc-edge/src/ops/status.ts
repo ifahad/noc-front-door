@@ -159,12 +159,14 @@ async function faultFlags(kv: KvPort, failed: { failed: boolean }): Promise<stri
   return active.sort();
 }
 
+const PUBLIC_REGIONS = REGIONS.filter((r) => r.region !== "lab");
+
 async function regionIncidents(
   kv: KvPort,
   failed: { failed: boolean },
 ): Promise<StatusRegion[]> {
   const regions: StatusRegion[] = [];
-  for (const seed of REGIONS) {
+  for (const seed of PUBLIC_REGIONS) {
     const raw = await readBounded(
       kv.get(kvKey("incident", "active", seed.region)),
       `status.incident.${seed.region}`,

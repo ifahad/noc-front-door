@@ -1,4 +1,5 @@
 import { kvKey } from "../../../shared/src/kvkeys";
+import { REGIONS } from "../../../shared/src/seed";
 import type { SeedAdapter } from "../../../shared/src/itsm";
 import { deadline } from "../../../shared/src/timing";
 import { logEvent } from "../log";
@@ -9,7 +10,6 @@ import { handleMcp } from "../mcp/server";
 
 const CHECK_DEADLINE_MS = 1500;
 const SUMMARY_INTERVAL_MS = 60_000;
-const ACTIVE_PREFIX = kvKey("incident", "active") + "/";
 
 export interface HealthChecks {
   kv_ms: number;
@@ -103,15 +103,16 @@ async function mcpCheck(deps: HealthDeps): Promise<{ ms: number; ok: boolean }> 
 
 async function syncCheck(deps: HealthDeps): Promise<{ ms: number; ok: boolean }> {
   const started = Date.now();
-  try {
-    const keys = await deps.kv.list(ACTIVE_PREFIX);
-    for (const key of keys) {
-      const region = key.slice(ACTIVE_PREFIX.length);
-      if (region.length === 0) continue;
-      await syncProjection({ actors: deps.actors, kv: deps.kv }, region, deps.trace_id);
+  for (const seed of REGIONS) {
+    if (seed.region === "lab") continue;
+    const raced = await deadline(
+      syncProjection({ actors: deps.actors, kv: deps.kv }, seed.region, deps.trace_id),
+      CHECK_DEADLINE_MS,
+      `health.sync.${seed.region}`,
+    );
+    if (!raced.ok) {
+      return { ms: Date.now() - started, ok: false };
     }
-  } catch {
-    return { ms: Date.now() - started, ok: false };
   }
   return { ms: Date.now() - started, ok: true };
 }

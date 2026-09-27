@@ -71,7 +71,9 @@ describe("ops status", () => {
       label: "Riyadh North",
       incident: { id: "INC-101", priority: "P1", site_count: 2, declared_local: "9:52 AM" },
     });
-    expect(payload.regions.map((r) => r.region)).toEqual(REGIONS.map((r) => r.region));
+    expect(payload.regions.map((r) => r.region)).toEqual(
+      REGIONS.filter((r) => r.region !== "lab").map((r) => r.region),
+    );
     const ruh114 = payload.sites.find((s) => s.site_id === "RUH-114");
     expect(ruh114?.open_ticket).toEqual({
       id: "NJD-1401",
@@ -85,6 +87,20 @@ describe("ops status", () => {
       SITES.filter((s) => !s.hidden).map((s) => s.site_id),
     );
     expect(payload.degraded).toBeUndefined();
+  });
+
+  it("excludes the internal lab region from the public status", async () => {
+    const kv = new FakeKv();
+    const actors = new FakeActorPort();
+    await seedState(kv, actors, T0);
+    await kv.put(kvKey("incident", "active", "lab"), JSON.stringify({
+      id: "INC-901", version: 1, region_label: "Lab", started_local: "9:52 AM",
+      summary: "s", eta_local: "10:22 AM", priority: "P2", site_count: 1,
+    }));
+    const payload = await runStatus(kv, actors);
+    expect(payload.regions.some((r) => r.region === "lab")).toBe(false);
+    const html = renderStatusHtml(payload);
+    expect(html).not.toContain("Lab");
   });
 
   it("marks a heartbeat red when it is stale", async () => {

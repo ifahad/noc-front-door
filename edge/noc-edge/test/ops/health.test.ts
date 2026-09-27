@@ -83,6 +83,54 @@ describe("ops health deep", () => {
     expect(result.checks.mcp_ms).toBeGreaterThanOrEqual(0);
   });
 
+  it("heals a missing projection for a region whose actor reports an active incident", async () => {
+    const kv = new FakeKv();
+    const actors = new FakeActorPort();
+    const ruh121 = await actors.site("RUH-121").openOrAttach({
+      k: "s1",
+      trace_id: "t-1",
+      callerRef: "none",
+      symptom: "WAN link down",
+      impact: "site_down",
+      serviceAffecting: true,
+      priority: "P2",
+      at: T0,
+      siteCode: "21",
+    });
+    const ruh133 = await actors.site("RUH-133").openOrAttach({
+      k: "s2",
+      trace_id: "t-2",
+      callerRef: "none",
+      symptom: "WAN link down",
+      impact: "site_down",
+      serviceAffecting: true,
+      priority: "P2",
+      at: T0,
+      siteCode: "33",
+    });
+    await actors.region("riyadh-north").reportSite({
+      siteId: "RUH-121",
+      ticketId: ruh121.ticket.id,
+      regionCode: "1",
+      trace_id: "t-1",
+      at: T0,
+    });
+    await actors.region("riyadh-north").reportSite({
+      siteId: "RUH-133",
+      ticketId: ruh133.ticket.id,
+      regionCode: "1",
+      trace_id: "t-2",
+      at: T0,
+    });
+    expect(kv.raw(kvKey("incident", "active", "riyadh-north"))).toBeNull();
+    const result = await runDeepHealth(makeDeps({ kv, actors }));
+    expect(result.ok).toBe(true);
+    const projection = JSON.parse(
+      kv.raw(kvKey("incident", "active", "riyadh-north")) as string,
+    ) as { id: string; site_count: number };
+    expect(projection.site_count).toBe(2);
+  });
+
   it("resyncs the projection for regions with an active incident", async () => {
     const kv = new FakeKv();
     const actors = new FakeActorPort();

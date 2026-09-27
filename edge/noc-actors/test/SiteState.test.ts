@@ -56,6 +56,37 @@ describe("SiteState", () => {
     expect(next.callsToday).toBe(1);
   });
 
+  it("getRecents returns the recent calls without touching storage", async () => {
+    const h = makeSiteState("RUH-114");
+    await h.actor.recordCall({ k: k1, trace_id: "t-a", at: T0 });
+    await h.actor.recordCall({ k: k2, trace_id: "t-b", at: T0 + MIN });
+    const keysBefore = h.storage.keys().join(",");
+    const out = await h.actor.getRecents({ trace_id: "t-probe" });
+    expect(out.trace_id).toBe("t-probe");
+    expect(out.calls.map((c) => c.trace_id)).toEqual(["t-a", "t-b"]);
+    expect(
+      out.calls.every(
+        (c) => typeof c.k === "string" && c.k.length > 0 && typeof c.at === "number",
+      ),
+    ).toBe(true);
+    expect(h.storage.keys().join(",")).toBe(keysBefore);
+    const empty = await h.actor.getRecents({});
+    expect(empty.trace_id).toBe("none");
+    const fresh = makeSiteState("TST-001");
+    expect((await fresh.actor.getRecents({})).calls).toEqual([]);
+  });
+
+  it("getRecents is bounded to the 10 most recent calls", async () => {
+    const h = makeSiteState("RUH-114");
+    for (let i = 0; i < 12; i++) {
+      await h.actor.recordCall({ k: `caller-${i}`, trace_id: `t-${i}`, at: T0 + i * MIN });
+    }
+    const out = await h.actor.getRecents({});
+    expect(out.calls).toHaveLength(10);
+    expect(out.calls[0].trace_id).toBe("t-2");
+    expect(out.calls[9].trace_id).toBe("t-11");
+  });
+
   it("recordCall stays idempotent on k after more than 10 other callers", async () => {
     const h = makeSiteState("RUH-114");
     await h.actor.recordCall({ k: k1, trace_id: "t-1", at: T0 });
