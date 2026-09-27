@@ -291,7 +291,7 @@ const JS = `
 
   /* ---- keyboard shortcuts (Langfuse-style) ---- */
   document.addEventListener('keydown', function (e) {
-    if (e.metaKey || e.ctrlKey || e.altKey) return;
+    if (e.metaKey || e.ctrlKey || e.altKey || e.shiftKey) return;
     var t = e.target;
     if (t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.isContentEditable)) return;
     var k = (e.key || '').toLowerCase();
@@ -332,7 +332,7 @@ const JS = `
     return 'quiet';
   }
   function label(s) { return String(s || '').replace(/^the\\s+/i, ''); }
-  function pushEvent(kind, text, flash) {
+  function pushEvent(kind, text) {
     events.unshift({ kind: kind, text: text, at: Date.now(), fresh: true });
     if (events.length > 8) events.length = 8;
     renderEvents();
