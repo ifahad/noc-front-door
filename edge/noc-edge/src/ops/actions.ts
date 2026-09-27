@@ -119,6 +119,7 @@ export interface PageClaimResult {
   region: string;
   pageId: string;
   claimed: boolean;
+  page: { id: string; level: number } | null;
 }
 
 export interface PageSentResult {
@@ -227,7 +228,12 @@ export async function claimRegionPage(
     page_id: input.pageId,
     claimed: out.claimed,
   });
-  return { region: input.region, pageId: input.pageId, claimed: out.claimed };
+  return {
+    region: input.region,
+    pageId: input.pageId,
+    claimed: out.claimed,
+    page: out.page === null ? null : { id: out.page.id, level: out.page.level },
+  };
 }
 
 export async function markRegionPageSent(
@@ -438,16 +444,17 @@ export async function resolveIncident(
   if (!REGIONS.some((r) => r.region === region)) {
     throw new OpsActionError("unknown_region");
   }
-  // The incident is gone once resolve lands, so read the actor truth first.
-  const before = await deps.actors.region(region).getIncident({ trace_id: deps.trace_id });
   const { incident } = await deps.actors
     .region(region)
     .resolve({ trace_id: deps.trace_id, at: deps.now });
   await syncProjection({ actors: deps.actors, kv: deps.kv }, region, deps.trace_id);
+  // Only the resolve() call's own incident gates the report: a report is
+  // written for an incident that this call actually resolved. RegionState
+  // resolve carries the full page history (sent and unsent) in incident.pages.
   const report =
-    before.incident === null
+    incident === null
       ? { ok: false, key: "" }
-      : await writeReportAfterResolve(deps, region, before.incident);
+      : await writeReportAfterResolve(deps, region, incident);
   logEvent("ops.resolve", {
     hop: "ops/resolve",
     trace_id: deps.trace_id,

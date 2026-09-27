@@ -233,6 +233,19 @@ describe("listReports", () => {
     }
   });
 
+  it("sorts by uploaded time descending with a key tie-break, not lexically", async () => {
+    const bucket = new FakeBucket();
+    bucket.setNow(Date.UTC(2026, 8, 27, 6, 1, 0));
+    await bucket.put("incidents/INC-1001-2026-09-27T06-00-00Z.json", "{}");
+    bucket.setNow(Date.UTC(2026, 8, 27, 6, 0, 0));
+    await bucket.put("incidents/INC-1002-2026-09-27T06-00-00Z.json", "{}");
+    const out = await listReports(bucket);
+    expect(out.reports.map((r) => r.key)).toEqual([
+      "incidents/INC-1001-2026-09-27T06-00-00Z.json",
+      "incidents/INC-1002-2026-09-27T06-00-00Z.json",
+    ]);
+  });
+
   it("filters non-report keys", async () => {
     const bucket = new FakeBucket();
     bucket.put("incidents/INC-1001-2026-09-27T06-00-00Z.json", "{}");

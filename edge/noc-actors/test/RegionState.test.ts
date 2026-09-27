@@ -744,6 +744,56 @@ describe("RegionState escalation ladder", () => {
     expect((await h.actor.getPages({ trace_id: "t-9" })).trace_id).toBe("t-9");
   });
 
+  it("getIncident returns the incident's full page history including sent pages", async () => {
+    const h = makeRegionState("riyadh-north");
+    await declareIncident(h, { at: T1 });
+    const due = T1 + P2_WINDOW_MS;
+    await h.actor.tick({ now: due });
+    const claim = await h.actor.claimPage({
+      pageId: "INC-1001:p1",
+      claimer: "probe-a",
+      now: due + 1,
+    });
+    expect(claim.claimed).toBe(true);
+    await h.actor.markPageSent({ pageId: "INC-1001:p1", now: due + 2 });
+
+    const out = await h.actor.getIncident({ trace_id: "t-3" });
+    const pages = (out.incident?.pages ?? []) as unknown as Page[];
+    expect(pages).toHaveLength(1);
+    expect(pages[0]).toMatchObject({
+      id: "INC-1001:p1",
+      level: 1,
+      created_at: due,
+      claimedBy: "probe-a",
+      sentAt: due + 2,
+    });
+  });
+
+  it("getIncident keeps other pages out and resolve carries the same history", async () => {
+    const h = makeRegionState("riyadh-north");
+    await declareIncident(h, { at: T1 });
+    await h.actor.tick({ now: T1 + P2_WINDOW_MS });
+    // A foreign page id under the same storage key must not leak in.
+    const stored = ((await h.storage.get("pages")) ?? []) as unknown as Page[];
+    stored.push({
+      id: "INC-9999:p9",
+      level: 3,
+      region: "lab",
+      created_at: T1,
+      claimedBy: null,
+      claimedAt: null,
+      sentAt: null,
+    });
+    await h.storage.put("pages", stored);
+    const live = await h.actor.getIncident({ trace_id: "t-3" });
+    const livePages = (live.incident?.pages ?? []) as unknown as Page[];
+    expect(livePages.map((p) => p.id)).toEqual(["INC-1001:p1"]);
+
+    const resolved = await h.actor.resolve({ trace_id: "t-4", at: T1 + P2_WINDOW_MS + 1 });
+    const resolvedPages = (resolved.incident?.pages ?? []) as unknown as Page[];
+    expect(resolvedPages.map((p) => p.id)).toEqual(["INC-1001:p1"]);
+  });
+
   it("alarm() at due escalates with the real clock and duplicate delivery is harmless", async () => {
     const h = makeRegionState("riyadh-north");
     const inc = await declareIncident(h, { at: T1 });

@@ -324,7 +324,7 @@ export class RegionState extends StatefulActor {
 
   async getIncident(input: GetIncidentInput = {}): Promise<GetIncidentResult> {
     const started = Date.now();
-    const incident = (await this.ctx.storage.get<Incident | null>("incident")) ?? null;
+    const incident = await this.incidentWithPages();
     return {
       incident,
       trace_id: input.trace_id ?? "none",
@@ -332,9 +332,21 @@ export class RegionState extends StatefulActor {
     };
   }
 
+  // The escalated pages live under their own storage key (PAGES_KEY); the
+  // stored incident object's pages field stays empty. Callers that read the
+  // incident — getIncident and resolve — get the full page history for that
+  // incident (sent and unsent) merged in, so reports can show the timeline.
+  private async incidentWithPages(): Promise<Incident | null> {
+    const incident = (await this.ctx.storage.get<Incident | null>("incident")) ?? null;
+    if (incident === null) return null;
+    const all = (await this.ctx.storage.get<Page[]>(PAGES_KEY)) ?? [];
+    const prefix = incident.id + ":p";
+    return { ...incident, pages: all.filter((page) => page.id.startsWith(prefix)) };
+  }
+
   async resolve(input: ResolveInput): Promise<ResolveResult> {
     const started = Date.now();
-    const incident = (await this.ctx.storage.get<Incident | null>("incident")) ?? null;
+    const incident = await this.incidentWithPages();
     await this.ctx.storage.deleteAlarm();
     if (incident) {
       await this.ctx.storage.delete("incident");

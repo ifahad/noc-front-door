@@ -173,8 +173,9 @@ async function pagingCycle(edgeUrl, opsToken, claimer, claimedIds) {
     }
     if (claim?.claimed !== true) continue;
     claimedIds.add(item.pageId);
-    pageBanner(item.pageId, item.region, claim.page?.level ?? '?');
-    notify('NOC Front Door: page', `${item.pageId} level ${claim.page?.level ?? '?'} (${item.region})`);
+    const level = claim.page?.level ?? item.level ?? '?';
+    pageBanner(item.pageId, item.region, level);
+    notify('NOC Front Door: page', `${item.pageId} level ${level} (${item.region})`);
     logLine('page.sent', {
       region: item.region,
       page_id: item.pageId,

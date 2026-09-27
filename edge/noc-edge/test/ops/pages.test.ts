@@ -205,7 +205,12 @@ describe("POST /ops/pages/claim", () => {
       claimer: "host-a:11",
     });
     expect(first.status).toBe(200);
-    expect(((await first.json()) as { claimed: boolean }).claimed).toBe(true);
+    const firstBody = (await first.json()) as {
+      claimed: boolean;
+      page: { id: string; level: number } | null;
+    };
+    expect(firstBody.claimed).toBe(true);
+    expect(firstBody.page).toEqual({ id: "INC-1001:p1", level: 1 });
 
     const second = await opsRequest("POST", "/ops/pages/claim", bundle, {
       region: "riyadh-north",

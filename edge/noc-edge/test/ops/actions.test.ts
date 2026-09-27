@@ -270,6 +270,82 @@ describe("ops resolve report", () => {
     expect(bucket.keys()).toEqual([]);
     expect(kv.raw(LAST_REPORT_KEY)).toBeNull();
   });
+
+  it("carries the full page history of a sent page into the report", async () => {
+    const { deps, actors } = DEPS();
+    const bucket = new FakeBucket();
+    deps.reports = bucket;
+    await resetAll(deps);
+    await stageTwoSites({ deps, actors });
+    await actors.region("riyadh-north").tick({ now: T0 + 300_000 });
+    await actors.region("riyadh-north").claimPage({
+      pageId: "INC-1001:p1",
+      claimer: "prober",
+      now: T0 + 301_000,
+    });
+    await actors
+      .region("riyadh-north")
+      .markPageSent({ pageId: "INC-1001:p1", now: T0 + 302_000 });
+
+    const resolved = await resolveIncident(deps, "riyadh-north");
+    expect(resolved.report.ok).toBe(true);
+    const report = JSON.parse(bucket.raw(resolved.report.key) as string) as {
+      pages: { id: string; level: number; created_at: string; sent_at: string | null }[];
+    };
+    expect(report.pages).toEqual([
+      {
+        id: "INC-1001:p1",
+        level: 1,
+        created_at: new Date(T0 + 300_000).toISOString(),
+        sent_at: new Date(T0 + 302_000).toISOString(),
+      },
+    ]);
+  });
+
+  it("writes the report only when resolve itself returned the incident", async () => {
+    const kv = new FakeKv();
+    const bucket = new FakeBucket();
+    const incident = {
+      id: "INC-1001",
+      version: 1,
+      declaredAt: T0,
+      priority: "P2" as const,
+      sites: { "RUH-121": { ticketId: "NJD-2101", at: T0 } },
+      nextUpdateAt: T0,
+      ackAt: null,
+      pageSeq: 0,
+      esc: null,
+      pages: [],
+    };
+    const actorStub = {
+      getIncident: async () => ({ incident, trace_id: "t-ops-1", actor_ms: 0 }),
+      resolve: async () => ({ incident: null, trace_id: "t-ops-1", actor_ms: 0 }),
+    };
+    const actors = {
+      site: () => {
+        throw new Error("not_used");
+      },
+      region: () => actorStub,
+    } as unknown as ActionDeps["actors"];
+    const deps: ActionDeps = {
+      kv,
+      actors,
+      adapter: new SeedAdapter({
+        seedLocal: { pins: {}, contacts: [] },
+        pepper: PEPPER,
+        now: () => T0,
+      }),
+      now: T0,
+      trace_id: "t-ops-1",
+      reports: bucket,
+    };
+
+    const resolved = await resolveIncident(deps, "riyadh-north");
+    expect(resolved.resolved).toBeNull();
+    expect(resolved.report).toEqual({ ok: false, key: "" });
+    expect(bucket.keys()).toEqual([]);
+    expect(kv.raw(LAST_REPORT_KEY)).toBeNull();
+  });
 });
 
 describe("ops unlock", () => {

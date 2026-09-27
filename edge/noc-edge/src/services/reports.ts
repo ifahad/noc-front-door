@@ -205,7 +205,14 @@ export async function listReports(bucket: ReportBucket | null): Promise<ReportLi
   }
   const reports = page.value.objects
     .filter((object) => REPORT_KEY_RE.test(object.key))
-    .sort((a, b) => b.key.localeCompare(a.key))
+    // Newest upload first; objects whose upload time is unknown sort last and
+    // are then ordered by key descending.
+    .sort((a, b) => {
+      const ta = a.uploaded instanceof Date ? a.uploaded.getTime() : 0;
+      const tb = b.uploaded instanceof Date ? b.uploaded.getTime() : 0;
+      if (ta !== tb) return tb - ta;
+      return b.key.localeCompare(a.key);
+    })
     .slice(0, REPORTS_LIST_LIMIT)
     .map((object) => ({
       key: object.key,
