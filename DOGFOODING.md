@@ -82,3 +82,17 @@ What didn't:
 - Silent length stops: exit 0 with zero output (DEBUG #2) — caught only by the wrapper's finish-reason check.
 - Long continuations on big tasks: T11 needed 527k fresh input + 6.16M cached tokens in one session; fresh, tightly scoped fix sessions were cheaper and more reliable.
 - Implementer reports sometimes overstate test coverage (T3: a "compliant" file had a raw phone-digit literal; T12b: a claimed test did not exist) — reviews treat reports as unverified claims and verify against the diff.
+
+## Plan 2 build (2026-09-27 → 28)
+
+Stretch goals: actor alarms, live NOC console, object-storage reports, Arabic mode. Same process: architect (Claude) plans and rules, OpenCode implements, independent lens reviews confirm/refute before merge.
+
+- **Parallel lanes in git worktrees (R2):** Lane A (edge/actors: P2-1 alarms → P2-2 paging → P2-3 console → P2-4 reports) and Lane B (assistant: P2-5 Arabic → P2-6 voice) ran simultaneously in worktrees `wt-p2a`/`wt-p2c`/`wt-t12…`-style branches on disjoint files (only `router.ts` was lane-A-only), then integrated onto main. Same pattern as Plan 1's R17/R27, applied at plan scale.
+- **Models used:** GLM-5.3-Flash for the default implementer lanes; the NOC wall page got an explicit model upgrade — first `telnyx/zai-org/GLM-5.3` (dark wall, committed), then Kimi-K3 for a redesign (R5/R7: Langfuse-dark + real fonts); **both versions were rejected by the product owner** ("AI awful look"), so per R8 the final visual layer (`src/demo/page.ts` + tests) was designed and written by **Claude** on top of the tested OpenCode backend. Kimi-K3's Langfuse run was stopped before it wrote anything. The rest of the stack stayed OpenCode-authored.
+- **Review catches worth telling:**
+  - **P2-2 CRITICAL — page-id collision:** page ids were `incidentId:level`, and a P2→P1 upgrade resets `esc.level` → the post-upgrade page shared an id with an already-sent page and was never delivered; the prober's `claimedIds` cache masked it permanently. Fixed with a persisted monotonic `:pN` counter + regression test (DEBUGLOG #14).
+  - **P2-4 CRITICAL — missing `region`:** the Cloud Storage binding needed `region`; the CLI validates it and the runtime silently skips a region-less bucket block. The architect's own prompt snippet omitted the field — the review caught it before ship (DEBUGLOG #13).
+  - **P2-5 — mandatory actions as LLM tool calls:** the architect's Arabic flow design let transfer/hangup depend on the LLM calling the tool in the same turn as the spoken line — exactly the pattern probe P0-3f had already found unreliable on Kimi-K2.6. An architect design flaw, not an implementer defect, caught by review and fixed with deterministic tool-node exits (R6/R10).
+  - **P2-3 — board cache TTL counted from build start:** a build slower than 8 s was abandoned while a second concurrent build re-hit the single mux actor (load amplification on the one working instance). Fixed: pending builds are always joined; the window starts when a build settles.
+  - **The driver-agent answered the user's chat instead of running its task:** during Plan 2 an interactive OpenCode agent session started conversing with the user instead of executing the dispatch. The fix was to launch OpenCode directly (`opencode run` per task) rather than through an agent driver.
+- **Spend:** balance **18.71 USD** at 01:0x on 2026-09-28 after the 25 USD top-up.

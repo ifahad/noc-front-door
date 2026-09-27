@@ -105,3 +105,48 @@ Blocking findings from the build, with evidence. One entry per finding.
 - Fix: validation moved to voice calls (DEBUG #8); follow-up T12c logs `mcp.session` `{outcome, reason: no_conv_id|no_conv_link|no_session|timeout}` — the MCP fallback previously gave no reason in the logs (observability gap found live).
 - Verification: voice calls #2/#3 validate the flow end-to-end. Chat remains usable for disclosure/greeting checks only.
 
+## #10 — 2026-09-27 — The public /demo page rendered no call launcher
+
+- Symptom: the `/demo` page loaded and the widget connected (login ok, agent connected, EU fr5) but no launcher button appeared — the visitor could not start a call.
+- Signal: headless Chromium (playwright-core + cached chromium): the `telnyx-ai-agent` element had no shadow-DOM launcher; the assistant read-back had `widget_settings: null`.
+- Evidence: the live page vs the assistant read-back; `apply.mjs` output showing the assistant config with no `widget_settings` block.
+- Hypothesis: `widget_settings` was never part of the assistant config, so the widget had no launcher settings to render.
+- Fix: added `widget_settings` via config-as-code (`scripts/apply.mjs` — never patch the assistant outside `apply.mjs`); commit `aaa8eec`.
+- Verification: after the apply, headless Chromium confirms the "Talk to Sanad" launcher renders (bottom-right, dark) and the agent connects (EU fr5).
+
+## #11 — 2026-09-27 — Incident vanished from the board ~2 h after its last sync
+
+- Symptom: INC-1002 was still held by the actor but had disappeared from `/ops/status` and the NOC wall ~2 h after its last sync.
+- Signal: the KV projection is written with `PROJECTION_TTL_SECONDS = 7200` (2 h TTL); with **no prober running**, nothing re-synced it from actor truth — the heal loop is load-bearing, not optional.
+- Evidence: `edge/noc-edge/src/services/incidents.ts` (TTL 7200); the board's stale/absent projection while `RegionState` still held the incident.
+- Hypothesis: the projection's TTL assumed the heal loop runs continuously; the design intent was that the prober's deep-health sync re-writes projections every ~10 s.
+- Fix: operational — the prober now runs continuously (`nohup`, `~/code/telnyx-fde/ops-logs/prober.log`); the runbook says "keep the prober running". Re-staged INC-1003 (P2, 2 branches) at 23:30.
+- Verification: with the prober running, projections stay fresh (deep-health `syncCheck` heals every region from actor truth; README "Try it" warns reviewers).
+
+## #12 — 2026-09-28 — Actor alarms work although new instances cannot be created
+
+- Symptom: given DEBUG #4 (new actor instances cannot activate on this account), it was reasonable to assume actor alarms would also not fire.
+- Signal: the live INC-1004 test (00:46:50 stage → 00:51:4x escalation): the ladder escalated to L1 and minted page `INC-1004:p1` while **every** `/ops/tick` in the window reported `fired:0` (incl. 21:51:51Z, 4 s before the claim) — so the escalation was driven by the **platform alarm** on the mux host, fanned out to the entity (not the tick fallback).
+- Evidence: [docs/evidence/alarms-live.md](docs/evidence/alarms-live.md); the prober claimed and "sent" the page at 00:51:53 (PAGE banner, `page.sent` log, pending 0).
+- Hypothesis: the mux host (`Counter/demo`) is the one pre-existing instance, and its own alarm — set via `ctx.storage.setAlarm` — is delivered by the platform; the host's `alarm()` fans out to the entities.
+- Fix: none needed — this is the finding: the mux host's alarm path is live.
+- Verification: live alarm test (see the evidence file); the tick fallback stays as a belt-and-braces path.
+
+## #13 — 2026-09-28 — Cloud Storage binding missing `region` (caught before ship)
+
+- Symptom: the P2-4 incident-report feature would not bind — the CLI rejects the manifest, and at runtime a region-less bucket binding is silently skipped (the function ships without the binding).
+- Signal: `telnyx.toml` `[cloudstorage]` block lacked `region`; CLI validation error on ship; the runtime binding list skipped the block.
+- Evidence: P2-4 review (2 lenses + skeptics) confirmed the Critical before any deploy; the fix is commit `9772a47`.
+- Hypothesis: the architect's prompt snippet for the binding omitted the required `region` field.
+- Fix: `region = "us-central-1"` added to the `cloudstorage` block (the architect-provided snippet was the defect source; the review caught it before ship).
+- Verification: dry-run validation passes; the feature is deployed only after this fix (`built, deploy pending` in README until a live report write is recorded).
+
+## #14 — 2026-09-28 — Page-id collision after a P2→P1 upgrade (page never delivered)
+
+- Symptom: after an incident upgraded P2→P1, the post-upgrade page shared its id with an already-sent page, so the new page was never delivered (claim/mark-sent hit the stale entry), and the prober's `claimedIds` cache masked it forever.
+- Signal: page id was `incidentId + ":" + level`; a P2→P1 upgrade resets `esc.level`, so the id `INC-x:p1` was minted twice.
+- Evidence: P2-2 review (2 lenses + skeptics) — CONFIRMED Critical, reproduced by the reviewer.
+- Hypothesis: deriving the page id from a field that can reset makes the id non-unique over an incident's lifetime.
+- Fix: persisted monotonic per-incident page counter for ids (`INC-x:p1`, `:p2`, … — `pageSeq`), with the level kept as a separate field; per-region isolation in pending pages; one JSON warn log per paging failure (never the token). Commits `2d1a3b3` + `85cfaf9`.
+- Verification: regression test pins that an upgrade after a sent P2 page yields a fresh id; re-review 4/4 addressed, no new issues.
+

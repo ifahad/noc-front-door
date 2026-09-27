@@ -4,8 +4,12 @@ Najd Networks is a fictional managed-services provider in Saudi Arabia; its cust
 
 ## Try it
 
-- Talk page (browser web call): **https://noc-edge-41d2a334-7.telnyxcompute.com/demo** — the Trial account has no phone number (DEBUGLOG #1), so demos run as web calls.
-- Live status board: **https://noc-edge-41d2a334-7.telnyxcompute.com/ops/status**
+Open the **NOC wall**: **https://noc-edge-41d2a334-7.telnyxcompute.com/demo**
+
+- **Left — call Sanad.** **Start call** opens the browser web call (the Trial account has no phone number, DEBUGLOG #1, so demos run as web calls). Keyboard shortcuts: `C` start the call, `B` open the board in a new tab, `1`–`3` jump to a scenario card. Demo PIN chips sit on the scenario cards and copy on click — they are served from the `DEMO_GUIDE` Edge secret, so no PIN literal lives in the code.
+- **Right / below — the live board.** Region cards, incidents (P2/P1), open tickets, the escalation column (SLA level + due time / ACKED), KPI tiles and a client-side event feed, fed by **Stateful Actors** and refreshed every 5 s from the cached public `/ops/board` (single-flight with ~8 s reuse, so viewers cannot load the single mux actor).
+- **Operator drawer** at the bottom: demo controls from the browser (the ops token stays in this tab's `sessionStorage`, sent only to this site's `/ops` routes) — reset, stage incident, acknowledge, resolve.
+- Live status page (raw, masked): **https://noc-edge-41d2a334-7.telnyxcompute.com/ops/status**
 
 Reviewer credentials (fictional demo sites, published intentionally for reviewers):
 
@@ -20,14 +24,14 @@ Three scripted scenarios:
 2. **Wrong PIN three times** → the call is locked for phone verification → escalation to an engineer.
 3. **Ask for a human** → transfer to the on-call engineer; if unreachable, leave a callback message (logged, page raised).
 
-Note: calls are recorded and handled by an AI assistant. The operator resets and stages the demo with `POST /ops/reset` then `POST /ops/stage-incident` (spec §16 pre-flight); `RegionState` ignores reports older than 6 h, so stage right before the demo.
+Note: calls are recorded and handled by an AI assistant. The operator resets and stages the demo with `POST /ops/reset` then `POST /ops/stage-incident` (spec §16 pre-flight; the operator drawer does this from the page); `RegionState` ignores reports older than 6 h, so stage right before the demo. The **external prober must be running**: its 10 s deep-health probes heal the KV incident projections (without it the projection expires after its 2 h TTL and the board shows nothing — DEBUGLOG #11), and its 30 s paging cycle is what claims and "sends" alarm pages (see [runbook](docs/runbook.md)).
 
 ## Architecture
 
 ```mermaid
 flowchart LR
   caller["Caller<br/>(browser web call)"]
-  wf["Telnyx AI Assistant sanad-noc<br/>24-node Conversation Workflow<br/>speak / prompt / tool nodes<br/>LLM / expression / default edges"]
+  wf["Telnyx AI Assistant sanad-noc<br/>37-node Conversation Workflow<br/>speak / prompt / tool nodes<br/>LLM / expression / default edges"]
   edge["noc-edge — Edge Function<br/>/dv (dynamic variables, Ed25519-signed, fail-open)<br/>/tools/* (4 webhook tools, signed-body identity)<br/>/mcp (5 MCP tools, stateless, two bearer scopes)<br/>/ops/* + /demo"]
   kv[("KV noc-kv<br/>flags · sessions · incident projections")]
   actors["Stateful Actors<br/>SiteState (per site)<br/>RegionState (per region)"]
@@ -39,7 +43,7 @@ flowchart LR
   edge -->|"read / write"| kv
   edge -->|"read-modify-write"| actors
   actors -.->|"best-effort projections"| kv
-  prober["External prober (10 s)"] -.->|"GET /ops/health/deep"| edge
+  prober["External prober"] -.->|"health 10 s (heals projections)<br/>paging 30 s (tick, claim, send)"| edge
 ```
 
 - **Actors own the invariants.** One ticket per site (`SiteState`) and incident declaration / P1 escalation at 3 sites (`RegionState`) are read-modify-write over shared state. Actor turns are single-threaded and commit atomically (C6), so 10 concurrent opens for one site produce **exactly 1 ticket** — [`docs/evidence/race-test.txt`](docs/evidence/race-test.txt): actor mode created 1 (`NJD-9902`), KV mode created 10 duplicates (an earlier inconclusive run under the old 1500 ms race deadline is in DEBUGLOG #6).
@@ -52,7 +56,7 @@ flowchart LR
 
 | Brief requirement | Where it lives | Live evidence |
 |---|---|---|
-| Conversation Workflow: prompt / speak / tool nodes, `llm` / `expression` / `default` edges | `assistant/assistant.json` (24 nodes, 51 edges: 18 expression, 18 LLM, 15 default) + `scripts/apply.mjs`, `scripts/lib/flow-validate.mjs` | Applied live 2026-09-27, read-back zero DRIFT (DEBUGLOG #7); voice calls #2/#3 in [`docs/evidence/voice-calls.md`](docs/evidence/voice-calls.md) |
+| Conversation Workflow: prompt / speak / tool nodes, `llm` / `expression` / `default` edges | `assistant/assistant.json` (37 nodes, 93 edges: 33 expression, 40 LLM, 20 default — the English core + the 13-node Arabic sub-flow) + `scripts/apply.mjs`, `scripts/lib/flow-validate.mjs` | Applied live 2026-09-27, read-back zero DRIFT (DEBUGLOG #7); Arabic mode applied live 00:18 (per-node voice/STT overrides accepted); voice calls #2/#3 in [`docs/evidence/voice-calls.md`](docs/evidence/voice-calls.md) |
 | Callable — web call + `/demo` | `edge/noc-edge/src/demo/page.ts` (@telnyx/ai-agent-widget 0.36.0) | https://noc-edge-41d2a334-7.telnyxcompute.com/demo (phone blocked on Trial — DEBUGLOG #1) |
 | Custom MCP server, ≥3 tools | `edge/noc-edge/src/mcp/` — 5 tools, two bearer scopes, stateless (C4) | Live initialize + tools/list = 5 tools; chat smoke finding (DEBUGLOG #9) |
 | Dynamic-variables webhook from an Edge Function, influencing routing | `edge/noc-edge/src/dv/` — `route_hint` drives `s_open`'s expression edges | Defaults path proven live: DV fell back at 2200 ms on voice call #1 (DEBUGLOG #8) |
@@ -62,7 +66,7 @@ flowchart LR
 | Structured logs (one JSON line: `{ts, lvl, svc, hop, evt, trace_id, …, total_ms, outcome}`) | `edge/shared/src/log.ts`, `edge/noc-edge/src/log.ts` | `scripts/trace.sh` over live logs; runbook §2–3 |
 | A signal beyond logs | `scripts/prober.mjs`, `GET /ops/status`, `GET /ops/health/deep` | Prober alerting + degraded≠down semantics (docs/runbook.md §1) |
 | "Know within a minute" answer | `scripts/prober.mjs` — 10 s interval, 2 consecutive failures ≈ ≤30 s worst case | docs/runbook.md |
-| A real debugging story | `DEBUGLOG.md` #5–#9 | KV latency found by our own logs within a minute (#5); the voice-call failure chain (#8) |
+| A real debugging story | `DEBUGLOG.md` #5–#14 | KV latency found by our own logs within a minute (#5); the voice-call failure chain (#8); review catches #13–#14 |
 | OpenCode + Telnyx Inference as the coding model | `opencode.jsonc`, `AGENTS.md` | [`DOGFOODING.md`](DOGFOODING.md): 41 OpenCode-authored commits, ≈$0.25–0.30 per run |
 | Public deployment | https://noc-edge-41d2a334-7.telnyxcompute.com (`/demo`, `/ops/status`) | Live since 2026-09-27 |
 | Docs | `README.md`, `docs/runbook.md`, `DEBUGLOG.md`, `DOGFOODING.md`, `docs/evidence/` | This repo |
@@ -76,11 +80,11 @@ flowchart LR
 | Built & live | KV feature flags — `deflection_enabled`, `require_pin`, `demo_caller`, fault injection `flag/fault/*`, `actor_mode` | `edge/noc-edge/src/services/flags.ts`; fault-injection drills (docs/runbook.md) |
 | Built & live | Shared actors — one working actor instance used by two functions | `edge/noc-actors` owner + reference binders (`noc-edge`, `noc-actor-host`); `/ops/actor-ping` |
 | Built & live | Distributed tracing — one `trace_id` from `/dv` through tools, MCP and actors | `scripts/trace.sh`; runbook §3 |
-| In progress (Plan 2) | Actor alarms — P1 escalation ladder | [`docs/superpowers/plans/2026-09-27-plan-2-stretch.md`](docs/superpowers/plans/2026-09-27-plan-2-stretch.md) (P2-1, P2-2) |
-| In progress | Object-storage incident reports | P2-4 |
-| In progress | Arabic mode — multi-assistant needs a higher assistant limit on Trial | P2-5 |
-| In progress | Live NOC console | P2-3 |
-| In progress | Voice-model upgrade | P2-6 |
+| Built & live | Actor alarms — SLA escalation ladder in `RegionState`; the mux host fans the single real alarm out to entities (`/ops/tick` is only the fallback) | LIVE: INC-1004 escalated to L1 at 00:51 and page `INC-1004:p1` was claimed and "sent" by the prober at 00:51:53 — every `/ops/tick` in that window reported `fired:0`, so the **platform alarm** fired ([docs/evidence/alarms-live.md](docs/evidence/alarms-live.md)) |
+| Built, deploy pending | Object-storage incident reports — report JSON written to Telnyx Cloud Storage bucket `noc-reports-fb8131` on resolve; ops-token routes `/ops/reports` and `/ops/reports/<key>`; the board carries `last_report` | No live report write recorded yet (fix round after the review, see DEBUGLOG #13) |
+| Built & live (as Arabic mode) | Arabic mode — a Saudi-Arabic sub-flow (13 nodes) inside the single Trial assistant: per-node voice `Telnyx.Bayan.Reem` + STT `soniox/stt-rt-v5`, deterministic tool-node exits | Assistant applied live 00:18 (37 nodes / 93 edges); a true **second assistant** needs a higher assistant limit (asked Telnyx) |
+| Built & live | Live NOC console — the `/demo` NOC wall above (dark, Langfuse-style; live board, operator drawer) | LIVE 23:28, verified in headless Chromium; [edge/noc-edge/src/demo/page.ts](edge/noc-edge/src/demo/page.ts) |
+| Evaluation pending (A/B by live calls) | Voice-model upgrade — TTS "Ultra" voices shortlisted, STT candidate `deepgram/flux` vs current nova-3 | P2-6 prep: A/B needs Fahad's voice calls (no credit spent) |
 
 ## How would you know within a minute that it's broken?
 
@@ -98,29 +102,31 @@ Proof: call #2 (18:05 UTC, `t-128d0766…`) verified in **3579 ms** and joined t
 
 ## How it was built
 
-Every shipped artifact — code, config, tests, scripts, README, demo — is authored through **OpenCode on Telnyx Inference** (`telnyx/zai-org/GLM-5.3-Flash`). Claude acts as architect and reviewer: it writes the spec, the plans and the task prompts, and every implementer task is independently reviewed before merge. [`DOGFOODING.md`](DOGFOODING.md) records the per-task cost, the review findings the process caught, and what worked vs. what didn't.
+Every shipped artifact — code, config, tests, scripts, README, demo — is authored through **OpenCode on Telnyx Inference** (`telnyx/zai-org/GLM-5.3-Flash` default; other models per task). Claude acts as architect and reviewer: it writes the spec, the plans and the task prompts, and every implementer task is independently reviewed before merge. [`DOGFOODING.md`](DOGFOODING.md) records the per-task cost, the review findings the process caught, and what worked vs. what didn't.
+
+**The one exception:** the `/demo` page's visual layer (`edge/noc-edge/src/demo/page.ts` + its tests) was designed and written by **Claude**, at the product owner's request, after two OpenCode-built versions (GLM-5.3, then Kimi-K3) were rejected as looking generic (P2-R5/P2-R8). The board endpoint behind it (`/ops/board`, `services/board.ts`, `demo/guide.ts`, the router) is OpenCode-authored. This split is disclosed in the commit, the page's source comment and DOGFOODING.md.
 
 ## Repo layout
 
 ```
-assistant/            Assistant-as-code: 24-node workflow, tools, MCP server, instructions; applied by scripts/apply.mjs
+assistant/            Assistant-as-code: 37-node workflow (English + Arabic mode), tools, MCP server, instructions; applied by scripts/apply.mjs
 edge/noc-edge/        The Edge Function: /dv, /tools/*, /mcp, /ops/*, /demo; services (flags, directory, sessions, incidents, tickets); ActorPort seam
 edge/noc-actors/      Stateful Actor classes SiteState + RegionState (binding-free owner)
 edge/noc-actor-host/  Mux-mode host: the same SiteState/RegionState classes inside the one working actor instance (Counter/demo)
 edge/noc-probe/       Plan-0 diagnostics probe (kept for reference; DEBUGLOG #2–#4 experiments)
 edge/shared/          Pure libs: ids, KV keys, deadline(), Ed25519 verify, logging, masking, authz, ITSM seed adapter
 scripts/              apply.mjs (config-as-code), prober.mjs, trace.sh, race-test.mjs, preflight.mjs, secret-scan
-docs/                 Spec, plans, runbook, evidence (probe results, voice calls)
+docs/                 Spec, plans, runbook, evidence (probe results, voice calls, live alarm test)
 ```
 
 ### Run the tests
 
 ```sh
-npm test                              # root: apply/flow-validate/prober/secret-scan (99 tests)
+npm test                              # root: apply/flow-validate/prober/secret-scan (118 tests)
 npm --prefix edge/shared test         # 161
-npm --prefix edge/noc-actors test     # 42
-npm --prefix edge/noc-edge test       # 285
-npm --prefix edge/noc-actor-host test # 15
+npm --prefix edge/noc-actors test     # 61
+npm --prefix edge/noc-edge test       # 371
+npm --prefix edge/noc-actor-host test # 28
 ```
 
 ### Deploy
@@ -137,3 +143,5 @@ EDGE_URL=https://noc-edge-41d2a334-7.telnyxcompute.com node scripts/apply.mjs
 - **DEBUGLOG #1** — no phone number can be ordered on the Trial account (KSA origin, no local coverage): demos are web calls.
 - **DEBUGLOG #4** — new actor instances cannot activate: all actor state runs in the mux host behind `flag/actor_mode=mux`; `/ops/actor-ping` shows the active mode.
 - **DEBUGLOG #6** — KV reads cost ~1.1–2.0 s per op: routes are latency-shaped, `/ops/health/deep` may report `degraded`, which is not an outage.
+- **DEBUGLOG #11** — the KV incident projection expires after its 2 h TTL; the prober's deep-health sync is the heal loop → **keep the prober running** (runbook §6).
+- **DEBUGLOG #12** — actor alarms **do work** on this account although new instances cannot be created: the host's own (pre-existing) alarm fires and is fanned out to entities (DEBUGLOG #4 context, [evidence](docs/evidence/alarms-live.md)).

@@ -53,6 +53,41 @@ Returns `{mode, site:{…, actor_ms}, region:{…, actor_ms}}` — the active ac
 
 **Do not** use `telnyx-edge actors instances` — it times out on this account (DEBUGLOG #4). `/ops/actor-ping` is the authoritative check.
 
+## 6. Keep the prober running
+
+The prober is not just a monitor — the design's heal loop and paging depend on it (DEBUGLOG #11: an incident vanished from the board after ~2 h because nothing was healing the KV projection). Run it continuously on the dev box:
+
+```sh
+nohup node scripts/prober.mjs > ~/code/telnyx-fde/ops-logs/prober.log 2>&1 &
+```
+
+What the single process does, on two independent timers:
+
+- **Every 10 s — deep health + projection heal.** `GET /ops/health/deep` runs the KV, actor and MCP checks plus `syncCheck`, which re-syncs each region's incident projection **from actor truth** (the KV projection only has a 2 h TTL — `PROJECTION_TTL_SECONDS = 7200`). This is what keeps `/ops/status` and the NOC wall board accurate, and it keeps the edge warm. Alert after 2 consecutive failures (worst case ≈ 30 s); `degraded` is not an outage.
+- **Every 30 s — escalation tick fallback + paging.** `POST /ops/tick` drives the SLA escalation ladder in `RegionState` as a fallback for the platform alarm (on this account the platform alarm does fire — DEBUGLOG #12 — so `fired:0` per tick is normal); then `GET /ops/pages/pending` → `POST /ops/pages/claim` → **PAGE banner** + `notify-send` + `page.sent` log line → `POST /ops/pages/sent`. Claim is exclusive (one claimer wins) and a page is never sent twice; the claimer id is `hostname:pid`.
+
+If the board shows nothing or pages never fire, the first suspect is **the prober is not running**.
+
+## 7. Paging drill
+
+1. Stage an incident: `POST /ops/reset`, then `POST /ops/stage-incident?region=riyadh-north` (or the NOC wall operator drawer). The staged P2 incident gets an escalation due time **5 min** out (P1: **2 min** — `P2_ACK_WINDOW_MS`/`P1_ACK_WINDOW_MS`).
+2. Do nothing. When the due time passes without an acknowledgement, the ladder escalates (L1, L2, … up to L3) and mints a page (`INC-<n>:p<k>` — a monotonic per-incident counter, so an upgrade after a sent page never collides, DEBUGLOG #14).
+3. Within ~30 s the prober's paging cycle claims the page: a loud **PAGE banner** in the prober log, a desktop notification (`notify-send`), and a `page.sent` JSON line; the pending queue returns to 0.
+4. Stop the ladder: **Acknowledge** from the NOC wall operator drawer, or `POST /ops/ack?region=riyadh-north` with `Bearer $OPS_TOKEN`. The escalation column on the board flips to `ACKED`.
+
+## 8. Reading incident reports
+
+On `resolve` (via `/ops/resolve`, the operator drawer, or a caller resolution), `RegionState`/the edge writes a JSON incident report to Telnyx Cloud Storage (bucket `noc-reports-fb8131`) — no presigned URLs (an API key cannot live in the function), so reports are read back through the ops-token routes:
+
+```sh
+# list (newest first):
+curl -sS -H "Authorization: Bearer $OPS_TOKEN" "$EDGE_URL/ops/reports"
+# fetch one by key (as returned by the list / the board's last_report pointer):
+curl -sS -H "Authorization: Bearer $OPS_TOKEN" "$EDGE_URL/ops/reports/<key>"
+```
+
+The NOC wall board carries the `last_report` pointer for the most recently resolved region.
+
 ## Known platform issues (this Trial account)
 
 - **DEBUGLOG #4 — actor instances cannot be created:** every actor RPC from a second owner failed with `502` after ~30 s; the one working instance is the mux host. Contingency: set the KV flag `flag/actor_mode` = `mux` (all actor calls route through the single working instance, which multiplexes `SiteState`/`RegionState`). Check the active mode with `GET /ops/actor-ping` (`mode` field).
