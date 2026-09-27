@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import type { ActorContext, ActorStorage, Env } from "@telnyx/edge-runtime";
+import type { ActorContext, ActorStorage, Env, ListOptions } from "@telnyx/edge-runtime";
 import { FakeStorage } from "../../noc-actors/test/fakes/storage";
 import { Counter } from "../src/MuxHost";
 import { prefixedStorage } from "../src/prefixedStorage";
@@ -241,5 +241,122 @@ describe("MuxHost alarm scheduling", () => {
     expect(storage.raw("sched/site/RUH-114")).toBe(T + 5000);
     expect(await storage.getAlarm()).toBe(T + 5000);
     expect(storage.keys().filter((k) => k.startsWith("site/RUH-114/")).length).toBeGreaterThan(0);
+  });
+});
+
+describe("MuxHost alarm pagination and alarm() resilience", () => {
+  class PagedStorage {
+    failList = false;
+    constructor(private inner: FakeStorage) {}
+    get<T>(key: string): Promise<T | undefined> {
+      return this.inner.get<T>(key);
+    }
+    async put<T>(key: string, value: T): Promise<void> {
+      await this.inner.put(key, value);
+    }
+    async delete(key: string): Promise<boolean> {
+      return this.inner.delete(key);
+    }
+    async getAlarm(): Promise<number | null> {
+      return this.inner.getAlarm();
+    }
+    async setAlarm(when: number): Promise<void> {
+      await this.inner.setAlarm(when);
+    }
+    async deleteAlarm(): Promise<void> {
+      await this.inner.deleteAlarm();
+    }
+    async deleteAll(): Promise<void> {
+      await this.inner.deleteAll();
+    }
+    raw(key: string): unknown {
+      return this.inner.raw(key);
+    }
+    keys(): string[] {
+      return this.inner.keys();
+    }
+    async list<T>(options?: ListOptions): Promise<Map<string, T>> {
+      if (this.failList) throw new Error("kv_down");
+      const full = await this.inner.list<T>(options);
+      if (options?.limit === undefined) {
+        const capped = new Map<string, T>();
+        let i = 0;
+        for (const [k, v] of full) {
+          if (i++ >= 128) break;
+          capped.set(k, v);
+        }
+        return capped;
+      }
+      return full;
+    }
+  }
+
+  function makePagedHost(): { host: TestCounter; storage: FakeStorage; paged: PagedStorage } {
+    const storage = new FakeStorage();
+    const paged = new PagedStorage(storage);
+    const ctx: ActorContext = {
+      id: "demo",
+      storage: paged as unknown as ActorContext["storage"],
+      blockConcurrencyWhile: <T2,>(fn: () => Promise<T2>) => fn(),
+      setAlarm: (when: number) => storage.setAlarm(when),
+      count: () => 0,
+      broadcast: () => 0,
+      sockets: () => [],
+    };
+    return { host: new TestCounter(ctx, {} as Env), storage, paged };
+  }
+
+  const pad = (n: number) => "e-" + String(n).padStart(3, "0");
+
+  it("fires every scheduled entity past the first 128-entry list page", async () => {
+    const { host, storage } = makePagedHost();
+    const fired: string[] = [];
+    for (let i = 0; i < 130; i++) host.register("site", pad(i), { due: T - 100 }, fired);
+    for (let i = 0; i < 130; i++) await host.site(pad(i), "ping");
+
+    const res = await host.tick(T);
+    expect(res.fired.length).toBe(130);
+    expect(new Set(res.fired).size).toBe(130);
+    expect(res.failed).toEqual([]);
+    expect(res.next).toBeNull();
+    expect(await storage.getAlarm()).toBeNull();
+    expect(storage.keys().filter((k) => k.startsWith("sched/"))).toEqual([]);
+  });
+
+  it("reconciles the host alarm to the true minimum across pages", async () => {
+    const { host, storage } = makePagedHost();
+    const fired: string[] = [];
+    for (let i = 0; i < 129; i++) host.register("site", pad(i), { due: T - 100 }, fired);
+    host.register("site", pad(129), { due: T + 60000 }, fired);
+    for (let i = 0; i < 130; i++) await host.site(pad(i), "ping");
+
+    const res = await host.tick(T);
+    expect(res.fired.length).toBe(129);
+    expect(res.fired).not.toContain("site/" + pad(129));
+    expect(res.next).toBe(T + 60000);
+    expect(await storage.getAlarm()).toBe(T + 60000);
+    expect(storage.raw("sched/site/" + pad(129))).toBe(T + 60000);
+  });
+
+  it("alarm() resolves even when the storage listing fails", async () => {
+    const errSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    const { host, storage, paged } = makePagedHost();
+    const fired: string[] = [];
+    host.register("site", "RUH-114", { due: T - 100 }, fired);
+    await host.site("RUH-114", "ping");
+    expect(await storage.getAlarm()).toBe(T - 100);
+    paged.failList = true;
+
+    await expect(host.alarm()).resolves.toBeUndefined();
+    expect(errSpy).toHaveBeenCalledTimes(1);
+    const line = JSON.parse(String(errSpy.mock.calls[0][0])) as Record<string, unknown>;
+    expect(line).toMatchObject({
+      lvl: "error",
+      svc: "noc-actor-host",
+      hop: "mux",
+      evt: "mux.alarm_fanout_failed",
+      err: "kv_down",
+    });
+    expect(await storage.getAlarm()).toBe(T - 100);
   });
 });

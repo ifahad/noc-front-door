@@ -7,7 +7,7 @@ export type PrefixedStorage = Pick<
 
 const PAGE = 1000;
 
-async function listInner<T>(
+export async function listInner<T>(
   storage: ActorStorage,
   innerPrefix: string,
 ): Promise<Array<[string, T]>> {

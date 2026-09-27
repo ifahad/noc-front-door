@@ -2,7 +2,7 @@ import { StatefulActor } from "@telnyx/edge-runtime";
 import type { ActorContext, ActorStorage, Env } from "@telnyx/edge-runtime";
 import { SiteState } from "../../noc-actors/src/SiteState";
 import { RegionState } from "../../noc-actors/src/RegionState";
-import { prefixedStorage } from "./prefixedStorage";
+import { listInner, prefixedStorage } from "./prefixedStorage";
 
 const NAME_RE = /^[A-Za-z0-9._:-]{1,64}$/;
 const SCHED_PREFIX = "sched/";
@@ -69,10 +69,24 @@ export class Counter extends StatefulActor {
   }
 
   // The platform calls this when the single real alarm fires. It must never
-  // throw: a throwing alarm handler is retried ~3x and then lost. Each entity
-  // alarm is individually caught, so nothing rethrows here.
+  // throw: a throwing alarm handler is retried ~3x and then the host's only
+  // alarm is lost. Entity errors are caught inside the fan-out; anything else
+  // (e.g. a storage fault) is logged here and swallowed.
   async alarm(): Promise<void> {
-    await this.fanOut(Date.now());
+    try {
+      await this.fanOut(Date.now());
+    } catch (err) {
+      console.error(
+        JSON.stringify({
+          ts: new Date().toISOString(),
+          lvl: "error",
+          svc: "noc-actor-host",
+          hop: "mux",
+          evt: "mux.alarm_fanout_failed",
+          err: (err as Error)?.message ?? String(err),
+        }),
+      );
+    }
   }
 
   // Fallback driver called over RPC every 30s by the external prober when
@@ -87,7 +101,7 @@ export class Counter extends StatefulActor {
   private async fanOut(now: number): Promise<FanOutResult> {
     const fired: string[] = [];
     const failed: string[] = [];
-    const rows = await this.ctx.storage.list<unknown>({ prefix: SCHED_PREFIX });
+    const rows = await listInner<unknown>(this.ctx.storage as ActorStorage, SCHED_PREFIX);
     for (const [key, value] of rows) {
       const dueAt = value as number;
       if (typeof dueAt !== "number" || dueAt > now + ALARM_GRACE_MS) continue;
@@ -127,7 +141,7 @@ export class Counter extends StatefulActor {
   // clears it when none remain. The entries live at sched/<kind>/<name>,
   // outside every entity prefix, so an entity deleteAll can never drop one.
   private async reconcileAlarm(): Promise<number | null> {
-    const rows = await this.ctx.storage.list<number>({ prefix: SCHED_PREFIX });
+    const rows = await listInner<number>(this.ctx.storage as ActorStorage, SCHED_PREFIX);
     let min: number | null = null;
     for (const [, dueAt] of rows) {
       if (min === null || dueAt < min) min = dueAt;
