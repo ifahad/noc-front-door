@@ -1,9 +1,10 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { SeedAdapter } from "../../../shared/src/itsm";
 import { kvKey } from "../../../shared/src/kvkeys";
+import type { KvPort } from "../../src/services/kvPort";
 import { resetCanaryCounters, runDeepHealth, type HealthDeps } from "../../src/ops/health";
 import { FakeActorPort } from "../fakes/actors";
-import { FakeKv } from "../fakes/kv";
+import { FakeKv, slowKv } from "../fakes/kv";
 import { OPS_TOKEN, PEPPER, T0 } from "./helpers";
 
 interface LogLine extends Record<string, unknown> {
@@ -26,7 +27,7 @@ function eventsWith(evt: string): LogLine[] {
   return logs.map((l) => JSON.parse(l) as LogLine).filter((l) => l.evt === evt);
 }
 
-function makeDeps(opts: { kv?: FakeKv; actors?: FakeActorPort; now?: number; opsToken?: string } = {}): HealthDeps {
+function makeDeps(opts: { kv?: KvPort; actors?: FakeActorPort; now?: number; opsToken?: string } = {}): HealthDeps {
   return {
     kv: opts.kv ?? new FakeKv(),
     actors: opts.actors ?? new FakeActorPort(),
@@ -67,7 +68,7 @@ describe("ops health deep", () => {
 
   it("returns ok false (not an http error) when the kv check fails", async () => {
     const kv = new FakeKv();
-    kv.failNext(2);
+    kv.failNext(20);
     const result = await runDeepHealth(makeDeps({ kv }));
     expect(result.ok).toBe(false);
     expect(kv.has(kvKey("ops", "healthcheck"))).toBe(false);
@@ -193,11 +194,39 @@ describe("ops health deep", () => {
     expect(eventsWith("canary.check")).toHaveLength(1);
     expect(eventsWith("canary.summary")).toHaveLength(2);
     const failing = new FakeKv();
-    failing.failNext(2);
+    failing.failNext(20);
     await runDeepHealth(makeDeps({ kv: failing, now: T0 + 61_000 }));
     const checks = eventsWith("canary.check");
     expect(checks).toHaveLength(2);
     expect(checks[1].ok).toBe(false);
     expect(checks[0].ok).toBe(true);
+  });
+
+  it("marks a slow but healthy run degraded with the slow check names", async () => {
+    const slow = slowKv(new FakeKv(), 1200);
+    const started = Date.now();
+    const result = await runDeepHealth(makeDeps({ kv: slow }));
+    const elapsed = Date.now() - started;
+    expect(result.ok).toBe(true);
+    expect(result.degraded).toBe(true);
+    expect(result.slow).toContain("kv");
+    expect(elapsed).toBeLessThan(3000);
+  });
+
+  it("reports a fast healthy run as not degraded", async () => {
+    const result = await runDeepHealth(makeDeps());
+    expect(result.ok).toBe(true);
+    expect(result.degraded).toBe(false);
+    expect(result.slow).toEqual([]);
+  });
+
+  it("keeps the flags memo warm for the external prober", async () => {
+    const kv = new FakeKv();
+    await runDeepHealth(makeDeps({ kv }));
+    const flagGets = kv.calls.filter((c) => c.op === "get" && c.key.startsWith("flag/")).length;
+    expect(flagGets).toBeGreaterThan(0);
+    await runDeepHealth(makeDeps({ kv, now: T0 + 1000 }));
+    const more = kv.calls.filter((c) => c.op === "get" && c.key.startsWith("flag/")).length;
+    expect(more).toBe(flagGets);
   });
 });

@@ -59,58 +59,50 @@ describe("directory.lookup", () => {
     expect(contact?.site_id).toBe("RUH-114");
   });
 
-  it("resolves an E.164 caller through the adapter and caches it", async () => {
+  it("resolves a seeded E.164 caller with zero KV calls", async () => {
     const kv = new FakeKv();
     const a = adapter();
-    const first = await lookup(deps(kv, a), E164);
-    expect(first?.contact_id).toBe("c-ahmed");
+    const contact = await lookup(deps(kv, a), E164);
+    expect(contact?.contact_id).toBe("c-ahmed");
+    expect(kv.calls).toHaveLength(0);
+  });
+
+  it("falls back to the KV cache when the adapter does not know the caller", async () => {
+    const kv = new FakeKv();
+    kv.setNow(0);
     const key = kvKey("dir", E164.replace(/[^0-9]/g, ""));
-    expect(kv.has(key)).toBe(true);
-    expect(kv.ttlSecondsLeft(key)).toBe(300);
-    const second = await lookup(deps(kv, a), E164);
-    expect(second?.contact_id).toBe("c-ahmed");
-    expect(kv.puts(key)).toBe(1);
+    await kv.put(key, JSON.stringify(firstContact()));
+    const before = kv.calls.length;
+    const contact = await lookup(deps(kv, adapter({ pins: {}, contacts: [] })), E164);
+    expect(contact?.contact_id).toBe("c-ahmed");
+    expect(kv.calls.slice(before).filter((c) => c.op === "get")).toHaveLength(1);
+    expect(kv.calls.slice(before).every((c) => c.op !== "put")).toBe(true);
   });
 
   it("returns null for an unknown E.164 caller and caches nothing", async () => {
     const kv = new FakeKv();
     const contact = await lookup(deps(kv), ALT_E164);
     expect(contact).toBeNull();
+    expect(kv.calls.filter((c) => c.op === "get")).toHaveLength(1);
     expect(kv.calls.every((c) => c.op !== "put")).toBe(true);
   });
 
-  it("prefers the kv hit and does not call the adapter again", async () => {
+  it("prefers the adapter over a stale kv entry", async () => {
     const kv = new FakeKv();
-    const a = adapter();
-    await lookup(deps(kv, a), E164);
-    const key = kvKey("dir", E164.replace(/[^0-9]/g, ""));
-    const kvOnly = new FakeKv();
-    kvOnly.setNow(0);
-    await kvOnly.put(key, JSON.stringify(firstContact()));
-    const contact = await lookup(deps(kvOnly, a), E164);
+    kv.setNow(0);
+    await kv.put(kvKey("dir", E164.replace(/[^0-9]/g, "")), JSON.stringify(otherContact()));
+    const before = kv.calls.length;
+    const contact = await lookup(deps(kv, adapter()), E164);
     expect(contact?.contact_id).toBe("c-ahmed");
-    expect(kvOnly.puts(key)).toBe(1);
+    expect(kv.calls.slice(before)).toHaveLength(0);
   });
 
-  it("treats a corrupt kv value as a miss and re-caches from the adapter", async () => {
+  it("treats a corrupt kv value as a miss when the adapter does not know the caller", async () => {
     const kv = new FakeKv();
     kv.setNow(0);
     await kv.put(kvKey("dir", E164.replace(/[^0-9]/g, "")), "{not json");
-    const contact = await lookup(deps(kv), E164);
-    expect(contact?.contact_id).toBe("c-ahmed");
-    const key = kvKey("dir", E164.replace(/[^0-9]/g, ""));
-    expect(JSON.parse(kv.raw(key) as string)).toHaveProperty("contact_id");
-  });
-
-  it("an expired cache entry falls through to the adapter", async () => {
-    const kv = new FakeKv();
-    const a = adapter();
-    await lookup(deps(kv, a), E164);
-    kv.setNow(301_000);
-    const contact = await lookup(deps(kv, a), E164);
-    expect(contact?.contact_id).toBe("c-ahmed");
-    const key = kvKey("dir", E164.replace(/[^0-9]/g, ""));
-    expect(kv.puts(key)).toBe(2);
+    const contact = await lookup(deps(kv, adapter({ pins: {}, contacts: [] })), E164);
+    expect(contact).toBeNull();
   });
 
   it("a demo contact that cannot be resolved returns null", async () => {
@@ -130,9 +122,23 @@ describe("directory.lookup", () => {
       E164,
     );
     expect((contact as Contact).contact_id).toBe("c-ahmed");
-    expect(kv.has(kvKey("dir", E164.replace(/[^0-9]/g, "")))).toBe(true);
+    expect(kv.calls).toHaveLength(0);
   });
 });
+
+function otherContact(): Contact {
+  return {
+    contact_id: "c-stale",
+    name: "Stale",
+    customer_id: "c-alwaha",
+    customer_name: "Al-Waha Pharmacies",
+    site_id: "RUH-121",
+    site_label: "the stale branch",
+    region: "riyadh-north",
+    region_label: "Riyadh North",
+    preferred_language: "en",
+  };
+}
 
 function firstContact(): Contact {
   return {

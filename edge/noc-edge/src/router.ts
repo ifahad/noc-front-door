@@ -4,9 +4,9 @@ import { type NocEdgeEnv } from "./actors";
 import { bindingKvPort } from "./services/kvPort";
 import { bindingActorPort, type ActorPort } from "./services/actorPort";
 import { muxActorPort } from "./services/muxActorPort";
-import { read as readFlags, type ActorMode } from "./services/flags";
+import { read as readFlags, type ActorMode, type Flags } from "./services/flags";
 import { getSecret, makeAdapter } from "./env";
-import { handleDv } from "./dv/handler";
+import { handleDv, SAFE_FLAGS } from "./dv/handler";
 import { handleVerifySite } from "./tools/verifySite";
 import { handleOpenTicket } from "./tools/openTicket";
 import { handleJoinIncident } from "./tools/joinIncident";
@@ -36,11 +36,10 @@ const opsTokenGetters = new WeakMap<NocEdgeEnv, SecretGetter>();
 // through the single working Counter instance on noc-actor-canary (the
 // DEBUGLOG #4 contingency); anything else uses the per-entity bindings.
 // A KV failure must never take a route down: fail open to the last
-// known-good mode, or per-entity when nothing is known yet. The /dv
-// webhook blocks on this read (C3), so it uses a tight budget; tool and
-// ops webhooks allow seconds.
+// known-good mode, or per-entity when nothing is known yet. Tool and ops
+// webhooks allow seconds; /dv chooses its actor port from the flags read
+// handleDv performs inside its own budget (see routeDv).
 const FLAGS_BUDGET_MS = 2000;
-const DV_FLAGS_BUDGET_MS = 250;
 
 let lastKnownMode: ActorMode | null = null;
 
@@ -159,9 +158,22 @@ async function routeDv(request: Request, env: NocEdgeEnv): Promise<Response> {
     makeAdapter(env),
     getSecret(env, "TELNYX_PUBLIC_KEY"),
   ]);
+  // The /dv actor port is chosen from the SAME flags read handleDv performs
+  // (no separate actor-mode read). Timed-out flags arrive as SAFE_FLAGS, so
+  // fall back to the last-known-good mode without overwriting it.
+  const actorsFor = (flags: Flags): ActorPort => {
+    if (flags === SAFE_FLAGS) {
+      return (lastKnownMode ?? "per-entity") === "mux"
+        ? muxActorPort(env)
+        : bindingActorPort(env);
+    }
+    lastKnownMode = flags.actor_mode;
+    return flags.actor_mode === "mux" ? muxActorPort(env) : bindingActorPort(env);
+  };
   return handleDv(request, {
     kv: bindingKvPort(env.CACHE),
-    actors: (await selectActorPort(env, DV_FLAGS_BUDGET_MS)).port,
+    actors: bindingActorPort(env),
+    actorsFor,
     adapter,
     publicKey: publicKey ?? "",
     now: () => Date.now(),

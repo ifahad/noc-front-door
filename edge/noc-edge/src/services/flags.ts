@@ -14,13 +14,34 @@ export interface Flags {
   actor_mode: ActorMode;
 }
 
-const MEMO_MS = 5000;
+// Flag changes propagate within 60 s; KV reads on this account cost ~1.5 s
+// (LIVE EVIDENCE, DEBUGLOG #6), so the memo horizon must be long enough to
+// make the read amortisable across the external prober and /dv traffic.
+const MEMO_MS = 60_000;
 const MAX_DV_DELAY_MS = 12000;
 const FAULT_STATUSES: readonly number[] = [500, 503, 504];
 
 const memoByKv = new WeakMap<KvPort, { at: number; flags: Flags }>();
+const inFlightByKv = new WeakMap<KvPort, Promise<Flags>>();
 
-export async function read(kv: KvPort, now: number): Promise<Flags> {
+export function read(kv: KvPort, now: number): Promise<Flags> {
+  const memo = memoByKv.get(kv);
+  if (memo !== undefined && now - memo.at < MEMO_MS) {
+    return Promise.resolve(memo.flags);
+  }
+  const existing = inFlightByKv.get(kv);
+  if (existing !== undefined) return existing;
+  const flight = doRead(kv, now);
+  inFlightByKv.set(kv, flight);
+  flight
+    .finally(() => {
+      if (inFlightByKv.get(kv) === flight) inFlightByKv.delete(kv);
+    })
+    .catch(() => {});
+  return flight;
+}
+
+async function doRead(kv: KvPort, now: number): Promise<Flags> {
   const memo = memoByKv.get(kv);
   if (memo !== undefined && now - memo.at < MEMO_MS) return memo.flags;
   const [deflection, requirePin, demo, faultOpen, faultDelay, actorMode] = await Promise.all([

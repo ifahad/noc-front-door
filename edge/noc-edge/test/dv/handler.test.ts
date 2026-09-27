@@ -6,6 +6,7 @@ import type { KvPort } from "../../src/services/kvPort";
 import type { ActorPort, SiteStateApi } from "../../src/services/actorPort";
 import { handleDv, type DvDeps } from "../../src/dv/handler";
 import { FakeKv } from "../fakes/kv";
+import { slowKv } from "../fakes/kv";
 import { FakeActorPort } from "../fakes/actors";
 
 const E164 = ["+", "1", "312", "555", "0101"].join("");
@@ -216,6 +217,39 @@ describe("handleDv", () => {
     expect(out.conversation.metadata.trace_id).toMatch(/^t-[0-9a-f]{16}$/);
     expect(kv.has(kvKey("call", out.conversation.metadata.trace_id.slice(2), "dv"))).toBe(true);
     expect(kv.raw(kvKey("conv", CONV_ID))).toBe(out.conversation.metadata.trace_id.slice(2));
+  });
+
+  it("returns within the webhook budget on slow KV with actor and incident data intact", async () => {
+    const keys = await makeKeys();
+    const inner = new FakeKv();
+    inner.setNow(0);
+    await inner.put(kvKey("incident", "active", "riyadh-north"), JSON.stringify(PROJECTION));
+    const kv = slowKv(inner, 1000);
+    const started = Date.now();
+    const res = await handleDv(
+      await signedRequest(bodyOf(payloadOf(E164)), keys),
+      makeDeps(kv, new FakeActorPort(), keys),
+    );
+    const elapsed = Date.now() - started;
+    console.info("test.dv_regression_ms", elapsed);
+    expect(res.status).toBe(200);
+    expect(elapsed).toBeLessThan(1800);
+    const out = await jsonOf(res);
+    expect(out.dynamic_variables.route_hint).toBe("known_incident");
+    expect(out.dynamic_variables.caller_name).toBe("Ahmed");
+    expect(out.dynamic_variables.site_id).toBe("RUH-114");
+    expect(out.dynamic_variables.incident_region).toBe("Riyadh North");
+    expect(out.dynamic_variables.incident_started).toBe("1:52 AM");
+    expect(out.dynamic_variables.incident_summary).toBe("loss of connectivity at two branches");
+    expect(out.dynamic_variables.incident_eta).toBe("2:22 AM");
+    expect(out.dynamic_variables.calls_today).toBe("1");
+    expect(out.dynamic_variables.repeat_note).toBe("none");
+    const routes = eventsWith("dv.route");
+    expect(routes).toHaveLength(1);
+    expect(routes[0].outcome).toBe("ok");
+    expect(inner.has(kvKey("call", out.conversation.metadata.trace_id.slice(2), "dv"))).toBe(true);
+    expect(inner.has(kvKey("conv", CONV_ID))).toBe(true);
+    expect(inner.has(kvKey("incident", "active", "riyadh-north"))).toBe(true);
   });
 
   it("routes to known_incident with the incident variables when the region projection is active", async () => {

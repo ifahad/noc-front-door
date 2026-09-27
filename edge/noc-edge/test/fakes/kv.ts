@@ -100,3 +100,18 @@ export class FakeKv implements KvPort {
     return this.calls.filter((c) => c.op === "put" && c.key === key).length;
   }
 }
+
+export function slowKv(inner: KvPort, ms: number): KvPort {
+  const later = <T>(fn: () => Promise<T>): Promise<T> =>
+    new Promise<T>((resolve, reject) => {
+      setTimeout(() => {
+        fn().then(resolve, reject);
+      }, ms);
+    });
+  return {
+    get: (key) => later(() => inner.get(key)),
+    put: (key, value, opts) => later(() => inner.put(key, value, opts)),
+    delete: (key) => later(() => inner.delete(key)),
+    list: (prefix) => later(() => inner.list(prefix)),
+  };
+}

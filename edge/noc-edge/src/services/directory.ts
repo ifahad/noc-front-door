@@ -6,13 +6,12 @@ import { logEvent } from "../log";
 import type { Flags } from "./flags";
 import type { KvPort } from "./kvPort";
 
-const DIR_TTL_SECONDS = 300;
-const E164 = /^\+[0-9]{8,15}$/;
+export const E164 = /^\+[0-9]{8,15}$/;
 
 export interface DirectoryDeps {
   kv: KvPort;
   adapter: SeedAdapter;
-  flags: Flags;
+  flags?: Flags;
 }
 
 export async function lookup(
@@ -21,11 +20,12 @@ export async function lookup(
 ): Promise<Contact | null> {
   const target = typeof endUserTarget === "string" ? endUserTarget : "";
   if (!E164.test(target)) {
-    if (deps.flags.demo_caller === null) {
+    const demoId = deps.flags?.demo_caller ?? null;
+    if (demoId === null) {
       logLookup("none", false);
       return null;
     }
-    const demo = await deps.adapter.findContactById(deps.flags.demo_caller);
+    const demo = await deps.adapter.findContactById(demoId);
     if (demo === null) {
       logLookup("none", false);
       return null;
@@ -34,25 +34,18 @@ export async function lookup(
     return demo;
   }
   const digits = digitsOf(target);
-  const key = kvKey("dir", digits);
-  const cached = await deps.kv.get(key);
-  if (cached !== null) {
-    const contact = parseContact(cached);
-    if (contact !== null) {
-      logLookup("kv", true);
-      return contact;
-    }
-  }
+  // The SeedAdapter is in-memory, so it is the hot path: consult it before
+  // touching KV (~1.5 s per read on this account). The KV cache get remains
+  // only as a fallback for a future remote system of record.
   const fromAdapter = await deps.adapter.findContactByPhone(digits);
-  if (fromAdapter === null) {
-    logLookup("none", false);
-    return null;
+  if (fromAdapter !== null) {
+    logLookup("adapter", true);
+    return fromAdapter;
   }
-  await deps.kv.put(key, JSON.stringify(fromAdapter), {
-    expirationTtl: DIR_TTL_SECONDS,
-  });
-  logLookup("adapter", true);
-  return fromAdapter;
+  const cached = await deps.kv.get(kvKey("dir", digits));
+  const contact = cached !== null ? parseContact(cached) : null;
+  logLookup(contact !== null ? "kv" : "none", contact !== null);
+  return contact;
 }
 
 function logLookup(source: "kv" | "adapter" | "demo_flag" | "none", found: boolean): void {

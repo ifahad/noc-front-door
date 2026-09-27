@@ -8,7 +8,10 @@ import type { ActorPort } from "../services/actorPort";
 import type { KvPort } from "../services/kvPort";
 import { open as openTicket } from "../services/tickets";
 
-const OPEN_DEADLINE_MS = 1500;
+// Diagnostic tool webhooks allow up to 8 s, and the opens must all be in
+// flight at once, so the ceiling matches the tool budget (LIVE EVIDENCE:
+// warm actor calls take ~220 ms, but bursts can queue).
+const OPEN_DEADLINE_MS = 8000;
 const KV_GAP_MS = 1;
 const MIN_N = 1;
 const MAX_N = 50;

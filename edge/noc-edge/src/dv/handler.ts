@@ -9,7 +9,7 @@ import type { SeedAdapter } from "../../../shared/src/itsm";
 import { logEvent } from "../log";
 import type { ActorPort } from "../services/actorPort";
 import { read as readFlags, type Flags } from "../services/flags";
-import { lookup } from "../services/directory";
+import { lookup, E164, type DirectoryDeps } from "../services/directory";
 import type { KvPort } from "../services/kvPort";
 import { putDv, linkConversation, type DvSession } from "../services/sessions";
 import { routeHint } from "./route";
@@ -21,7 +21,7 @@ const KEYLESS_ORG = "your organisation";
 const ACTOR_RACE_MS = 400;
 const KEY_LOG_LIMIT = 5;
 
-const SAFE_FLAGS: Flags = {
+export const SAFE_FLAGS: Flags = {
   deflection_enabled: true,
   require_pin: true,
   demo_caller: null,
@@ -65,6 +65,7 @@ function str(value: string | undefined | null, fallback: string): string {
 export interface DvDeps {
   kv: KvPort;
   actors: ActorPort;
+  actorsFor?: (flags: Flags) => ActorPort;
   adapter: SeedAdapter;
   publicKey: string;
   now: () => number;
@@ -225,46 +226,90 @@ export async function handleDv(request: Request, deps: DvDeps): Promise<Response
   const internalBudget = Math.max(0, deps.timeoutMs - 300);
   const internalEnd = started + internalBudget;
   const remaining = () => Math.max(0, internalEnd - deps.now());
-  let kvMs = 0;
+  const kvSpans: Array<[number, number]> = [];
   let actorMs = 0;
   let degraded = false;
 
-  const flagsStart = deps.now();
-  const flagsR = await deadline(readFlags(deps.kv, deps.now()), remaining(), "dv.flags");
-  const flags = flagsR.ok ? flagsR.value : SAFE_FLAGS;
-  if (!flagsR.ok) degraded = true;
-  kvMs += deps.now() - flagsStart;
+  // Spans measure the wall time the response actually waited on KV-backed
+  // work: they start when a deadline is awaited and end when it settles, so
+  // concurrent work is unioned rather than summed.
+  function awaitKvSpan<T>(
+    p: Promise<DeadlineResult<T>>,
+  ): Promise<DeadlineResult<T>> {
+    const from = deps.now();
+    return p.then((res: DeadlineResult<T>) => {
+      kvSpans.push([from, deps.now()]);
+      return res;
+    });
+  }
 
-  const dirStart = deps.now();
-  const dirR = await deadline(
-    lookup({ kv: deps.kv, adapter: deps.adapter, flags }, endUserTarget),
-    remaining(),
-    "dv.dir",
-  );
+  // Flags and the directory lookup run concurrently. The SeedAdapter is
+  // in-memory, so an E.164 caller resolves without flags; anything else
+  // (the demo_caller flag) waits for them.
+  const e164Target = endUserTarget !== null && E164.test(endUserTarget);
+  const flagsP = deadline(readFlags(deps.kv, deps.now()), remaining(), "dv.flags");
+  let flagsR: DeadlineResult<Flags> = { ok: false, timeout: true };
+  let dirP: Promise<DeadlineResult<Contact | null>>;
+  if (e164Target) {
+    dirP = deadline(
+      lookup({ kv: deps.kv, adapter: deps.adapter }, endUserTarget),
+      remaining(),
+      "dv.dir",
+    );
+  } else {
+    flagsR = await awaitKvSpan(flagsP);
+    if (!flagsR.ok) degraded = true;
+    dirP = deadline(
+      lookup(
+        { kv: deps.kv, adapter: deps.adapter, flags: flagsR.ok ? flagsR.value : SAFE_FLAGS },
+        endUserTarget,
+      ),
+      remaining(),
+      "dv.dir",
+    );
+  }
+
+  const dirR = await awaitKvSpan(dirP);
   const contact: Contact | null = dirR.ok ? dirR.value : null;
   if (!dirR.ok) degraded = true;
-  kvMs += deps.now() - dirStart;
 
-  let incident: IncidentProjection | null = null;
-  if (contact !== null && flags.deflection_enabled) {
-    const incStart = deps.now();
-    const incR = await deadline(
-      deps.kv.get(kvKey("incident", "active", contact.region)),
-      remaining(),
-      "dv.incident",
-    );
-    if (incR.ok) incident = parseProjection(incR.value);
-    if (!incR.ok) degraded = true;
-    kvMs += deps.now() - incStart;
+  // Started without awaiting: they overlap the remaining flags wait.
+  const incidentP =
+    contact !== null
+      ? deadline(
+          deps.kv.get(kvKey("incident", "active", contact.region)),
+          remaining(),
+          "dv.incident",
+        )
+      : null;
+  const dvSession: DvSession = {
+    trace_id,
+    identified: contact !== null,
+    contact_id: contact?.contact_id ?? null,
+    customer_id: contact?.customer_id ?? null,
+    sites: contact !== null ? [contact.site_id] : [],
+    region: contact?.region ?? null,
+  };
+  const putP = deadline(putDv(deps.kv, k, dvSession), remaining(), "dv.session");
+  const convP: Promise<DeadlineResult<void>> =
+    convId !== null
+      ? deadline(linkConversation(deps.kv, convId, k), remaining(), "dv.conv")
+      : Promise.resolve({ ok: true, value: undefined });
+
+  if (e164Target) {
+    flagsR = await awaitKvSpan(flagsP);
+    if (!flagsR.ok) degraded = true;
   }
+  const flags = flagsR.ok ? flagsR.value : SAFE_FLAGS;
 
   let callsToday = 1;
   let openTicket: string | null = null;
   if (contact !== null) {
+    const port = deps.actorsFor?.(flags) ?? deps.actors;
     const aStart = deps.now();
     const race = Math.min(ACTOR_RACE_MS, remaining());
     const callR = await deadline(
-      deps.actors.site(contact.site_id).recordCall({
+      port.site(contact.site_id).recordCall({
         k,
         trace_id,
         at: deps.now(),
@@ -283,24 +328,18 @@ export async function handleDv(request: Request, deps: DvDeps): Promise<Response
     }
   }
 
-  const dvSession: DvSession = {
-    trace_id,
-    identified: contact !== null,
-    contact_id: contact?.contact_id ?? null,
-    customer_id: contact?.customer_id ?? null,
-    sites: contact !== null ? [contact.site_id] : [],
-    region: contact?.region ?? null,
-  };
-  const wStart = deps.now();
-  const putP = deadline(putDv(deps.kv, k, dvSession), remaining(), "dv.session");
-  const convP: Promise<DeadlineResult<void>> =
-    convId !== null
-      ? deadline(linkConversation(deps.kv, convId, k), remaining(), "dv.conv")
-      : Promise.resolve({ ok: true, value: undefined });
-  const [putR, convR] = await Promise.all([putP, convP]);
+  let incident: IncidentProjection | null = null;
+  const noIncident: DeadlineResult<string | null> = { ok: true, value: null };
+  const incWait: Promise<DeadlineResult<string | null>> = incidentP ?? Promise.resolve(noIncident);
+  const [incR, putR, convR] = await Promise.all([
+    awaitKvSpan(incWait),
+    awaitKvSpan(putP),
+    awaitKvSpan(convP),
+  ]);
+  if (incR.ok) incident = parseProjection(incR.value);
+  if (!incR.ok) degraded = true;
   const sessionWritten = putR.ok;
   if (!sessionWritten || !convR.ok) degraded = true;
-  kvMs += deps.now() - wStart;
 
   const hint = routeHint({ sessionWritten, flags, contact, incident });
 
@@ -312,7 +351,7 @@ export async function handleDv(request: Request, deps: DvDeps): Promise<Response
     variables.site_id = str(contact.site_id, "unknown");
     variables.site_label = str(contact.site_label, KEYLESS_SKETCH);
   }
-  if (incident !== null) {
+  if (flags.deflection_enabled && incident !== null) {
     variables.incident_region = str(incident.region_label, "your area");
     variables.incident_started = str(incident.started_local, "earlier today");
     variables.incident_summary = str(incident.summary, "a network incident");
@@ -327,6 +366,17 @@ export async function handleDv(request: Request, deps: DvDeps): Promise<Response
   if (delayMs !== null && delayMs > 0) {
     faultInjected = true;
     await sleep(delayMs);
+  }
+
+  let kvMs = 0;
+  const spans = kvSpans.slice().sort((a, b) => a[0] - b[0]);
+  let cursor = 0;
+  for (const [from, to] of spans) {
+    const at = Math.max(from, cursor);
+    if (to > at) {
+      kvMs += to - at;
+      cursor = to;
+    }
   }
 
   const total = deps.now() - started;

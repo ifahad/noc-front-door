@@ -297,8 +297,21 @@ describe("router actor-mode selection", () => {
     expect(reads[0].total_ms).toBeGreaterThanOrEqual(400);
   });
 
-  it("times the /dv flags read out at 250 ms and falls back per-entity when nothing is known", async () => {
+  it("picks the mux port on /dv from the same flags read when the read takes 400 ms", async () => {
     const { env, priv, cache } = await makeEnv();
+    const muxCalls: string[] = [];
+    (env as unknown as { MUX: { idFromName: (n: string) => unknown } }).MUX = {
+      idFromName: () => ({
+        site: async (entity: string, method: string) => {
+          if (method === "recordCall") {
+            muxCalls.push(entity);
+            return { callsToday: 1, openTicket: null, trace_id: "", actor_ms: 0 };
+          }
+          return {};
+        },
+        region: async () => ({}),
+      }),
+    };
     await cache.put(kvKey("flag", "actor_mode"), "mux");
     (env as unknown as { CACHE: unknown }).CACHE = withSlowGet(cache, 400);
     const payload = {
@@ -311,10 +324,13 @@ describe("router actor-mode selection", () => {
     });
     const res = await route(await signedRequest(body, priv), env);
     expect(res.status).toBe(200);
-    const fallbacks = eventsWith("flags.fallback");
-    expect(fallbacks).toHaveLength(1);
-    expect(fallbacks[0].lvl).toBe("warn");
-    expect(fallbacks[0].mode).toBe("per-entity");
+    const out = (await res.json()) as { dynamic_variables: Record<string, string> };
+    expect(out.dynamic_variables.route_hint).toBe("verified");
+    expect(out.dynamic_variables.calls_today).toBe("1");
+    expect(muxCalls).toEqual(["RUH-114"]);
+    expect(
+      cache.calls.filter((c) => c.op === "get" && c.key === kvKey("flag", "actor_mode")),
+    ).toHaveLength(1);
     expect(eventsWith("actor_mode.read")).toHaveLength(0);
   });
 
@@ -364,25 +380,33 @@ describe("router /dv fail-open", () => {
       conversation: { metadata: { call_key: string } };
     };
     expect(out.dynamic_variables.route_hint).toBe("unverified");
-    expect(out.dynamic_variables.caller_name).toBe("there");
+    expect(out.dynamic_variables.caller_name).toBe("Ahmed");
     expect(out.dynamic_variables.calls_today).toBe("1");
     expect(out.conversation.metadata.call_key).toBe("CC-1");
-    const fallbacks = eventsWith("flags.fallback");
-    expect(fallbacks).toHaveLength(1);
-    expect(fallbacks[0].lvl).toBe("warn");
+    const routes = eventsWith("dv.route");
+    expect(routes).toHaveLength(1);
+    expect(routes[0].outcome).toBe("fallback");
   });
 
   it("reads flag/actor_mode from KV at most once per /dv request in mux mode", async () => {
     const { env, priv, cache } = await makeEnv();
+    const muxCalls: string[] = [];
     (env as unknown as { MUX: { idFromName: (n: string) => unknown } }).MUX = {
       idFromName: () => ({
-        site: async () => ({ callsToday: 1, openTicket: null, trace_id: "", actor_ms: 0 }),
+        site: async (entity: string, method: string) => {
+          if (method === "recordCall") {
+            muxCalls.push(entity);
+            return { callsToday: 1, openTicket: null, trace_id: "", actor_ms: 0 };
+          }
+          return {};
+        },
         region: async () => ({}),
       }),
     };
     await cache.put(kvKey("flag", "actor_mode"), "mux");
     const res = await route(await signedRequest(dvBody(), priv), env);
     expect(res.status).toBe(200);
+    expect(muxCalls).toEqual(["RUH-114"]);
     expect(
       cache.calls.filter((c) => c.op === "get" && c.key === kvKey("flag", "actor_mode")),
     ).toHaveLength(1);

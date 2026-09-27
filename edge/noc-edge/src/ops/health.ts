@@ -6,9 +6,14 @@ import { logEvent } from "../log";
 import type { ActorPort } from "../services/actorPort";
 import { syncProjection } from "../services/incidents";
 import type { KvPort } from "../services/kvPort";
+import { read as readFlags } from "../services/flags";
 import { handleMcp } from "../mcp/server";
 
-const CHECK_DEADLINE_MS = 1500;
+// KV on this account takes ~1.5 s per read from the edge binding (LIVE
+// EVIDENCE, DEBUGLOG #6): slow is not down, so give each check room and
+// judge health by success, reporting slowness separately.
+const CHECK_DEADLINE_MS = 4000;
+const SLOW_THRESHOLD_MS = 1000;
 const SUMMARY_INTERVAL_MS = 60_000;
 
 export interface HealthChecks {
@@ -20,6 +25,8 @@ export interface HealthChecks {
 
 export interface DeepHealth {
   ok: boolean;
+  degraded: boolean;
+  slow: string[];
   checks: HealthChecks;
 }
 
@@ -103,26 +110,31 @@ async function mcpCheck(deps: HealthDeps): Promise<{ ms: number; ok: boolean }> 
 
 async function syncCheck(deps: HealthDeps): Promise<{ ms: number; ok: boolean }> {
   const started = Date.now();
-  for (const seed of REGIONS) {
-    if (seed.region === "lab") continue;
-    const raced = await deadline(
-      syncProjection({ actors: deps.actors, kv: deps.kv }, seed.region, deps.trace_id),
-      CHECK_DEADLINE_MS,
-      `health.sync.${seed.region}`,
-    );
-    if (!raced.ok) {
-      return { ms: Date.now() - started, ok: false };
-    }
-  }
-  return { ms: Date.now() - started, ok: true };
+  const results = await Promise.all(
+    REGIONS.filter((seed) => seed.region !== "lab").map((seed) =>
+      deadline(
+        syncProjection({ actors: deps.actors, kv: deps.kv }, seed.region, deps.trace_id),
+        CHECK_DEADLINE_MS,
+        `health.sync.${seed.region}`,
+      ),
+    ),
+  );
+  return { ms: Date.now() - started, ok: results.every((r) => r.ok) };
 }
 
 export async function runDeepHealth(deps: HealthDeps): Promise<DeepHealth> {
   const started = Date.now();
-  const kv = await kvCheck(deps.kv, deps.now);
-  const actor = await actorCheck(deps.actors);
-  const mcp = await mcpCheck(deps);
-  const sync = await syncCheck(deps);
+  // Keep-warm for the flags memo (spec §11.4): the external prober hits this
+  // endpoint every 10 s, so its read keeps flags hot for /dv. Value ignored.
+  const warmP = deadline(readFlags(deps.kv, deps.now), CHECK_DEADLINE_MS, "health.warm");
+  const [kv, actor, mcp, sync, warm] = await Promise.all([
+    kvCheck(deps.kv, deps.now),
+    actorCheck(deps.actors),
+    mcpCheck(deps),
+    syncCheck(deps),
+    warmP,
+  ]);
+  void warm;
   const ok = kv.ok && actor.ok && mcp.ok && sync.ok;
   const checks: HealthChecks = {
     kv_ms: kv.ms,
@@ -130,9 +142,25 @@ export async function runDeepHealth(deps: HealthDeps): Promise<DeepHealth> {
     mcp_ms: mcp.ms,
     sync_ms: sync.ms,
   };
-  await writeHeartbeat(deps, ok, checks);
+  const slow = slowNames([
+    ["kv", kv],
+    ["actor", actor],
+    ["mcp", mcp],
+    ["sync", sync],
+  ]);
+  // The heartbeat write must not sit on the response path when KV is slow:
+  // it is fired through deadline (which attaches .catch) and left running.
+  deadline(writeHeartbeat(deps, ok, checks), CHECK_DEADLINE_MS, "health.heartbeat");
   logCanary(ok, checks, deps, Date.now() - started);
-  return { ok, checks };
+  return { ok, degraded: slow.length > 0, slow, checks };
+}
+
+type CheckOutcome = { ms: number; ok: boolean };
+
+function slowNames(checks: Array<[string, CheckOutcome]>): string[] {
+  return checks
+    .filter(([, c]) => c.ok && c.ms > SLOW_THRESHOLD_MS)
+    .map(([name]) => name);
 }
 
 async function writeHeartbeat(
