@@ -99,7 +99,7 @@ describe("ops routes wired", () => {
     const html = await opsRequest("GET", "/ops/status?format=html", null, env);
     expect(html.status).toBe(200);
     expect(html.headers.get("content-type")).toContain("text/html");
-    expect(await html.text()).toContain('http-equiv="refresh" content="5"');
+    expect(await html.text()).toContain('http-equiv="refresh" content="8"');
   });
 
   it("runs the deep health end to end", async () => {

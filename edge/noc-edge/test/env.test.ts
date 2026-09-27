@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import type { Env } from "@telnyx/edge-runtime";
 import { getSecret, loadSeedLocal, makeAdapter } from "../src/env";
 import type { SeedLocalConfig } from "../../shared/src/itsm";
@@ -111,6 +111,26 @@ describe("loadSeedLocal", () => {
     );
     expect(config.pins).toEqual({});
     expect(config.contacts).toEqual([{ contact_id: "c-x", phone_digits: null }]);
+  });
+
+  it("logs config.seed_local_invalid once per isolate for an unreadable or unparsable secret", async () => {
+    const logs: string[] = [];
+    vi.spyOn(console, "log").mockImplementation((line: unknown) => {
+      logs.push(String(line));
+    });
+    const env = makeEnv({ SEED_LOCAL: "{not json" });
+    await loadSeedLocal(env);
+    await loadSeedLocal(env);
+    const missing = makeEnv({});
+    await loadSeedLocal(missing);
+    const lines = logs
+      .map((l) => JSON.parse(l) as Record<string, unknown>)
+      .filter((l) => l.evt === "config.seed_local_invalid");
+    expect(lines).toHaveLength(2);
+    expect(lines.map((l) => l.reason)).toEqual(["unparsable", "read_failed"]);
+    expect(JSON.stringify(lines)).not.toContain("{not json");
+    expect(JSON.stringify(lines)).not.toContain(SEED_JSON);
+    vi.restoreAllMocks();
   });
 });
 

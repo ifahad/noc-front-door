@@ -1,5 +1,6 @@
 import { SeedAdapter } from "../../../shared/src/itsm";
 import type { Session } from "../../../shared/src/types";
+import { SITES } from "../../../shared/src/seed";
 import type { NocEdgeEnv } from "../../src/actors";
 import type { Flags } from "../../src/services/flags";
 import { FakeActorPort } from "../fakes/actors";
@@ -8,6 +9,20 @@ import { FakeKv } from "../fakes/kv";
 import { makeRegionActor, makeSiteActor } from "../fakes/actors";
 
 export const OPS_TOKEN = ["op", "s_be", "arer_", "t0k", "en_11"].join("");
+export const MCP_TEST_TOKEN = ["m", "cp_", "t0k", "en_22"].join("");
+// 32 raw bytes = a well-formed Ed25519 public key; assembled at runtime so no
+// key-shaped literal lives in the source.
+export const PUBLIC_KEY_B64 = btoa(
+  String.fromCharCode(...new Uint8Array(32).fill(7)),
+);
+export const ROUTER_PIN = ["9", "9", "9", "9"].join("");
+
+export function seedLocalAllPins(): string {
+  return JSON.stringify({
+    pins: Object.fromEntries(SITES.map((s) => [s.site_id, ROUTER_PIN])),
+    contacts: [],
+  });
+}
 
 export const T0 = Date.UTC(2026, 8, 26, 6, 0, 0);
 export const PEPPER = ["p", "e", "pp", "er"].join("");
@@ -123,7 +138,9 @@ export function makeRouterEnv(opsToken: string | null): RouterEnvBundle {
       get: async (name: string) => {
         if (name === "OPS_TOKEN") return opsToken;
         if (name === "PIN_PEPPER") return PEPPER;
-        if (name === "SEED_LOCAL") return JSON.stringify({ pins: {}, contacts: [] });
+        if (name === "MCP_TOKEN") return MCP_TEST_TOKEN;
+        if (name === "TELNYX_PUBLIC_KEY") return PUBLIC_KEY_B64;
+        if (name === "SEED_LOCAL") return seedLocalAllPins();
         return null;
       },
     },

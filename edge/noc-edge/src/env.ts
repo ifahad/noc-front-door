@@ -5,6 +5,7 @@ import type {
   SeedLocalContact,
 } from "../../shared/src/itsm";
 import { makeTokenCache, type SecretGetter } from "./auth";
+import { logEvent } from "./log";
 
 export type SecretName = Parameters<Env["SECRETS"]["get"]>[0];
 export type SecretsLike = Pick<Env, "SECRETS">;
@@ -38,6 +39,22 @@ export function getSecret(
 const DEFAULT_SEED_LOCAL: SeedLocalConfig = { pins: {}, contacts: [] };
 const seedLocalCache = new WeakMap<SecretsLike, SeedLocalConfig>();
 
+// A missing or unparsable SEED_LOCAL silently disables every verify_site PIN
+// (checkPin fails for all sites), so surface it once per isolate — never the
+// value itself. The deep-health config check reports the same failure.
+const seedLocalInvalidLogged = new WeakMap<SecretsLike, boolean>();
+
+function reportSeedLocalInvalid(env: SecretsLike, reason: string): void {
+  if (seedLocalInvalidLogged.get(env) === true) return;
+  seedLocalInvalidLogged.set(env, true);
+  logEvent("config.seed_local_invalid", {
+    hop: "env",
+    lvl: "error",
+    outcome: "error",
+    reason,
+  });
+}
+
 export async function loadSeedLocal(env: SecretsLike): Promise<SeedLocalConfig> {
   const cached = seedLocalCache.get(env);
   if (cached !== undefined) return cached;
@@ -46,13 +63,18 @@ export async function loadSeedLocal(env: SecretsLike): Promise<SeedLocalConfig> 
     const got = await env.SECRETS.get("SEED_LOCAL");
     raw = typeof got === "string" && got.length > 0 ? got : null;
   } catch {
+    reportSeedLocalInvalid(env, "read_failed");
     return DEFAULT_SEED_LOCAL;
   }
-  if (raw === null) return DEFAULT_SEED_LOCAL;
+  if (raw === null) {
+    reportSeedLocalInvalid(env, "missing");
+    return DEFAULT_SEED_LOCAL;
+  }
   let parsed: unknown;
   try {
     parsed = JSON.parse(raw);
   } catch {
+    reportSeedLocalInvalid(env, "unparsable");
     return DEFAULT_SEED_LOCAL;
   }
   const config = normaliseSeedLocal(parsed);

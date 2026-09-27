@@ -1,11 +1,23 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { SeedAdapter } from "../../../shared/src/itsm";
+import type { SeedLocalConfig } from "../../../shared/src/itsm";
+import { SITES } from "../../../shared/src/seed";
 import { kvKey } from "../../../shared/src/kvkeys";
 import type { KvPort } from "../../src/services/kvPort";
 import { resetCanaryCounters, runDeepHealth, type HealthDeps } from "../../src/ops/health";
 import { FakeActorPort } from "../fakes/actors";
 import { FakeKv, slowKv } from "../fakes/kv";
 import { OPS_TOKEN, PEPPER, T0 } from "./helpers";
+
+const TEST_PIN = ["9", "9", "9", "9"].join("");
+const TEST_MCP_TOKEN = ["m", "c", "p", "_", "t", "0", "k"].join("");
+const TEST_PUBLIC_KEY = btoa(
+  String.fromCharCode(...new Uint8Array(32).fill(7)),
+);
+
+function seededPins(): Record<string, string> {
+  return Object.fromEntries(SITES.map((s) => [s.site_id, TEST_PIN]));
+}
 
 interface LogLine extends Record<string, unknown> {
   evt: string;
@@ -27,14 +39,26 @@ function eventsWith(evt: string): LogLine[] {
   return logs.map((l) => JSON.parse(l) as LogLine).filter((l) => l.evt === evt);
 }
 
-function makeDeps(opts: { kv?: KvPort; actors?: FakeActorPort; now?: number; opsToken?: string } = {}): HealthDeps {
+interface DepsOpts {
+  kv?: KvPort;
+  actors?: FakeActorPort;
+  now?: number;
+  opsToken?: string;
+  mcpToken?: string;
+  publicKey?: string | null;
+  seedLocal?: SeedLocalConfig;
+}
+
+function makeDeps(opts: DepsOpts = {}): HealthDeps {
   return {
     kv: opts.kv ?? new FakeKv(),
     actors: opts.actors ?? new FakeActorPort(),
     adapter: new SeedAdapter({ seedLocal: { pins: {}, contacts: [] }, pepper: PEPPER, now: () => T0 }),
     now: opts.now ?? T0,
     opsToken: opts.opsToken ?? OPS_TOKEN,
-    mcpToken: "",
+    mcpToken: opts.mcpToken ?? TEST_MCP_TOKEN,
+    publicKey: opts.publicKey === undefined ? TEST_PUBLIC_KEY : opts.publicKey,
+    seedLocal: opts.seedLocal ?? { pins: seededPins(), contacts: [] },
     trace_id: "t-canary",
   };
 }
@@ -82,6 +106,44 @@ describe("ops health deep", () => {
     const result = await runDeepHealth(makeDeps({ opsToken: "" }));
     expect(result.ok).toBe(false);
     expect(result.checks.mcp_ms).toBeGreaterThanOrEqual(0);
+  });
+
+  it("fails the sync check when a region projection cannot be synced", async () => {
+    const actors = new FakeActorPort();
+    actors.failNextGetIncident("riyadh-north", 1);
+    const result = await runDeepHealth(makeDeps({ actors }));
+    expect(result.ok).toBe(false);
+  });
+
+  it("fails the config check when the public key, mcp token or seed pins are missing", async () => {
+    const result = await runDeepHealth(makeDeps({ publicKey: null, mcpToken: "" }));
+    expect(result.ok).toBe(false);
+    expect(result.config_problems).toContain("public_key");
+    expect(result.config_problems).toContain("mcp_token");
+  });
+
+  it("rejects a public key that is not a 32-byte Ed25519 key", async () => {
+    const short = btoa(String.fromCharCode(...new Uint8Array(16).fill(3)));
+    const result = await runDeepHealth(makeDeps({ publicKey: short }));
+    expect(result.ok).toBe(false);
+    expect(result.config_problems).toContain("public_key");
+  });
+
+  it("fails the config check when a scripted site has no pin and logs config.invalid without values", async () => {
+    const result = await runDeepHealth(
+      makeDeps({ seedLocal: { pins: {}, contacts: [] } }),
+    );
+    expect(result.ok).toBe(false);
+    expect(result.config_problems.some((p) => p.startsWith("seed_pin:"))).toBe(true);
+    const invalid = eventsWith("config.invalid");
+    expect(invalid).toHaveLength(1);
+    expect(JSON.stringify(invalid[0])).not.toContain(TEST_PIN);
+  });
+
+  it("reports no config problems when the call-path config is complete", async () => {
+    const result = await runDeepHealth(makeDeps());
+    expect(result.ok).toBe(true);
+    expect(result.config_problems).toEqual([]);
   });
 
   it("heals a missing projection for a region whose actor reports an active incident", async () => {
@@ -202,15 +264,25 @@ describe("ops health deep", () => {
     expect(checks[0].ok).toBe(true);
   });
 
-  it("marks a slow but healthy run degraded with the slow check names", async () => {
-    const slow = slowKv(new FakeKv(), 1200);
+  it("marks a kv round trip past its measured baseline slow but healthy, with no timeouts", { timeout: 15000 }, async () => {
+    const slow = slowKv(new FakeKv(), 1900);
     const started = Date.now();
     const result = await runDeepHealth(makeDeps({ kv: slow }));
     const elapsed = Date.now() - started;
     expect(result.ok).toBe(true);
     expect(result.degraded).toBe(true);
     expect(result.slow).toContain("kv");
-    expect(elapsed).toBeLessThan(3000);
+    expect(result.timed_out).toEqual([]);
+    expect(elapsed).toBeLessThan(4500);
+  });
+
+  it("keeps ok true and reports the check as timed out when the deadline is hit", { timeout: 15000 }, async () => {
+    const slow = slowKv(new FakeKv(), 2100);
+    const result = await runDeepHealth(makeDeps({ kv: slow }));
+    expect(result.ok).toBe(true);
+    expect(result.degraded).toBe(true);
+    expect(result.timed_out).toContain("kv");
+    expect(result.slow).toContain("kv");
   });
 
   it("reports a fast healthy run as not degraded", async () => {

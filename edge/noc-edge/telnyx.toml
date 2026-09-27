@@ -12,7 +12,9 @@ type = "RegionState"
 
 # Reference binder: mux contingency for DEBUGLOG #4 — routes actor calls
 # through the one working Counter instance (noc-actor-canary) when the
-# flag/actor_mode KV flag is "mux".
+# flag/actor_mode KV flag is "mux". The cold-isolate fallback when the flags
+# read times out is also mux: ACTOR_MODE_DEFAULT = "mux" in
+# src/services/flags.ts (per-entity bindings 502 on this account).
 [[actors]]
 binding = "MUX"
 type = "Counter"

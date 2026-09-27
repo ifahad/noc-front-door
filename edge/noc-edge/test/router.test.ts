@@ -71,6 +71,17 @@ async function makeEnv() {
     REGIONS: {
       idFromName: () => ({}),
     },
+    MUX: {
+      idFromName: () => ({
+        site: async (_entity: string, method: string) => {
+          if (method === "recordCall") {
+            return { callsToday: 1, openTicket: null, trace_id: "", actor_ms: 0 };
+          }
+          return {};
+        },
+        region: async () => ({}),
+      }),
+    },
     SECRETS: {
       get: async (name: string) => {
         if (name === "TELNYX_PUBLIC_KEY") return pub;
@@ -230,7 +241,7 @@ describe("router actor-mode selection", () => {
     );
   }
 
-  it("defaults to per-entity and never touches MUX", async () => {
+  it("reads per-entity from an unset flag and never touches MUX", async () => {
     const { env, pings } = await makePingEnv();
     const res = await actorPing(env);
     expect(res.status).toBe(200);
@@ -280,6 +291,22 @@ describe("router actor-mode selection", () => {
       list: () => Promise.resolve([]),
     } as unknown as FakeKv;
   }
+
+  it("falls back to the configured default mode (mux) on a cold isolate when the flags read exceeds the budget", async () => {
+    const { env, pings } = await makePingEnv();
+    (env as unknown as { CACHE: unknown }).CACHE = withSlowGet(new FakeKv(), 2400);
+    const res = await actorPing(env);
+    expect(res.status).toBe(200);
+    const out = (await res.json()) as { mode: string };
+    expect(out.mode).toBe("mux");
+    expect(pings.map((p) => p.method)).toEqual(["ping", "ping"]);
+    expect(pings.filter((p) => p.binding === "MUX")).toHaveLength(2);
+    const fallbacks = eventsWith("flags.fallback");
+    expect(fallbacks).toHaveLength(1);
+    expect(fallbacks[0].mode).toBe("mux");
+    expect(fallbacks[0].budget_ms).toBe(2000);
+    expect(fallbacks[0].total_ms).toBeGreaterThanOrEqual(2000);
+  }, 15000);
 
   it("selects mux on a non-dv route when the flags read takes 400 ms", async () => {
     const { env, cache, pings } = await makePingEnv();

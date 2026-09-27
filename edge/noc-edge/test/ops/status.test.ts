@@ -189,13 +189,13 @@ describe("ops status", () => {
     expect(text).not.toContain(PHONE);
   });
 
-  it("escapes html values and auto-refreshes every 5 seconds", async () => {
+  it("escapes html values and auto-refreshes every 8 seconds", async () => {
     const kv = new FakeKv();
     const actors = new FakeActorPort();
     await recordSiteCall(actors, "RUH-114", "k1", `<img src=x>`, T0 - 60_000);
     const payload = await runStatus(kv, actors);
     const html = renderStatusHtml(payload);
-    expect(html).toContain('http-equiv="refresh" content="5"');
+    expect(html).toContain('http-equiv="refresh" content="8"');
     expect(html).toContain("&lt;img src=x&gt;");
     expect(html).not.toContain("<img src=x>");
   });

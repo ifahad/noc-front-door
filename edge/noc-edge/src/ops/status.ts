@@ -359,7 +359,7 @@ export function renderStatusHtml(payload: StatusPayload): string {
   }
   return [
     "<!doctype html><html><head><meta charset=\"utf-8\">",
-    '<meta http-equiv="refresh" content="5">',
+    '<meta http-equiv="refresh" content="8">',
     "<style>td.red{color:#b91c1c;font-weight:bold}</style>",
     "<title>NOC status</title></head><body>",
     `<h1>NOC status (${escapeHtml(payload.at)})</h1>`,

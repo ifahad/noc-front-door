@@ -1,11 +1,16 @@
 import { bearerOk, makeTokenCache, type SecretGetter } from "./auth";
 import { logEvent } from "./log";
 import { type NocEdgeEnv } from "./actors";
-import { bindingKvPort } from "./services/kvPort";
+import { bindingKvPort, type KvPort } from "./services/kvPort";
 import { bindingActorPort, type ActorPort } from "./services/actorPort";
 import { muxActorPort } from "./services/muxActorPort";
-import { read as readFlags, type ActorMode, type Flags } from "./services/flags";
-import { getSecret, makeAdapter } from "./env";
+import {
+  ACTOR_MODE_DEFAULT,
+  readDetailed,
+  type ActorMode,
+  type Flags,
+} from "./services/flags";
+import { getSecret, loadSeedLocal, makeAdapter } from "./env";
 import { handleDv, SAFE_FLAGS } from "./dv/handler";
 import { handleVerifySite } from "./tools/verifySite";
 import { handleOpenTicket } from "./tools/openTicket";
@@ -14,8 +19,8 @@ import { handleCallback } from "./tools/callback";
 import { handleMcp } from "./mcp/server";
 import { renderDemoPage } from "./demo/page";
 import { loadDemoGuide } from "./demo/guide";
-import { buildStatus, renderStatusHtml } from "./ops/status";
-import { getBoard } from "./ops/board";
+import { renderStatusHtml } from "./ops/status";
+import { getBoard, statusPayloadOf } from "./ops/board";
 import { runDeepHealth } from "./ops/health";
 import { listReports, readReport } from "./services/reports";
 import {
@@ -47,12 +52,16 @@ const opsTokenGetters = new WeakMap<NocEdgeEnv, SecretGetter>();
 // through the single working Counter instance on noc-actor-canary (the
 // DEBUGLOG #4 contingency); anything else uses the per-entity bindings.
 // A KV failure must never take a route down: fail open to the last
-// known-good mode, or per-entity when nothing is known yet. Tool and ops
+// known-good mode, or to the deploy-time ACTOR_MODE_DEFAULT (mux — the mode
+// that works on this account) when nothing is known yet. Tool and ops
 // webhooks allow seconds; /dv chooses its actor port from the flags read
 // handleDv performs inside its own budget (see routeDv).
 const FLAGS_BUDGET_MS = 2000;
 
 let lastKnownMode: ActorMode | null = null;
+// Quiet canary (final review F26): actor_mode.read is logged only on a memo
+// miss or a mode change, not on every route that picks a port.
+const loggedModeByKv = new WeakMap<KvPort, ActorMode>();
 
 export function __resetActorModeForTests(): void {
   lastKnownMode = null;
@@ -62,19 +71,18 @@ async function selectActorPort(
   env: NocEdgeEnv,
   budgetMs: number,
 ): Promise<{ port: ActorPort; mode: ActorMode }> {
+  const kv = bindingKvPort(env.CACHE);
   const started = Date.now();
-  const result = await deadline(
-    readFlags(bindingKvPort(env.CACHE), started),
-    budgetMs,
-    "actor.flags",
-  );
-  if (!result.ok) {
-    const mode: ActorMode = lastKnownMode ?? "per-entity";
+  const raced = await deadline(readDetailed(kv, started), budgetMs, "actor.flags");
+  if (!raced.ok) {
+    const mode: ActorMode = lastKnownMode ?? ACTOR_MODE_DEFAULT;
     logEvent("flags.fallback", {
       lvl: "warn",
       hop: "actor-mode",
       outcome: "fallback",
       mode,
+      total_ms: Date.now() - started,
+      budget_ms: budgetMs,
     });
     return {
       port: mode === "mux" ? muxActorPort(env) : bindingActorPort(env),
@@ -82,15 +90,18 @@ async function selectActorPort(
     };
   }
   const mode: ActorMode =
-    result.value.actor_mode === "mux" ? "mux" : "per-entity";
+    raced.value.flags.actor_mode === "mux" ? "mux" : "per-entity";
   lastKnownMode = mode;
-  logEvent("actor_mode.read", {
-    lvl: "info",
-    hop: "actor-mode",
-    outcome: "ok",
-    total_ms: Date.now() - started,
-    mode,
-  });
+  if (!raced.value.memo_hit || loggedModeByKv.get(kv) !== mode) {
+    loggedModeByKv.set(kv, mode);
+    logEvent("actor_mode.read", {
+      lvl: "info",
+      hop: "actor-mode",
+      outcome: "ok",
+      total_ms: Date.now() - started,
+      mode,
+    });
+  }
   return mode === "mux"
     ? { port: muxActorPort(env), mode }
     : { port: bindingActorPort(env), mode };
@@ -171,12 +182,12 @@ async function routeDv(request: Request, env: NocEdgeEnv): Promise<Response> {
   ]);
   // The /dv actor port is chosen from the SAME flags read handleDv performs
   // (no separate actor-mode read). Timed-out flags arrive as SAFE_FLAGS, so
-  // fall back to the last-known-good mode without overwriting it.
+  // fall back to the last-known-good mode, or the deploy-time default, without
+  // overwriting it.
   const actorsFor = (flags: Flags): ActorPort => {
     if (flags === SAFE_FLAGS) {
-      return (lastKnownMode ?? "per-entity") === "mux"
-        ? muxActorPort(env)
-        : bindingActorPort(env);
+      const mode = lastKnownMode ?? ACTOR_MODE_DEFAULT;
+      return mode === "mux" ? muxActorPort(env) : bindingActorPort(env);
     }
     lastKnownMode = flags.actor_mode;
     return flags.actor_mode === "mux" ? muxActorPort(env) : bindingActorPort(env);
@@ -309,10 +320,18 @@ async function readJsonBody(request: Request): Promise<unknown> {
   }
 }
 
+// Public viewer route. It rides the same single-flight board cache as
+// /ops/board (one build per ~8 s window per isolate), so a curl loop or an
+// auto-refreshing tab cannot load the single mux actor through /ops/status
+// (final review F2).
 async function routeOpsStatus(request: Request, env: NocEdgeEnv): Promise<Response> {
   const url = new URL(request.url);
-  const ctx = await opsCtx(env);
-  const payload = await buildStatus(ctx);
+  const board = await getBoard(env, {
+    kv: bindingKvPort(env.CACHE),
+    selectActor: () => selectActorPort(env, FLAGS_BUDGET_MS),
+    now: Date.now(),
+  });
+  const payload = statusPayloadOf(board);
   if (url.searchParams.get("format") === "html") {
     return new Response(renderStatusHtml(payload), {
       status: 200,
@@ -344,13 +363,20 @@ async function routeOpsBoard(request: Request, env: NocEdgeEnv): Promise<Respons
 async function routeOpsHealth(env: NocEdgeEnv, opsToken: string): Promise<Response> {
   const ctx = await opsCtx(env);
   const adapter = await makeAdapter(env);
+  const [mcpToken, publicKey, seedLocal] = await Promise.all([
+    getSecret(env, "MCP_TOKEN"),
+    getSecret(env, "TELNYX_PUBLIC_KEY"),
+    loadSeedLocal(env),
+  ]);
   const result = await runDeepHealth({
     kv: ctx.kv,
     actors: ctx.actors,
     adapter,
     now: ctx.now,
     opsToken,
-    mcpToken: (await getSecret(env, "MCP_TOKEN")) ?? "",
+    mcpToken: mcpToken ?? "",
+    publicKey,
+    seedLocal,
     trace_id: ctx.trace_id,
   });
   return Response.json(result);

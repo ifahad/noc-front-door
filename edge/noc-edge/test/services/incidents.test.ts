@@ -88,7 +88,7 @@ describe("incidents.syncProjection", () => {
     expect(kv.has(KEY)).toBe(false);
   });
 
-  it("survives an actor error and leaves the projection untouched", async () => {
+  it("survives an actor error and leaves the projection untouched, reporting the failure", async () => {
     const kv = new FakeKv();
     kv.setNow(T0);
     await kv.put(KEY, "stale");
@@ -96,13 +96,77 @@ describe("incidents.syncProjection", () => {
     actors.failNextGetIncident(REGION, 1);
     await expect(
       syncProjection({ actors, kv }, REGION, "t-1"),
-    ).resolves.toBeUndefined();
+    ).resolves.toEqual({ ok: false, projected: false });
     expect(kv.raw(KEY)).toBe("stale");
     const events = logs
       .map((l) => JSON.parse(l) as Record<string, unknown>)
       .filter((l) => l.evt === "incident.sync");
     expect(events).toHaveLength(1);
     expect(events[0].outcome).toBe("error");
+  });
+
+  it("logs incident.sync only when the projection changes, not on every sync", async () => {
+    const kv = new FakeKv();
+    kv.setNow(T0);
+    const actors = new FakeActorPort();
+    await declareTwoSites(actors);
+    await syncProjection({ actors, kv }, REGION, "t-1");
+    await syncProjection({ actors, kv }, REGION, "t-1");
+    kv.setNow(T0 + 60_000);
+    await syncProjection({ actors, kv }, REGION, "t-1");
+    const events = logs
+      .map((l) => JSON.parse(l) as Record<string, unknown>)
+      .filter((l) => l.evt === "incident.sync");
+    expect(events).toHaveLength(1);
+    expect(events[0].projected).toBe(true);
+    expect(kv.ttlSecondsLeft(KEY)).toBe(7200);
+  });
+
+  it("logs again when the projection content changes", async () => {
+    const kv = new FakeKv();
+    kv.setNow(T0);
+    const actors = new FakeActorPort();
+    await declareTwoSites(actors);
+    await syncProjection({ actors, kv }, REGION, "t-1");
+    await actors.region(REGION).reportSite(report("RUH-133", "NJD-3301", T0 + 2000));
+    kv.setNow(T0 + 1000);
+    await syncProjection({ actors, kv }, REGION, "t-1");
+    const events = logs
+      .map((l) => JSON.parse(l) as Record<string, unknown>)
+      .filter((l) => l.evt === "incident.sync");
+    expect(events).toHaveLength(2);
+    expect(events[1].site_count).toBe(3);
+  });
+
+  it("logs the clear once when an incident is withdrawn and stays quiet afterwards", async () => {
+    const kv = new FakeKv();
+    kv.setNow(T0);
+    const actors = new FakeActorPort();
+    await declareTwoSites(actors);
+    await syncProjection({ actors, kv }, REGION, "t-1");
+    await actors.region(REGION).resolve({ trace_id: "t-1", at: T0 + 2000 });
+    await syncProjection({ actors, kv }, REGION, "t-1");
+    await syncProjection({ actors, kv }, REGION, "t-1");
+    const events = logs
+      .map((l) => JSON.parse(l) as Record<string, unknown>)
+      .filter((l) => l.evt === "incident.sync");
+    expect(events).toHaveLength(2);
+    expect(events[1].projected).toBe(false);
+    expect(kv.has(KEY)).toBe(false);
+  });
+
+  it("stays quiet after the first cold-isolate clear when there was never a projection", async () => {
+    const kv = new FakeKv();
+    kv.setNow(T0);
+    const actors = new FakeActorPort();
+    await syncProjection({ actors, kv }, REGION, "t-1");
+    await syncProjection({ actors, kv }, REGION, "t-1");
+    const events = logs
+      .map((l) => JSON.parse(l) as Record<string, unknown>)
+      .filter((l) => l.evt === "incident.sync");
+    expect(events).toHaveLength(1);
+    expect(events[0].projected).toBe(false);
+    expect(kv.calls.filter((c) => c.op === "delete")).toHaveLength(1);
   });
 });
 

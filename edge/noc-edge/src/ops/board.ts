@@ -73,6 +73,27 @@ export function getBoard(cacheKey: object, deps: BoardDeps): Promise<BoardPayloa
   return promise;
 }
 
+// The public /ops/status payload is the board without the board-only fields
+// (actor_mode, generated_at, last_report and the per-site region). Serving
+// both views from one cached build keeps a single-flight window around every
+// status read too (final review F2).
+export function statusPayloadOf(board: BoardPayload): StatusPayload {
+  const payload: StatusPayload = {
+    at: board.at,
+    heartbeat: board.heartbeat,
+    fault_flags: board.fault_flags,
+    regions: board.regions,
+    sites: board.sites.map((site) => ({
+      site_id: site.site_id,
+      label: site.label,
+      open_ticket: site.open_ticket,
+      recent_calls: site.recent_calls,
+    })),
+  };
+  if (board.degraded === true) payload.degraded = true;
+  return payload;
+}
+
 async function buildBoard(deps: BoardDeps): Promise<BoardPayload> {
   const started = Date.now();
   const choice = await deps.selectActor();

@@ -61,36 +61,73 @@ export function projectionOf(
   };
 }
 
+export interface SyncResult {
+  ok: boolean;
+  projected: boolean;
+}
+
+// The canary syncs every ~10 s, so incident.sync is logged only when the
+// projection actually changes (spec §11.1 quiet canary). This isolate's last
+// write per (kv, region) is the change detector; syncProjection is the single
+// writer of incident/active/<region> (spec §6.3), so the memo is authoritative
+// within the isolate. A write or delete still runs every time so the TTL and
+// the write path keep being exercised.
+const lastProjectionByKv = new WeakMap<KvPort, Map<string, string | null>>();
+
+function lastProjection(kv: KvPort, region: string): string | null | undefined {
+  let byRegion = lastProjectionByKv.get(kv);
+  if (byRegion === undefined) {
+    byRegion = new Map<string, string | null>();
+    lastProjectionByKv.set(kv, byRegion);
+  }
+  return byRegion.get(region);
+}
+
+function setLastProjection(kv: KvPort, region: string, value: string | null): void {
+  const byRegion = lastProjectionByKv.get(kv);
+  if (byRegion !== undefined) byRegion.set(region, value);
+}
+
 export async function syncProjection(
   deps: { actors: ActorPort; kv: KvPort },
   region: string,
   trace_id: string,
-): Promise<void> {
+): Promise<SyncResult> {
+  const key = kvKey("incident", "active", region);
   try {
     const { incident } = await deps.actors.region(region).getIncident({ trace_id });
-    const key = kvKey("incident", "active", region);
     if (incident === null) {
-      await deps.kv.delete(key);
+      const knownAbsent = lastProjection(deps.kv, region) === null;
+      if (!knownAbsent) {
+        await deps.kv.delete(key);
+        setLastProjection(deps.kv, region, null);
+        logEvent("incident.sync", {
+          hop: "services/incidents",
+          trace_id,
+          region,
+          outcome: "ok",
+          projected: false,
+        });
+      }
+      return { ok: true, projected: false };
+    }
+    const serialized = JSON.stringify(projectionOf(incident, region));
+    await deps.kv.put(key, serialized, {
+      expirationTtl: PROJECTION_TTL_SECONDS,
+    });
+    if (lastProjection(deps.kv, region) !== serialized) {
+      setLastProjection(deps.kv, region, serialized);
       logEvent("incident.sync", {
         hop: "services/incidents",
         trace_id,
         region,
         outcome: "ok",
-        projected: false,
+        projected: true,
+        incident_id: incident.id,
+        site_count: Object.keys(incident.sites).length,
       });
-      return;
     }
-    await deps.kv.put(key, JSON.stringify(projectionOf(incident, region)), {
-      expirationTtl: PROJECTION_TTL_SECONDS,
-    });
-    logEvent("incident.sync", {
-      hop: "services/incidents",
-      trace_id,
-      region,
-      outcome: "ok",
-      projected: true,
-      incident_id: incident.id,
-    });
+    return { ok: true, projected: true };
   } catch (err) {
     logEvent("incident.sync", {
       hop: "services/incidents",
@@ -100,5 +137,6 @@ export async function syncProjection(
       lvl: "warn",
       error: String(err),
     });
+    return { ok: false, projected: false };
   }
 }

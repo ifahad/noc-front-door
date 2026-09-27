@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { getBoard, type BoardDeps } from "../../src/ops/board";
 import { route } from "../../src/router";
 import { SITES } from "../../../shared/src/seed";
+import { kvKey } from "../../../shared/src/kvkeys";
 import { LAST_REPORT_KEY } from "../../src/services/reports";
 import { FakeActorPort } from "../fakes/actors";
 import { FakeKv } from "../fakes/kv";
@@ -202,6 +203,49 @@ describe("ops board last_report", () => {
     kv.failNext(1);
     const board = await getBoard({}, makeDeps(kv, actors, { builds: 0 })(T0));
     expect(board.last_report).toBeNull();
+  });
+});
+
+describe("public status rides the board single-flight cache", () => {
+  it("serves ten concurrent /ops/status and /ops/board requests from one build", async () => {
+    const bundle = makeRouterEnv(OPS_TOKEN);
+    const paths = ["/ops/status", "/ops/board", "/ops/status?format=html"];
+    for (let i = 0; i < 7; i++) paths.push(i % 2 === 0 ? "/ops/status" : "/ops/board");
+    const responses = await Promise.all(
+      paths.map((path) => route(new Request(`https://x${path}`), bundle.env)),
+    );
+    for (const res of responses) expect(res.status).toBe(200);
+
+    const heartbeatGets = bundle.kv.calls.filter(
+      (c) => c.op === "get" && c.key === kvKey("ops", "heartbeat"),
+    );
+    expect(heartbeatGets).toHaveLength(1);
+
+    const statusPayload = (await responses[0].json()) as Record<string, unknown> & {
+      sites: Record<string, unknown>[];
+    };
+    expect(statusPayload.actor_mode).toBeUndefined();
+    expect(statusPayload.generated_at).toBeUndefined();
+    expect(statusPayload.last_report).toBeUndefined();
+    expect(statusPayload.sites.length).toBe(SITES.filter((s) => !s.hidden).length);
+    for (const site of statusPayload.sites) expect(site.region).toBeUndefined();
+
+    const boardPayload = (await responses[1].json()) as { actor_mode: string };
+    expect(boardPayload.actor_mode).toBe("per-entity");
+
+    const html = await responses[2].text();
+    expect(html).toContain('http-equiv="refresh" content="8"');
+  });
+
+  it("reuses the cached build for a status request after a board build", async () => {
+    const bundle = makeRouterEnv(OPS_TOKEN);
+    await route(new Request("https://x/ops/board"), bundle.env);
+    const status = await route(new Request("https://x/ops/status"), bundle.env);
+    expect(status.status).toBe(200);
+    const heartbeatGets = bundle.kv.calls.filter(
+      (c) => c.op === "get" && c.key === kvKey("ops", "heartbeat"),
+    );
+    expect(heartbeatGets).toHaveLength(1);
   });
 });
 

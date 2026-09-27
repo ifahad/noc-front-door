@@ -5,6 +5,13 @@ export type FaultStatus = 500 | 503 | 504;
 
 export type ActorMode = "per-entity" | "mux";
 
+// Deploy-time fallback for a cold isolate whose flags read times out
+// (FLAGS_BUDGET_MS in router.ts): per-entity bindings return 502 after ~30 s
+// on this account (DEBUGLOG #4), so the known-good mux contingency is the
+// documented default. lastKnownMode still wins whenever a flags read has
+// succeeded in this isolate.
+export const ACTOR_MODE_DEFAULT: ActorMode = "mux";
+
 export interface Flags {
   deflection_enabled: boolean;
   require_pin: boolean;
@@ -24,13 +31,18 @@ const FAULT_STATUSES: readonly number[] = [500, 503, 504];
 const memoByKv = new WeakMap<KvPort, { at: number; flags: Flags }>();
 const inFlightByKv = new WeakMap<KvPort, Promise<Flags>>();
 
-export function read(kv: KvPort, now: number): Promise<Flags> {
+export interface FlagsRead {
+  flags: Flags;
+  memo_hit: boolean;
+}
+
+export async function readDetailed(kv: KvPort, now: number): Promise<FlagsRead> {
   const memo = memoByKv.get(kv);
   if (memo !== undefined && now - memo.at < MEMO_MS) {
-    return Promise.resolve(memo.flags);
+    return { flags: memo.flags, memo_hit: true };
   }
   const existing = inFlightByKv.get(kv);
-  if (existing !== undefined) return existing;
+  if (existing !== undefined) return { flags: await existing, memo_hit: false };
   const flight = doRead(kv, now);
   inFlightByKv.set(kv, flight);
   flight
@@ -38,7 +50,11 @@ export function read(kv: KvPort, now: number): Promise<Flags> {
       if (inFlightByKv.get(kv) === flight) inFlightByKv.delete(kv);
     })
     .catch(() => {});
-  return flight;
+  return { flags: await flight, memo_hit: false };
+}
+
+export function read(kv: KvPort, now: number): Promise<Flags> {
+  return readDetailed(kv, now).then((outcome) => outcome.flags);
 }
 
 async function doRead(kv: KvPort, now: number): Promise<Flags> {
