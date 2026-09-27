@@ -10,7 +10,7 @@
 - Plan 2 adds:
   1. host-level alarm scheduling to the mux;
   2. the §12.1 escalation ladder in `RegionState`;
-  3. a `/console` page on noc-edge;
+  3. a live NOC wall on the public `/demo` page, backed by a cached public `/ops/board`;
   4. a Cloud Storage binding for incident reports;
   5. an Arabic node in the workflow;
   6. a measured voice-model change.
@@ -46,7 +46,7 @@
 **Files:**
 - Modify: `edge/noc-actor-host/src/MuxHost.ts`, `src/prefixedStorage.ts`.
 - Test: `edge/noc-actor-host/test/MuxAlarms.test.ts`.
-- Modify: `edge/noc-edge/src/ops/actions.ts` (+ router): `POST /ops/tick` (Bearer OPS_TOKEN).
+- (Moved to P2-2: `POST /ops/tick` in noc-edge — P2-1 stays inside edge/noc-actor-host.)
 
 **Interfaces:**
 - **Produces:**
@@ -76,7 +76,7 @@
 
 **Files:**
 - Modify: `edge/noc-actors/src/RegionState.ts` (+ tests).
-- Modify: `edge/noc-edge/src/ops/{actions,status}.ts`, router: `GET /ops/pages/pending`, `POST /ops/pages/claim`, `POST /ops/pages/sent`.
+- Modify: `edge/noc-edge/src/ops/{actions,status}.ts`, router: `POST /ops/tick` (Bearer OPS_TOKEN → mux host `tick(now)`; per-entity mode → each region's `tick`), `GET /ops/pages/pending`, `POST /ops/pages/claim`, `POST /ops/pages/sent`; the prober calls `/ops/tick` every 30 s.
 - Modify: `scripts/prober.mjs` (claim → "send" = banner + `notify-send` + log `page.sent` → mark sent).
 
 **Behaviour (spec §12.1, verbatim semantics):**
@@ -91,26 +91,22 @@
   - `markPageSent(pageId, now)` then records the send.
 - **Tests:** duplicate delivery; upgrade mid-ladder; alarm after resolve; concurrent claim (exactly one wins); ack stops the ladder.
 
-### Task P2-3: Live NOC console (`/console`)
+### Task P2-3: Live NOC wall on `/demo` (redefined 2026-09-27, ruling P2-R3)
+
+Fahad chose the "Live NOC wall" direction: the public `/demo` page becomes the dark-theme demo centrepiece and the live console in one. The full visual and behaviour spec is the dispatch prompt `.superpowers/sdd/2026-09-27-plan-2-stretch/p2-3-prompt.md`.
 
 **Files:**
-- Create: `edge/noc-edge/src/console/page.ts` (+ router).
-- Test: `edge/noc-edge/test/console/page.test.ts`.
+- Create: `edge/noc-edge/src/ops/board.ts`: public `GET /ops/board`, the masked status plus a region per site and `actor_mode`, with a single-flight in-isolate cache reused for 8 s.
+- Create: `edge/noc-edge/src/demo/guide.ts`: the demo PINs from Edge secret `DEMO_GUIDE`, never source literals.
+- Rewrite: `edge/noc-edge/src/demo/page.ts`.
+- Modify: router, `telnyx.toml`.
 
 **Behaviour:**
-- **Page.** A public, self-contained HTML page (inline CSS/JS, no external assets). Every 5 s it fetches `/ops/status` (JSON) and renders:
-  - the region incident cards (id, P1/P2 badge, site count, declared time, ack state and escalation level from P2-2);
-  - the site tickets;
-  - a page feed.
-
-  It uses `textContent` only. It shows "last updated n s ago", plus a "stale" badge when a fetch fails.
-- **Operator actions** (ack, resolve, reset + stage-incident for demo prep) need an OPS token typed into a password field. The token is held in `sessionStorage` only and sent as a Bearer header to the existing `/ops/*` routes. Nothing is proxied server-side.
-- **`/ops/status` JSON** gains `esc` (level, dueAt, acked) and `pages` (masked), and the report link from P2-4.
-- **Tests:**
-  - HTML contains no `innerHTML` for data;
-  - no token or PIN literals;
-  - headers `no-store`, `nosniff` and `referrer-policy`;
-  - status JSON shape.
+- **Left column:** a call orb that clicks the widget launcher; scenario cards with PIN chips; a "how it works" ribbon.
+- **Right column:** KPI tiles; region cards (quiet / P2 / P1); a client-side event feed built by diffing successive board snapshots.
+- **Operator drawer:** the OPS token is held in `sessionStorage` only.
+- **Rendering and polling:** `textContent` only, and no `innerHTML` at all. Polls every 5 s with no overlap. Shows a "stale" badge and never goes blank.
+- **Follow-up once P2-2 lands:** `/ops/board` also carries the escalation (`esc`, `pages`) and the report link from P2-4.
 
 ### Task P2-4: Incident reports in Telnyx Cloud Storage
 
