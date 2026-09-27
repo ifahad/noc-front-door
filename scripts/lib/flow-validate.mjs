@@ -35,7 +35,13 @@ export function validateFlow(
   flow,
   {
     requireHumanExits = false,
-    humanExitExemptions = ['n_wrapup', 'n_take_message', 'n_ar_handover', 'n_ar_goodbye'],
+    humanExitExemptions = [
+      'n_wrapup',
+      'n_take_message',
+      'n_ar_handover',
+      'n_ar_take_message',
+      'n_ar_goodbye',
+    ],
   } = {},
 ) {
   const errors = [];
@@ -128,13 +134,24 @@ export function validateFlow(
     if (node.type === 'prompt' && defaults !== 0) {
       errors.push(`prompt node "${node.id}" must not have a default edge`);
     }
-    if (node.type === 'prompt') {
-      if (!node.instructions_mode) {
-        errors.push(`prompt node "${node.id}" missing instructions_mode`);
-      }
-      if (!node.tools_mode) {
-        errors.push(`prompt node "${node.id}" missing tools_mode`);
-      }
+      if (node.type === 'prompt') {
+        if (!node.instructions_mode) {
+          errors.push(`prompt node "${node.id}" missing instructions_mode`);
+        }
+        if (!node.tools_mode) {
+          errors.push(`prompt node "${node.id}" missing tools_mode`);
+        }
+        const sharedToolIds = Array.isArray(node.shared_tool_ids)
+          ? node.shared_tool_ids
+          : [];
+        for (const id of sharedToolIds) {
+          const name = placeholderToolName(String(id));
+          if (name !== null && MANDATORY_TOOL_NODES.has(name)) {
+            errors.push(
+              `prompt node "${node.id}" must not list ${name} in shared_tool_ids; mandatory actions must be tool nodes`,
+            );
+          }
+        }
       if (requireHumanExits && !humanExitExemptions.includes(node.id)) {
         const llmPrompts = edges
           .filter((e) => e?.start_node_id === node.id && e.condition?.type === 'llm')
@@ -149,6 +166,8 @@ export function validateFlow(
   }
   return errors;
 }
+
+const MANDATORY_TOOL_NODES = new Set(['transfer_oncall', 'end_call']);
 
 const MUSTACHE_RE = /\{\{\s*([A-Za-z_][A-Za-z0-9_]*)\s*\}\}/g;
 

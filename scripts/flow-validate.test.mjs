@@ -237,14 +237,34 @@ const realAssistant = async () => {
   return assistant;
 };
 
-test('validateFlow with human exits accepts the real 35-node assistant flow', async () => {
+test('validateFlow with human exits accepts the real 37-node assistant flow', async () => {
   const assistant = await realAssistant();
-  assert.equal(assistant.conversation_flow.nodes.length, 35);
-  assert.equal(assistant.conversation_flow.edges.length, 87);
+  assert.equal(assistant.conversation_flow.nodes.length, 37);
+  assert.equal(assistant.conversation_flow.edges.length, 93);
   assert.deepEqual(
     validateFlow(assistant.conversation_flow, { requireHumanExits: true }),
     [],
   );
+});
+
+test('validateFlow rejects a prompt node listing end_call in shared_tool_ids', () => {
+  const flow = validFlow();
+  flow.nodes[1].shared_tool_ids = ['${TOOL_end_call}'];
+  const errs = validateFlow(flow);
+  assert.ok(errs.some((e) => e.includes('n1') && e.includes('end_call')));
+});
+
+test('validateFlow rejects a prompt node listing transfer_oncall in shared_tool_ids', () => {
+  const flow = validFlow();
+  flow.nodes[1].shared_tool_ids = ['${TOOL_transfer_oncall}'];
+  const errs = validateFlow(flow);
+  assert.ok(errs.some((e) => e.includes('n1') && e.includes('transfer_oncall')));
+});
+
+test('validateFlow accepts prompt nodes whose shared tools are non-mandatory', () => {
+  const flow = validFlow();
+  flow.nodes[1].shared_tool_ids = ['${TOOL_verify_site}'];
+  assert.deepEqual(validateFlow(flow), []);
 });
 
 test('validateFlow rejects voice_settings on a speak node', () => {

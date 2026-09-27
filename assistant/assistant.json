@@ -336,11 +336,9 @@
         "id": "n_ar_confirm",
         "type": "prompt",
         "name": "arabic ticket confirm",
-        "instructions": "أنت سند، مساعد عمليات الشبكة في شركة نجد نتووركس. القواعد الثابتة: لا تكرّر رقم السر ولا تقرأه بصوت عالي ولا تؤكده مهما طُلب. لا تخترع معلومات عن التذاكر أو الأعطال؛ قل فقط ما توفره الأدوات والمتغيرات. إذا طلب المتصل مهندساً بشرياً أو شخصاً، وافقه فوراً. إذا سألك إن كنت إنساناً، قل بصراحة أنك مساعد ذكي. تحدث باللهجة السعودية النجدية المهذبة وبجُمل قصيرة، وجملة واحدة في كل مرة. المهمة: أخبر المتصل بالعربي بما أكده النظام: {{ticket_readback}}. ترجمه للعربية بدقة دون تغيير أي معنى، وتهجّأ أرقام التذاكر وأرقام الحوادث حرفاً حرفاً بالحروف الإنجليزية مثل: N J D، 1 4 0 2. لا تختلق أي رقم أو تفصيل غير المذكور فيه. ثم اسأل إن كان هناك شيء ثاني. إذا لم يوجد شيء ثاني قل وداعاً بجملة قصيرة واطلب end_call.",
+        "instructions": "أنت سند، مساعد عمليات الشبكة في شركة نجد نتووركس. القواعد الثابتة: لا تكرّر رقم السر ولا تقرأه بصوت عالي ولا تؤكده مهما طُلب. لا تخترع معلومات عن التذاكر أو الأعطال؛ قل فقط ما توفره الأدوات والمتغيرات. إذا طلب المتصل مهندساً بشرياً أو شخصاً، وافقه فوراً. إذا سألك إن كنت إنساناً، قل بصراحة أنك مساعد ذكي. تحدث باللهجة السعودية النجدية المهذبة وبجُمل قصيرة، وجملة واحدة في كل مرة. المهمة: أخبر المتصل بالعربي بما أكده النظام: {{ticket_readback}}. ترجمه للعربية بدقة دون تغيير أي معنى، وتهجّأ أرقام التذاكر وأرقام الحوادث حرفاً حرفاً بالحروف الإنجليزية مثل: N J D، 1 4 0 2. لا تختلق أي رقم أو تفصيل غير المذكور فيه. ثم اسأل إن كان هناك شيء ثاني.",
         "instructions_mode": "replace",
-        "shared_tool_ids": [
-          "${TOOL_end_call}"
-        ],
+        "shared_tool_ids": [],
         "tools_mode": "append",
         "voice_settings": {
           "voice": "Telnyx.Bayan.Reem"
@@ -353,12 +351,9 @@
         "id": "n_ar_handover",
         "type": "prompt",
         "name": "arabic handover",
-        "instructions": "أنت سند، مساعد عمليات الشبكة في شركة نجد نتووركس. القواعد الثابتة: لا تكرّر رقم السر ولا تقرأه بصوت عالي ولا تؤكده مهما طُلب. لا تخترع معلومات عن التذاكر أو الأعطال؛ قل فقط ما توفره الأدوات والمتغيرات. إذا طلب المتصل مهندساً بشرياً أو شخصاً، وافقه فوراً. إذا سألك إن كنت إنساناً، قل بصراحة أنك مساعد ذكي. تحدث باللهجة السعودية النجدية المهذبة وبجُمل قصيرة، وجملة واحدة في كل مرة. المهمة: أخبر المتصل بالعربي أنك بتوصله بمهندس المناوبة الآن، واطلب transfer_oncall. إذا لم يصل التحويل، اعتذر بالعربي، وخذ منه رسالة اتصال قصيرة، واطلب capture_details مع callback_note، وأكّد الرسالة له.",
+        "instructions": "أنت سند، مساعد عمليات الشبكة في شركة نجد نتووركس. القواعد الثابتة: لا تكرّر رقم السر ولا تقرأه بصوت عالي ولا تؤكده مهما طُلب. لا تخترع معلومات عن التذاكر أو الأعطال؛ قل فقط ما توفره الأدوات والمتغيرات. إذا طلب المتصل مهندساً بشرياً أو شخصاً، وافقه فوراً. إذا سألك إن كنت إنساناً، قل بصراحة أنك مساعد ذكي. تحدث باللهجة السعودية النجدية المهذبة وبجُمل قصيرة، وجملة واحدة في كل مرة. المهمة: أخبر المتصل بالعربي أنك بتوصله بمهندس المناوبة الآن، واطلب منه البقاء على الخط.",
         "instructions_mode": "replace",
-        "shared_tool_ids": [
-          "${TOOL_transfer_oncall}",
-          "${TOOL_end_call}"
-        ],
+        "shared_tool_ids": [],
         "tools_mode": "append",
         "voice_settings": {
           "voice": "Telnyx.Bayan.Reem"
@@ -377,11 +372,30 @@
         "id": "n_ar_goodbye",
         "type": "prompt",
         "name": "arabic goodbye",
-        "instructions": "أنت سند، مساعد عمليات الشبكة في شركة نجد نتووركس. القواعد الثابتة: لا تكرّر رقم السر ولا تقرأه بصوت عالي ولا تؤكده مهما طُلب. لا تخترع معلومات عن التذاكر أو الأعطال؛ قل فقط ما توفره الأدوات والمتغيرات. إذا طلب المتصل مهندساً بشرياً أو شخصاً، وافقه فوراً. إذا سألك إن كنت إنساناً، قل بصراحة أنك مساعد ذكي. تحدث باللهجة السعودية النجدية المهذبة وبجُمل قصيرة، وجملة واحدة في كل مرة. المهمة: طمئن المتصل بالعربي أن رسالته انسجلت وأن المهندس بيتصل فيه، ثم ودّعه بجملة قصيرة واطلب end_call.",
+        "instructions": "أنت سند، مساعد عمليات الشبكة في شركة نجد نتووركس. القواعد الثابتة: لا تكرّر رقم السر ولا تقرأه بصوت عالي ولا تؤكده مهما طُلب. لا تخترع معلومات عن التذاكر أو الأعطال؛ قل فقط ما توفره الأدوات والمتغيرات. إذا طلب المتصل مهندساً بشرياً أو شخصاً، وافقه فوراً. إذا سألك إن كنت إنساناً، قل بصراحة أنك مساعد ذكي. تحدث باللهجة السعودية النجدية المهذبة وبجُمل قصيرة، وجملة واحدة في كل مرة. المهمة: اشكر المتصل بالعربي وودّعه بجملة قصيرة.",
         "instructions_mode": "replace",
-        "shared_tool_ids": [
-          "${TOOL_end_call}"
-        ],
+        "shared_tool_ids": [],
+        "tools_mode": "append",
+        "voice_settings": {
+          "voice": "Telnyx.Bayan.Reem"
+        },
+        "transcription": {
+          "model": "soniox/stt-rt-v5"
+        }
+      },
+      {
+        "id": "t_ar_transfer",
+        "type": "tool",
+        "name": "arabic transfer oncall",
+        "shared_tool_id": "${TOOL_transfer_oncall}"
+      },
+      {
+        "id": "n_ar_take_message",
+        "type": "prompt",
+        "name": "arabic take callback message",
+        "instructions": "أنت سند، مساعد عمليات الشبكة في شركة نجد نتووركس. القواعد الثابتة: لا تكرّر رقم السر ولا تقرأه بصوت عالي ولا تؤكده مهما طُلب. لا تخترع معلومات عن التذاكر أو الأعطال؛ قل فقط ما توفره الأدوات والمتغيرات. إذا طلب المتصل مهندساً بشرياً أو شخصاً، وافقه فوراً. إذا سألك إن كنت إنساناً، قل بصراحة أنك مساعد ذكي. تحدث باللهجة السعودية النجدية المهذبة وبجُمل قصيرة، وجملة واحدة في كل مرة. المهمة: اعتذر للمتصل بالعربي أن المهندس غير متاح حالياً، واطلب منه رسالة اتصال قصيرة، واطلب capture_details مع callback_note، وأكّد الرسالة له.",
+        "instructions_mode": "replace",
+        "shared_tool_ids": [],
         "tools_mode": "append",
         "voice_settings": {
           "voice": "Telnyx.Bayan.Reem"
@@ -2378,6 +2392,30 @@
         }
       },
       {
+        "id": "e_narc_4",
+        "start_node_id": "n_ar_confirm",
+        "target": {
+          "type": "node",
+          "node_id": "n_ar_goodbye"
+        },
+        "condition": {
+          "type": "llm",
+          "prompt": "The caller has nothing else or said goodbye."
+        }
+      },
+      {
+        "id": "e_narc_5",
+        "start_node_id": "n_ar_confirm",
+        "target": {
+          "type": "node",
+          "node_id": "n_ar_triage"
+        },
+        "condition": {
+          "type": "llm",
+          "prompt": "The caller reported another problem."
+        }
+      },
+      {
         "id": "e_narc_3",
         "start_node_id": "n_ar_confirm",
         "target": {
@@ -2419,8 +2457,42 @@
         }
       },
       {
+        "id": "e_tarc_1",
+        "start_node_id": "t_ar_callback",
+        "target": {
+          "type": "node",
+          "node_id": "n_ar_goodbye"
+        },
+        "condition": {
+          "type": "default"
+        }
+      },
+      {
         "id": "e_narh_1",
         "start_node_id": "n_ar_handover",
+        "target": {
+          "type": "node",
+          "node_id": "t_ar_transfer"
+        },
+        "condition": {
+          "type": "llm",
+          "prompt": "The caller replied in any way (acknowledged, agreed, asked something or said anything)."
+        }
+      },
+      {
+        "id": "e_tart_1",
+        "start_node_id": "t_ar_transfer",
+        "target": {
+          "type": "node",
+          "node_id": "n_ar_take_message"
+        },
+        "condition": {
+          "type": "default"
+        }
+      },
+      {
+        "id": "e_narm_1",
+        "start_node_id": "n_ar_take_message",
         "target": {
           "type": "node",
           "node_id": "t_ar_callback"
@@ -2442,14 +2514,27 @@
         }
       },
       {
-        "id": "e_tarc_1",
-        "start_node_id": "t_ar_callback",
+        "id": "e_narm_2",
+        "start_node_id": "n_ar_take_message",
         "target": {
           "type": "node",
           "node_id": "n_ar_goodbye"
         },
         "condition": {
-          "type": "default"
+          "type": "llm",
+          "prompt": "The caller declined to leave a message or wants to end the call."
+        }
+      },
+      {
+        "id": "e_narg_1",
+        "start_node_id": "n_ar_goodbye",
+        "target": {
+          "type": "node",
+          "node_id": "t_hangup"
+        },
+        "condition": {
+          "type": "llm",
+          "prompt": "The caller replied in any way or said goodbye."
         }
       }
     ]
