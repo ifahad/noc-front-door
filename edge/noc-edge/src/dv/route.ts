@@ -8,8 +8,11 @@ export interface RouteHintInput {
   incident: { id: string } | null;
 }
 
-export function routeHint(input: RouteHintInput): "unverified" | "known_incident" | "verified" {
+export function routeHint(
+  input: RouteHintInput,
+): "unverified" | "known_incident" | "verified" | "arabic" {
   if (!input.sessionWritten) return "unverified";
+  if (input.contact !== null && input.contact.preferred_language === "ar") return "arabic";
   if (input.flags.require_pin) return "unverified";
   if (input.contact === null) return "unverified";
   if (input.flags.deflection_enabled && input.incident !== null) return "known_incident";

@@ -237,13 +237,76 @@ const realAssistant = async () => {
   return assistant;
 };
 
-test('validateFlow with human exits accepts the real 24-node assistant flow', async () => {
+test('validateFlow with human exits accepts the real 35-node assistant flow', async () => {
   const assistant = await realAssistant();
-  assert.equal(assistant.conversation_flow.nodes.length, 24);
+  assert.equal(assistant.conversation_flow.nodes.length, 35);
+  assert.equal(assistant.conversation_flow.edges.length, 87);
   assert.deepEqual(
     validateFlow(assistant.conversation_flow, { requireHumanExits: true }),
     [],
   );
+});
+
+test('validateFlow rejects voice_settings on a speak node', () => {
+  const flow = validFlow();
+  flow.nodes[0].voice_settings = { voice: 'Telnyx.Bayan.Reem' };
+  const errs = validateFlow(flow);
+  assert.ok(errs.some((e) => e.includes('s1') && e.includes('voice_settings')));
+});
+
+test('validateFlow rejects transcription on a tool node', () => {
+  const flow = validFlow();
+  flow.nodes[2].transcription = { model: 'soniox/stt-rt-v5' };
+  const errs = validateFlow(flow);
+  assert.ok(errs.some((e) => e.includes('t1') && e.includes('transcription')));
+});
+
+test('validateFlow accepts voice_settings and transcription on prompt nodes', () => {
+  const flow = validFlow();
+  flow.nodes[1].voice_settings = { voice: 'Telnyx.Bayan.Reem' };
+  flow.nodes[1].transcription = { model: 'soniox/stt-rt-v5' };
+  assert.deepEqual(validateFlow(flow), []);
+});
+
+test('human-exit rule exempts the Arabic handover and goodbye nodes by default', () => {
+  const flow = promptFlow(
+    [promptNode('n_ar_handover'), promptNode('n_ar_goodbye')],
+    [
+      edge(
+        'e1',
+        'n_ar_handover',
+        { type: 'expression', expression: cmp('!=', var_('callback_note'), str_('none')) },
+        'n_ar_goodbye',
+      ),
+      edge('e2', 'n_ar_goodbye', llm_('The caller said goodbye.'), 'n_ar_handover'),
+    ],
+  );
+  assert.deepEqual(validateFlow(flow, { requireHumanExits: true }), []);
+});
+
+const realTools = async () => {
+  const raw = await readFile(join(dir, '..', 'assistant', 'tools.json'), 'utf8');
+  return JSON.parse(raw).map((t) => t.display_name);
+};
+
+test('validateAssistant resolves every flow tool placeholder through tools.json', async () => {
+  const assistant = await realAssistant();
+  assert.deepEqual(validateAssistant(assistant, { toolNames: await realTools() }), []);
+});
+
+test('validateAssistant rejects an unknown tool placeholder in the flow', async () => {
+  const assistant = await realAssistant();
+  assistant.conversation_flow.nodes.find((n) => n.id === 't_verify').shared_tool_id =
+    '${TOOL_ghost_tool}';
+  const errs = validateAssistant(assistant, { toolNames: await realTools() });
+  assert.ok(errs.some((e) => e.includes('ghost_tool')));
+});
+
+test('validateAssistant ignores flow tool placeholders without toolNames', async () => {
+  const assistant = await realAssistant();
+  assistant.conversation_flow.nodes.find((n) => n.id === 't_verify').shared_tool_id =
+    '${TOOL_ghost_tool}';
+  assert.deepEqual(validateAssistant(assistant), []);
 });
 
 test('validateAssistant passes the real assistant', async () => {

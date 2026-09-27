@@ -26,7 +26,32 @@ const CONTACT: Contact = {
 
 const INCIDENT = { id: "INC-1002" };
 
+const AR_CONTACT: Contact = { ...CONTACT, preferred_language: "ar" };
+
 describe("routeHint", () => {
+  it("routes an identified Arabic caller to arabic before the other hints", () => {
+    expect(
+      routeHint({ sessionWritten: true, flags: FLAGS, contact: AR_CONTACT, incident: INCIDENT }),
+    ).toBe("arabic");
+  });
+
+  it("routes an identified Arabic caller to arabic even when a pin is required", () => {
+    expect(
+      routeHint({
+        sessionWritten: true,
+        flags: { ...FLAGS, require_pin: true },
+        contact: AR_CONTACT,
+        incident: INCIDENT,
+      }),
+    ).toBe("arabic");
+  });
+
+  it("leaves unidentified callers unaffected", () => {
+    expect(routeHint({ sessionWritten: true, flags: FLAGS, contact: null, incident: null })).toBe(
+      "unverified",
+    );
+  });
+
   it("forces unverified when the session write did not complete", () => {
     expect(
       routeHint({ sessionWritten: false, flags: FLAGS, contact: CONTACT, incident: null }),

@@ -33,7 +33,10 @@ function walkExpression(edgeId, node, errors) {
 
 export function validateFlow(
   flow,
-  { requireHumanExits = false, humanExitExemptions = ['n_wrapup', 'n_take_message'] } = {},
+  {
+    requireHumanExits = false,
+    humanExitExemptions = ['n_wrapup', 'n_take_message', 'n_ar_handover', 'n_ar_goodbye'],
+  } = {},
 ) {
   const errors = [];
   if (flow === null || typeof flow !== 'object') {
@@ -102,6 +105,17 @@ export function validateFlow(
     if (edge?.start_node_id) hasOutgoing.add(edge.start_node_id);
   }
   for (const node of nodes) {
+    if (!node?.id || !nodeIds.has(node.id)) continue;
+    const overrides = [];
+    if (node.voice_settings !== undefined) overrides.push('voice_settings');
+    if (node.transcription !== undefined) overrides.push('transcription');
+    if (overrides.length > 0 && node.type !== 'prompt') {
+      errors.push(
+        `${node.type ?? 'unknown'} node "${node.id}" must not set ${overrides.join(' and ')} overrides; only prompt nodes may`,
+      );
+    }
+  }
+  for (const node of nodes) {
     if (!node?.id || !nodeIds.has(node.id) || !hasOutgoing.has(node.id)) {
       continue;
     }
@@ -154,12 +168,27 @@ function placeholderToolName(id) {
 
 export function validateAssistant(
   assistant,
-  { toolName = placeholderToolName } = {},
+  { toolName = placeholderToolName, toolNames = null } = {},
 ) {
   const errors = [];
   if (assistant === null || typeof assistant !== 'object') {
     errors.push('assistant: not an object');
     return errors;
+  }
+  const knownTools = toolNames === null ? null : new Set(toolNames);
+  for (const node of Array.isArray(assistant.conversation_flow?.nodes)
+    ? assistant.conversation_flow.nodes
+    : []) {
+    const ids = [];
+    if (typeof node?.shared_tool_id === 'string') ids.push(node.shared_tool_id);
+    if (Array.isArray(node?.shared_tool_ids)) ids.push(...node.shared_tool_ids);
+    for (const id of ids) {
+      const name = toolName(String(id));
+      if (name === null || knownTools === null || knownTools.has(name)) continue;
+      errors.push(
+        `node "${node.id ?? 'node'}" shared tool placeholder "${id}" is not a known tool name`,
+      );
+    }
   }
   const ids = Array.isArray(assistant.tool_ids) ? assistant.tool_ids : [];
   const names = ids.map((id) => toolName(String(id)));
