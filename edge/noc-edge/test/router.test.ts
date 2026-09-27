@@ -353,15 +353,24 @@ describe("router actor-mode selection", () => {
 });
 
 describe("router /dv fail-open", () => {
-  function dvBody(): string {
+  function dvBody(cc = "CC-1"): string {
     const payload = {
-      call_control_id: "CC-1",
+      call_control_id: cc,
       telnyx_conversation_id: "CONV-1",
       telnyx_end_user_target: E164,
     };
     return JSON.stringify({
       data: { record_type: "event", event_type: "assistant.initialization", payload },
     });
+  }
+
+  function hangKv(): FakeKv {
+    return {
+      get: () => new Promise<string>(() => undefined),
+      put: () => Promise.resolve(),
+      delete: () => Promise.resolve(),
+      list: () => Promise.resolve([]),
+    } as unknown as FakeKv;
   }
 
   it("returns 200 with the default dynamic variables when the KV binding rejects", async () => {
@@ -410,6 +419,50 @@ describe("router /dv fail-open", () => {
     expect(
       cache.calls.filter((c) => c.op === "get" && c.key === kvKey("flag", "actor_mode")),
     ).toHaveLength(1);
+  });
+
+  it("keeps the last-known mux mode for /dv when the flags read hangs, without clobbering it", async () => {
+    const { env, priv, cache } = await makeEnv();
+    const muxCalls: string[] = [];
+    const bindingCalls: string[] = [];
+    (env as unknown as { MUX: { idFromName: (n: string) => unknown } }).MUX = {
+      idFromName: () => ({
+        site: async (entity: string, method: string) => {
+          if (method === "recordCall") {
+            muxCalls.push(entity);
+            return { callsToday: 1, openTicket: null, trace_id: "", actor_ms: 0 };
+          }
+          return {};
+        },
+        region: async () => ({}),
+      }),
+    };
+    (env as unknown as { SITES: { idFromName: (n: string) => unknown } }).SITES = {
+      idFromName: () => ({
+        recordCall: async () => {
+          bindingCalls.push("called");
+          return { callsToday: 1, openTicket: null, trace_id: "", actor_ms: 0 };
+        },
+      }),
+    };
+    await cache.put(kvKey("flag", "actor_mode"), "mux");
+    const first = await route(await signedRequest(dvBody("CC-1"), priv), env);
+    expect(first.status).toBe(200);
+    expect(muxCalls).toEqual(["RUH-114"]);
+    expect(bindingCalls).toHaveLength(0);
+
+    (env as unknown as { CACHE: unknown }).CACHE = hangKv();
+    const second = await route(await signedRequest(dvBody("CC-2"), priv), env);
+    expect(second.status).toBe(200);
+    expect(muxCalls).toEqual(["RUH-114", "RUH-114"]);
+
+    const third = await route(await signedRequest(dvBody("CC-3"), priv), env);
+    expect(third.status).toBe(200);
+    expect(muxCalls).toEqual(["RUH-114", "RUH-114", "RUH-114"]);
+    expect(bindingCalls).toHaveLength(0);
+    const routes = eventsWith("dv.route");
+    expect(routes.length).toBe(3);
+    expect(routes.slice(1).every((r) => r.outcome === "fallback")).toBe(true);
   });
 });
 
