@@ -1,7 +1,10 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { withErrorHandling, route } from "../src/router";
 import type { NocEdgeEnv } from "../src/actors";
+import { putAuth } from "../src/services/sessions";
+import { sessionKey } from "../../shared/src/ids";
 import { FakeKv } from "./fakes/kv";
+import { makeRegionActor, makeSiteActor } from "./fakes/actors";
 import { kvKey } from "../../shared/src/kvkeys";
 
 const E164 = ["+", "1", "312", "555", "0101"].join("");
@@ -164,5 +167,186 @@ describe("withErrorHandling", () => {
     );
     expect(res.status).toBe(200);
     expect(eventsWith("error")).toHaveLength(0);
+  });
+});
+
+describe("router tool webhooks", () => {
+  async function makeToolEnv() {
+    const base = await makeEnv();
+    const seedLocal = JSON.stringify({
+      pins: { "RUH-114": String(4000 + 114) },
+      contacts: [],
+    });
+    (base.env as unknown as { SECRETS: { get: (n: string) => Promise<string | null> } }).SECRETS.get =
+      async (name: string) => {
+        if (name === "TELNYX_PUBLIC_KEY") return base.pub;
+        if (name === "PIN_PEPPER") return ["p", "e", "pp", "er"].join("");
+        if (name === "SEED_LOCAL") return seedLocal;
+        return null;
+      };
+    const sites = new Map<string, ReturnType<typeof makeSiteActor>>();
+    const regions = new Map<string, ReturnType<typeof makeRegionActor>>();
+    (base.env as unknown as { SITES: unknown }).SITES = {
+      idFromName: (name: string) => {
+        let actor = sites.get(name);
+        if (actor === undefined) {
+          actor = makeSiteActor(name);
+          sites.set(name, actor);
+        }
+        return actor;
+      },
+    };
+    (base.env as unknown as { REGIONS: unknown }).REGIONS = {
+      idFromName: (name: string) => {
+        let actor = regions.get(name);
+        if (actor === undefined) {
+          actor = makeRegionActor(name);
+          regions.set(name, actor);
+        }
+        return actor;
+      },
+    };
+    return base;
+  }
+
+  async function signedTool(
+    path: string,
+    fields: Record<string, unknown>,
+    priv: CryptoKey,
+  ): Promise<Request> {
+    const body = JSON.stringify(fields);
+    const ts = Math.floor(Date.now() / 1000);
+    const sig = new Uint8Array(
+      await crypto.subtle.sign("Ed25519", priv, new TextEncoder().encode(`${ts}|${body}`)),
+    );
+    return new Request(`https://noc-edge.telnyxcompute.com${path}`, {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        "telnyx-signature-ed25519": btoa(String.fromCharCode(...sig)),
+        "telnyx-timestamp": String(ts),
+        "x-telnyx-call-control-id": String(fields.call_control_id ?? ""),
+      },
+      body,
+    });
+  }
+
+  function presets(): Record<string, unknown> {
+    return {
+      call_control_id: "CC-1",
+      call_key: "none",
+      trace_id: "t-cc",
+      conversation_id: "CONV-1",
+    };
+  }
+
+  it("routes a signed verify_site request through the real deps to 200", async () => {
+    const { env, priv } = await makeToolEnv();
+    const res = await route(
+      await signedTool("/tools/verify-site", {
+        site_id: "RUH-114",
+        pin: String(4000 + 114),
+        ...presets(),
+      }, priv),
+      env,
+    );
+    expect(res.status).toBe(200);
+    const out = (await res.json()) as Record<string, string>;
+    expect(out.verify_result).toBe("ok");
+    expect(out.site_id).toBe("RUH-114");
+    expect(eventsWith("tool.verify_site")).toHaveLength(1);
+  });
+
+  it("routes a signed open_ticket request to 200 for a verified session", async () => {
+    const { env, priv, cache } = await makeToolEnv();
+    const k = (await sessionKey({ call_control_id: "CC-1" })) as string;
+    await putAuth(cache, k, {
+      verified: true,
+      site_id: "RUH-114",
+      customer_id: "c-alwaha",
+      at: Date.now(),
+    });
+    const res = await route(
+      await signedTool("/tools/open-ticket", {
+        site_id: "RUH-114",
+        symptom: "WAN link down",
+        impact: "site_down",
+        service_affecting: "true",
+        ...presets(),
+      }, priv),
+      env,
+    );
+    expect(res.status).toBe(200);
+    const out = (await res.json()) as Record<string, string>;
+    expect(out.ticket_id).toBe("NJD-1401");
+    expect(eventsWith("tool.open_ticket")).toHaveLength(1);
+  });
+
+  it("routes a signed open_ticket with a missing site_id to 422", async () => {
+    const { env, priv } = await makeToolEnv();
+    const res = await route(
+      await signedTool("/tools/open-ticket", {
+        symptom: "WAN link down",
+        impact: "site_down",
+        service_affecting: "true",
+        ...presets(),
+      }, priv),
+      env,
+    );
+    expect(res.status).toBe(422);
+    expect(await res.json()).toEqual({ error: "missing_site_id" });
+  });
+
+  it("routes a signed join_incident with no session to 422", async () => {
+    const { env, priv } = await makeToolEnv();
+    const res = await route(
+      await signedTool("/tools/join-incident", presets(), priv),
+      env,
+    );
+    expect(res.status).toBe(422);
+    expect(await res.json()).toEqual({ error: "missing_site_id" });
+  });
+
+  it("routes a signed callback to 200 escalated", async () => {
+    const { env, priv } = await makeToolEnv();
+    const res = await route(
+      await signedTool("/tools/callback", { callback_note: "call the duty manager", ...presets() }, priv),
+      env,
+    );
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual({ escalated: "true", callback_note: "none" });
+    expect(eventsWith("page.raised")).toHaveLength(1);
+  });
+
+  it("fails closed with 403 for every tool route when secrets cannot be read", async () => {
+    const { env, priv } = await makeToolEnv();
+    (env as unknown as { SECRETS: { get: (n: string) => Promise<string> } }).SECRETS.get =
+      async () => {
+        throw new Error("secrets_unavailable");
+      };
+    for (const path of ["/tools/verify-site", "/tools/open-ticket", "/tools/join-incident", "/tools/callback"]) {
+      const res = await route(await signedTool(path, presets(), priv), env);
+      expect(res.status).toBe(403);
+    }
+    const sigFails = eventsWith("tool.sig_fail");
+    expect(sigFails).toHaveLength(4);
+  });
+
+  it("returns 500 on verify_site when PIN_PEPPER is missing", async () => {
+    const { env, priv, pub } = await makeToolEnv();
+    (env as unknown as { SECRETS: { get: (n: string) => Promise<string | null> } }).SECRETS.get =
+      async (name: string) => (name === "TELNYX_PUBLIC_KEY" ? pub : null);
+    const res = await route(
+      await signedTool("/tools/verify-site", {
+        site_id: "RUH-114",
+        pin: String(4000 + 114),
+        ...presets(),
+      }, priv),
+      env,
+    );
+    expect(res.status).toBe(500);
+    const lines = eventsWith("tool.verify_site");
+    expect(lines).toHaveLength(1);
+    expect(lines[0].outcome).toBe("error");
   });
 });

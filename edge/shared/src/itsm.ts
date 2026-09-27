@@ -189,7 +189,14 @@ export class SeedAdapter implements ItsmAdapter {
       if (site.hidden) continue;
       if (idMatcher(site).test(text)) return site;
     }
-    return null;
+    let match: Site | null = null;
+    for (const site of SITES) {
+      if (site.hidden) continue;
+      if (!labelKeywords(site).some((keyword) => text.includes(keyword))) continue;
+      if (match !== null) return null;
+      match = site;
+    }
+    return match;
   }
 
   private async hmac(payload: string): Promise<string> {

@@ -44,6 +44,14 @@ function ctxFor(storage: FakeStorage, name: string): ActorContext {
   };
 }
 
+export function makeSiteActor(name: string): SiteState {
+  return new SiteState(ctxFor(new FakeStorage(), name), {} as Env);
+}
+
+export function makeRegionActor(name: string): RegionState {
+  return new RegionState(ctxFor(new FakeStorage(), name), {} as Env);
+}
+
 export class FakeActorPort implements ActorPort {
   private sites = new Map<string, SiteState>();
   private regions = new Map<string, FaultyRegionState>();

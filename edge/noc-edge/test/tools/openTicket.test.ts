@@ -132,16 +132,24 @@ describe("handleOpenTicket", () => {
     expect(out.error).toBe("site_not_writable");
   });
 
-  it("returns 403 when site_id is missing from the body", async () => {
-    const keys = await makeKeys();
-    const kv = newKv();
-    await putAuth(kv, K, { verified: true, site_id: "RUH-114", customer_id: "c-alwaha", at: T0 });
-    const res = await handleOpenTicket(
-      await signedToolRequest("/tools/open-ticket", fields({ site_id: undefined }), keys),
-      makeDeps(kv, new FakeActorPort(), keys),
-    );
-    expect(res.status).toBe(403);
-  });
+  it.each([undefined, "none", "unknown", "{{site_id}}"])(
+    "returns 422 missing_site_id for a %j site_id before any authorisation",
+    async (siteId) => {
+      const keys = await makeKeys();
+      const kv = newKv();
+      await putAuth(kv, K, { verified: true, site_id: "RUH-114", customer_id: "c-alwaha", at: Date.now() });
+      const res = await handleOpenTicket(
+        await signedToolRequest("/tools/open-ticket", fields({ site_id: siteId }), keys),
+        makeDeps(kv, new FakeActorPort(), keys),
+      );
+      expect(res.status).toBe(422);
+      const out = await jsonOf(res);
+      expect(out.error).toBe("missing_site_id");
+      const lines = eventsWith("tool.open_ticket");
+      expect(lines).toHaveLength(1);
+      expect(lines[0].outcome).toBe("error");
+    },
+  );
 
   it("returns 503 when the fault flag is set", async () => {
     const keys = await makeKeys();

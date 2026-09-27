@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { sessionKey } from "../../../shared/src/ids";
 import { kvKey } from "../../../shared/src/kvkeys";
-import { putAuth } from "../../src/services/sessions";
+import { putAuth, putDv } from "../../src/services/sessions";
 import type { SiteStateApi } from "../../src/services/actorPort";
 import { handleJoinIncident } from "../../src/tools/joinIncident";
 import {
@@ -112,14 +112,56 @@ describe("handleJoinIncident", () => {
 
   it("returns 403 when the call is neither identified nor verified", async () => {
     const keys = await makeKeys();
+    const kv = newKv();
+    await putDv(kv, K, {
+      trace_id: `t-${K}`,
+      identified: false,
+      contact_id: null,
+      customer_id: null,
+      sites: ["RUH-114"],
+      region: "riyadh-north",
+    });
+    const res = await handleJoinIncident(
+      await signedToolRequest("/tools/join-incident", presets(), keys),
+      makeDeps(kv, new FakeActorPort(), keys),
+    );
+    expect(res.status).toBe(403);
+    const out = await jsonOf(res);
+    expect(out.error).toBe("not_identified");
+    const lines = eventsWith("tool.join_incident");
+    expect(lines).toHaveLength(1);
+    expect(lines[0].outcome).toBe("denied");
+  });
+
+  it("returns 422 missing_site_id when the session carries no site", async () => {
+    const keys = await makeKeys();
+    const kv = newKv();
+    await putDv(kv, K, {
+      trace_id: `t-${K}`,
+      identified: true,
+      contact_id: "c-ahmed",
+      customer_id: "c-alwaha",
+      sites: [],
+      region: null,
+    });
+    const res = await handleJoinIncident(
+      await signedToolRequest("/tools/join-incident", presets(), keys),
+      makeDeps(kv, new FakeActorPort(), keys),
+    );
+    expect(res.status).toBe(422);
+    const out = await jsonOf(res);
+    expect(out.error).toBe("missing_site_id");
+  });
+
+  it("returns 422 missing_site_id when there is no session at all", async () => {
+    const keys = await makeKeys();
     const res = await handleJoinIncident(
       await signedToolRequest("/tools/join-incident", presets(), keys),
       makeDeps(newKv(), new FakeActorPort(), keys),
     );
-    expect(res.status).toBe(403);
-    const lines = eventsWith("tool.join_incident");
-    expect(lines).toHaveLength(1);
-    expect(lines[0].outcome).toBe("denied");
+    expect(res.status).toBe(422);
+    const out = await jsonOf(res);
+    expect(out.error).toBe("missing_site_id");
   });
 
   it("rejects unsigned, stale and unkeyed requests", async () => {

@@ -314,6 +314,45 @@ describe("tickets.open", () => {
     });
     expect(result.priority).toBe("P4");
   });
+
+  it.each([undefined, "", "none", "unknown", "{{site_id}}"])(
+    "throws 422 missing_site_id for a %j site_id before any authorisation",
+    async (siteId) => {
+      const kv = new FakeKv();
+      kv.setNow(T0);
+      const ctx = makeCtx({ kv, actors: new FakeActorPort() });
+      await expect(
+        open(ctx, makeSession({ sites: [] }), {
+          site_id: siteId as string,
+          symptom: "?",
+          impact: "site_down",
+          service_affecting: "true",
+        }),
+      ).rejects.toMatchObject({
+        status: 422,
+        code: "missing_site_id",
+        name: "TicketError",
+      });
+      expect(kv.calls).toHaveLength(0);
+    },
+  );
+
+  it("checks the site before the writable-site rule", async () => {
+    const kv = new FakeKv();
+    kv.setNow(T0);
+    const ctx = makeCtx({ kv, actors: new FakeActorPort() });
+    await expect(
+      open(ctx, makeSession({ sites: [] }), {
+        site_id: "",
+        symptom: "?",
+        impact: "site_down",
+        service_affecting: "true",
+      }),
+    ).rejects.toMatchObject({ status: 422, code: "missing_site_id" });
+    await expect(
+      open(ctx, makeSession({ sites: [] }), SITE_DOWN),
+    ).rejects.toMatchObject({ status: 403, code: "site_not_writable" });
+  });
 });
 
 describe("tickets.joinIncident", () => {
@@ -334,8 +373,21 @@ describe("tickets.joinIncident", () => {
     const ctx = makeCtx({ kv, actors: new FakeActorPort() });
     await expect(
       joinIncident(ctx, makeSession({ identified: false, verified: false })),
-    ).rejects.toMatchObject({ status: 403, name: "TicketError" });
+    ).rejects.toMatchObject({ status: 403, code: "not_identified", name: "TicketError" });
   });
+
+  it.each([[[]], [["none"]], [["{{site_id}}"]]])(
+    "throws 422 missing_site_id for a session site of %j before the identification check",
+    async (sites) => {
+      const kv = new FakeKv();
+      kv.setNow(T0);
+      const ctx = makeCtx({ kv, actors: new FakeActorPort() });
+      await expect(
+        joinIncident(ctx, makeSession({ identified: true, sites })),
+      ).rejects.toMatchObject({ status: 422, code: "missing_site_id" });
+      expect(kv.calls).toHaveLength(0);
+    },
+  );
 
   it("returns 422 when no incident is active", async () => {
     const kv = new FakeKv();
@@ -386,9 +438,16 @@ describe("tickets.joinIncident", () => {
 });
 
 describe("TicketError", () => {
-  it("carries the status", () => {
-    const err = new TicketError(500, "boom");
+  it("carries the status and a typed code", () => {
+    const err = new TicketError(500, "fault_injected", "boom");
     expect(err.status).toBe(500);
+    expect(err.code).toBe("fault_injected");
+    expect(err.message).toBe("boom");
     expect(err).toBeInstanceOf(Error);
+  });
+
+  it("defaults the message to the code", () => {
+    const err = new TicketError(422, "missing_site_id");
+    expect(err.message).toBe("missing_site_id");
   });
 });

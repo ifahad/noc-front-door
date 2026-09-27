@@ -15,17 +15,42 @@ import type { Flags } from "./flags";
 import { incidentSummaryOf, regionCodeOf, syncProjection } from "./incidents";
 import type { KvPort } from "./kvPort";
 
+export type TicketErrorCode =
+  | "fault_injected"
+  | "missing_site_id"
+  | "site_not_writable"
+  | "site_unresolvable"
+  | "not_identified"
+  | "no_active_incident";
+
 export class TicketError extends Error {
   status: 403 | 422 | 500 | 503 | 504;
+  code: TicketErrorCode;
 
-  constructor(status: 403 | 422 | 500 | 503 | 504, message: string) {
-    super(message);
+  constructor(
+    status: 403 | 422 | 500 | 503 | 504,
+    code: TicketErrorCode,
+    message?: string,
+  ) {
+    super(message ?? code);
     this.name = "TicketError";
     this.status = status;
+    this.code = code;
   }
 }
 
 const IMPACTS: readonly Impact[] = ["site_down", "degraded", "single_user"];
+
+const SITE_SENTINELS = new Set(["none", "unknown"]);
+
+function usableSite(value: string | undefined | null): value is string {
+  return (
+    typeof value === "string" &&
+    value.length > 0 &&
+    !SITE_SENTINELS.has(value) &&
+    !value.includes("{{")
+  );
+}
 
 export interface TicketCtx {
   actors: ActorPort;
@@ -58,6 +83,9 @@ export async function open(
   session: Session,
   input: TicketInput,
 ): Promise<OpenResult> {
+  if (!usableSite(input.site_id)) {
+    throw new TicketError(422, "missing_site_id");
+  }
   return (await openInternal(ctx, session, input)).result;
 }
 
@@ -178,6 +206,10 @@ export async function joinIncident(
   ctx: TicketCtx,
   session: Session,
 ): Promise<OpenResult> {
+  const siteId = session.sites[0] ?? "";
+  if (!usableSite(siteId)) {
+    throw new TicketError(422, "missing_site_id");
+  }
   if (ctx.flags.fault_open_ticket !== null) {
     throw new TicketError(ctx.flags.fault_open_ticket, "fault_injected");
   }
@@ -189,8 +221,7 @@ export async function joinIncident(
     });
     throw new TicketError(403, "not_identified");
   }
-  const siteId = session.sites[0] ?? "";
-  const site = siteId === "" ? null : await ctx.adapter.getSite(siteId);
+  const site = await ctx.adapter.getSite(siteId);
   if (site === null) {
     throw new TicketError(422, "site_unresolvable");
   }

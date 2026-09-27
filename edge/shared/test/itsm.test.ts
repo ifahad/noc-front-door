@@ -117,6 +117,30 @@ describe("resolveSiteGlobal", () => {
     expect(await adapter.resolveSiteGlobal("a bakery down the road")).toBeNull();
     expect(await adapter.resolveSiteGlobal("")).toBeNull();
   });
+
+  it.each([
+    ["the Al Yasmin branch"],
+    ["Yasmin"],
+  ])("matches branch label keywords across customers: %j", async (description) => {
+    const adapter = makeAdapter();
+    expect((await adapter.resolveSiteGlobal(description))?.site_id).toBe("RUH-114");
+  });
+
+  it("resolves another customer's site by id and label", async () => {
+    const adapter = makeAdapter();
+    expect((await adapter.resolveSiteGlobal("JED-900"))?.site_id).toBe("JED-900");
+    expect((await adapter.resolveSiteGlobal("the JED-900 branch"))?.site_id).toBe("JED-900");
+  });
+
+  it("returns null when two label keywords match different sites", async () => {
+    const adapter = makeAdapter();
+    expect(await adapter.resolveSiteGlobal("the Al Yasmin and Al Malqa branches")).toBeNull();
+  });
+
+  it("still never matches hidden sites by label", async () => {
+    const adapter = makeAdapter();
+    expect(await adapter.resolveSiteGlobal("the Lab branch")).toBeNull();
+  });
 });
 
 describe("checkPin", () => {

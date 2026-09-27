@@ -54,7 +54,7 @@ export async function handleJoinIncident(
     try {
       result = await joinIncident(ctx, session);
     } catch (err) {
-      if (!(err instanceof TicketError) || err.message !== "no_active_incident") {
+      if (!(err instanceof TicketError) || err.code !== "no_active_incident") {
         throw err;
       }
       result = await open(ctx, session, {
