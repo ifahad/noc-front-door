@@ -5,6 +5,14 @@
   "voice_settings": {
     "voice": "Telnyx.KokoroTTS.af_heart"
   },
+  "widget_settings": {
+    "theme": "dark",
+    "position": "static",
+    "default_state": "collapsed",
+    "start_call_text": "Talk to Sanad",
+    "agent_thinking_text": "Sanad is thinking…",
+    "speak_to_interrupt_text": "Speak to interrupt"
+  },
   "transcription": {
     "model": "deepgram/nova-3",
     "language": "en",
