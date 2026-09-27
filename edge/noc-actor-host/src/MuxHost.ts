@@ -81,6 +81,7 @@ export class Counter extends StatefulActor {
     const storage = prefixedStorage(this.ctx.storage as ActorStorage, kindPrefix + name + "/");
     return {
       id: name,
+      // prefixed storage implements only get/put/delete/list/deleteAll/alarms; transaction/sql are unsupported in mux mode
       storage: storage as unknown as ActorStorage,
       blockConcurrencyWhile: <T,>(fn: () => Promise<T>) => this.ctx.blockConcurrencyWhile(fn),
       // Alarms are Plan 2 and unsupported in mux mode: the derived context

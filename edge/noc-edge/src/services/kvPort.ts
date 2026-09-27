@@ -11,8 +11,12 @@ export interface KvPort {
   list(prefix: string): Promise<string[]>;
 }
 
+const portByBinding = new WeakMap<KvNamespace, KvPort>();
+
 export function bindingKvPort(kv: KvNamespace): KvPort {
-  return {
+  const memo = portByBinding.get(kv);
+  if (memo !== undefined) return memo;
+  const port: KvPort = {
     get: (key: string) => kv.get(key),
     put: (key: string, value: string, opts?: KvPutOpts) =>
       kv.put(key, value, opts ?? {}),
@@ -31,4 +35,6 @@ export function bindingKvPort(kv: KvNamespace): KvPort {
       return names;
     },
   };
+  portByBinding.set(kv, port);
+  return port;
 }

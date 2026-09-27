@@ -25,6 +25,7 @@ import {
 } from "./ops/actions";
 import { RaceError, runRace, type RaceDeps } from "./ops/race";
 import type { ToolDeps } from "./tools/common";
+import { deadline } from "../../shared/src/timing";
 
 export const DEFAULT_SITE = "RUH-114";
 export const DEFAULT_REGION = "riyadh-north";
@@ -34,11 +35,27 @@ const opsTokenGetters = new WeakMap<NocEdgeEnv, SecretGetter>();
 // actor_mode is a KV flag (flag/actor_mode): "mux" routes every actor call
 // through the single working Counter instance on noc-actor-canary (the
 // DEBUGLOG #4 contingency); anything else uses the per-entity bindings.
+// A KV failure must never take a route down: fail open to per-entity.
+const FLAGS_BUDGET_MS = 250;
+
 async function selectActorPort(
   env: NocEdgeEnv,
 ): Promise<{ port: ActorPort; mode: ActorMode }> {
-  const flags = await readFlags(bindingKvPort(env.CACHE), Date.now());
-  return flags.actor_mode === "mux"
+  const result = await deadline(
+    readFlags(bindingKvPort(env.CACHE), Date.now()),
+    FLAGS_BUDGET_MS,
+    "actor.flags",
+  );
+  if (!result.ok) {
+    logEvent("flags.fallback", {
+      lvl: "warn",
+      hop: "actor-mode",
+      outcome: "fallback",
+      mode: "per-entity",
+    });
+    return { port: bindingActorPort(env), mode: "per-entity" };
+  }
+  return result.value.actor_mode === "mux"
     ? { port: muxActorPort(env), mode: "mux" }
     : { port: bindingActorPort(env), mode: "per-entity" };
 }

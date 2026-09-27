@@ -260,6 +260,59 @@ describe("router actor-mode selection", () => {
   });
 });
 
+describe("router /dv fail-open", () => {
+  function dvBody(): string {
+    const payload = {
+      call_control_id: "CC-1",
+      telnyx_conversation_id: "CONV-1",
+      telnyx_end_user_target: E164,
+    };
+    return JSON.stringify({
+      data: { record_type: "event", event_type: "assistant.initialization", payload },
+    });
+  }
+
+  it("returns 200 with the default dynamic variables when the KV binding rejects", async () => {
+    const { env, priv } = await makeEnv();
+    const boom = (): Promise<never> => Promise.reject(new Error("kv_down"));
+    (env as unknown as { CACHE: unknown }).CACHE = {
+      get: () => boom(),
+      put: () => boom(),
+      delete: () => boom(),
+      list: () => boom(),
+    };
+    const res = await route(await signedRequest(dvBody(), priv), env);
+    expect(res.status).toBe(200);
+    const out = (await res.json()) as {
+      dynamic_variables: Record<string, string>;
+      conversation: { metadata: { call_key: string } };
+    };
+    expect(out.dynamic_variables.route_hint).toBe("unverified");
+    expect(out.dynamic_variables.caller_name).toBe("there");
+    expect(out.dynamic_variables.calls_today).toBe("1");
+    expect(out.conversation.metadata.call_key).toBe("CC-1");
+    const fallbacks = eventsWith("flags.fallback");
+    expect(fallbacks).toHaveLength(1);
+    expect(fallbacks[0].lvl).toBe("warn");
+  });
+
+  it("reads flag/actor_mode from KV at most once per /dv request in mux mode", async () => {
+    const { env, priv, cache } = await makeEnv();
+    (env as unknown as { MUX: { idFromName: (n: string) => unknown } }).MUX = {
+      idFromName: () => ({
+        site: async () => ({ callsToday: 1, openTicket: null, trace_id: "", actor_ms: 0 }),
+        region: async () => ({}),
+      }),
+    };
+    await cache.put(kvKey("flag", "actor_mode"), "mux");
+    const res = await route(await signedRequest(dvBody(), priv), env);
+    expect(res.status).toBe(200);
+    expect(
+      cache.calls.filter((c) => c.op === "get" && c.key === kvKey("flag", "actor_mode")),
+    ).toHaveLength(1);
+  });
+});
+
 describe("router tool webhooks", () => {
   async function makeToolEnv() {
     const base = await makeEnv();
