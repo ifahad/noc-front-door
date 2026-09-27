@@ -40,6 +40,23 @@ describe("renderDemoPage", () => {
     expect(html).not.toMatch(/\son[a-z]+=/i);
   });
 
+  it("renders the KSA situation map with one marker per region", () => {
+    const html = renderDemoPage(null);
+    expect(html).toContain("<svg");
+    expect(html).toContain('id="ksaMap"');
+    expect(html).toContain('id="map-riyadh-north"');
+    expect(html).toContain('id="map-riyadh-south"');
+    expect(html).toContain('id="map-jeddah"');
+    expect(html).toContain('id="map-dammam"');
+  });
+
+  it("polls /ops/board with an abort timeout and no overlap", () => {
+    const html = renderDemoPage(null);
+    expect(html).toContain("fetch('/ops/board'");
+    expect(html).toContain("AbortController");
+    expect(html).toContain("polling");
+  });
+
   it("renders both PIN chips when the guide secret is present", () => {
     const html = renderDemoPage(guide());
     expect(html).toContain(`data-pin="${PIN_JOIN}"`);
