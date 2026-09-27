@@ -146,14 +146,20 @@ async function mcpCheck(deps: HealthDeps): Promise<CheckResult> {
     body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "tools/list" }),
   });
   const raced = await raceCheck(
-    handleMcp(request, {
-      kv: deps.kv,
-      actors: deps.actors,
-      adapter: deps.adapter,
-      now: () => deps.now,
-      mcpToken: deps.mcpToken,
-      opsToken: deps.opsToken,
-    }),
+    handleMcp(
+      request,
+      {
+        kv: deps.kv,
+        actors: deps.actors,
+        adapter: deps.adapter,
+        now: () => deps.now,
+        mcpToken: deps.mcpToken,
+        opsToken: deps.opsToken,
+      },
+      // The canary must not crowd out call hops (spec §11.1): skip the
+      // per-request mcp.auth/mcp.wire lines for this in-process check.
+      { quiet: true },
+    ),
     CHECK_DEADLINE_MS,
   );
   if (raced.kind === "timeout") {

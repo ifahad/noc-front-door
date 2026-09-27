@@ -126,20 +126,30 @@ async function resolveSession(deps: McpDeps, parsedBody: unknown): Promise<Sessi
   return result.value;
 }
 
-export async function handleMcp(request: Request, deps: McpDeps): Promise<Response> {
+// The always-on deep-health canary calls handleMcp in-process every 10 s
+// (spec §11.1 quiet-canary rule); quiet skips the per-request mcp.auth and
+// mcp.wire lines so health checks never crowd out call hops. Real /mcp
+// requests omit quiet and keep logging both.
+export async function handleMcp(
+  request: Request,
+  deps: McpDeps,
+  opts: { quiet?: boolean } = {},
+): Promise<Response> {
   const scope = bearerScope(
     request.headers.get("authorization"),
     deps.mcpToken,
     deps.opsToken,
   );
-  logEvent("mcp.auth", {
-    hop: MCP_HOP,
-    trace_id: "none",
-    scope: scope ?? "none",
-    outcome: scope === null ? "denied" : "ok",
-    kv_ms: 0,
-    actor_ms: 0,
-  });
+  if (!opts.quiet) {
+    logEvent("mcp.auth", {
+      hop: MCP_HOP,
+      trace_id: "none",
+      scope: scope ?? "none",
+      outcome: scope === null ? "denied" : "ok",
+      kv_ms: 0,
+      actor_ms: 0,
+    });
+  }
   if (scope === null) {
     return Response.json({ error: "unauthorized" }, { status: 401 });
   }
@@ -154,7 +164,9 @@ export async function handleMcp(request: Request, deps: McpDeps): Promise<Respon
     parsedBody = undefined;
   }
   const cleaned = normalizeParsedBody(parsedBody);
-  logWire(request, cleaned);
+  if (!opts.quiet) {
+    logWire(request, cleaned);
+  }
 
   if (scope === "ops" && opsMetaViolation(cleaned)) {
     logEvent("auth.denied", {

@@ -197,6 +197,49 @@ describe("ops resolve and ack", () => {
     expect(kv.raw(kvKey("incident", "active", "riyadh-north"))).toBeNull();
   });
 
+  it("acks again after a P2 to P1 upgrade reports the post-upgrade ack", async () => {
+    const { deps, actors } = DEPS();
+    await resetAll(deps);
+    await stageIncident(deps, "riyadh-north");
+    expect((await ackIncident(deps, "riyadh-north")).acked).toBe(true);
+    const third = await actors.site("RUH-114").openOrAttach({
+      k: "k3",
+      trace_id: "t-3",
+      callerRef: "none",
+      symptom: "WAN link down",
+      impact: "site_down",
+      serviceAffecting: true,
+      priority: "P2",
+      at: deps.now,
+      siteCode: "14",
+    });
+    const upgraded = await actors.region("riyadh-north").reportSite({
+      siteId: "RUH-114",
+      ticketId: third.ticket.id,
+      regionCode: "1",
+      trace_id: "t-3",
+      at: deps.now,
+    });
+    expect(upgraded.upgraded).toBe(true);
+    expect(upgraded.incident?.priority).toBe("P1");
+    expect(upgraded.incident?.esc?.acked).toBe(false);
+
+    const logs: string[] = [];
+    vi.spyOn(console, "log").mockImplementation((line: unknown) => {
+      logs.push(String(line));
+    });
+    const again = await ackIncident(deps, "riyadh-north");
+    expect(again.acked).toBe(true);
+    const ackLines = logs
+      .map((l) => JSON.parse(l) as { evt: string; acked?: boolean })
+      .filter((l) => l.evt === "ops.ack");
+    expect(ackLines).toHaveLength(1);
+    expect(ackLines[0].acked).toBe(true);
+    const after = await actors.region("riyadh-north").getIncident({ trace_id: "t-4" });
+    expect(after.incident?.esc?.acked).toBe(true);
+    expect(after.incident?.ackAt).toBe(T0);
+  });
+
   it("rejects unknown regions", async () => {
     const { deps, kv, actors } = DEPS();
     await expect(ackIncident(deps, "nope")).rejects.toThrow(OpsActionError);

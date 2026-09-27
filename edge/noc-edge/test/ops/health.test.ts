@@ -285,6 +285,13 @@ describe("ops health deep", () => {
     expect(result.slow).toContain("kv");
   });
 
+  it("emits no mcp.auth or mcp.wire lines from the in-process mcp check", async () => {
+    const result = await runDeepHealth(makeDeps());
+    expect(result.ok).toBe(true);
+    expect(eventsWith("mcp.auth")).toEqual([]);
+    expect(eventsWith("mcp.wire")).toEqual([]);
+  });
+
   it("reports a fast healthy run as not degraded", async () => {
     const result = await runDeepHealth(makeDeps());
     expect(result.ok).toBe(true);

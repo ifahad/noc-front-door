@@ -79,7 +79,7 @@ describe("prefixedStorage", () => {
     expect(await a.delete("outside")).toBe(false);
   });
 
-  it("alarms are unsupported in mux mode: getAlarm is null, set/delete are no-ops", async () => {
+  it("without an alarms binding, alarm calls are accepted no-ops that never touch the host alarm", async () => {
     const raw = new FakeStorage();
     const a = prefixedStorage(asActorStorage(raw), A);
     expect(await a.getAlarm()).toBeNull();

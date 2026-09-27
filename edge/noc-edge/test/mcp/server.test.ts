@@ -107,6 +107,21 @@ describe("MCP transport", () => {
     expect(parsed.result?.serverInfo?.version).toBe("1.0.0");
   });
 
+  it("logs mcp.auth and mcp.wire for a normal MCP request", async () => {
+    deps = makeDeps();
+    startLogs();
+    const response = await handleMcp(
+      postRequest(
+        { authorization: `Bearer ${MCP_TOKEN}` },
+        initializeBody(),
+      ),
+      deps,
+    );
+    expect(response.status).toBe(200);
+    expect(eventsWith("mcp.auth")).toHaveLength(1);
+    expect(eventsWith("mcp.wire")).toHaveLength(1);
+  });
+
   it("accepts params._meta.progressToken null", async () => {
     deps = makeDeps();
     client = await sessionClient();

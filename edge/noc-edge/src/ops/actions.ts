@@ -421,7 +421,10 @@ export async function ackIncident(deps: ActionDeps, region: string): Promise<Ack
     throw new OpsActionError("unknown_region");
   }
   const before = await deps.actors.region(region).getIncident({ trace_id: deps.trace_id });
-  const alreadyAcked = before.incident !== null && before.incident.ackAt !== null;
+  // acked mirrors the actor's own gate (esc.acked, not ackAt): a P2→P1
+  // upgrade resets esc to unacked while ackAt stays set, so an effective
+  // second ack must report and log acked:true (final review F7).
+  const alreadyAcked = before.incident?.esc?.acked === true;
   const { incident } = await deps.actors
     .region(region)
     .ack({ by: "ops", trace_id: deps.trace_id, at: deps.now });

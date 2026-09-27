@@ -64,7 +64,7 @@ describe("MuxHost site muxing", () => {
     expect(second.ticket.id).toBe(first.ticket.id);
   });
 
-  it("different sites get independent tickets under isolated prefixes", async () => {
+  it("different sites keep independent storage but mint ids in the same per-site format", async () => {
     const { host, storage } = makeHost();
     const a = (await host.site("RUH-114", "openOrAttach", openInput("c-a", "RUH"))) as {
       ticket: { id: string };
