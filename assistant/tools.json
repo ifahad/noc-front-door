@@ -1,0 +1,206 @@
+[
+  {
+    "type": "webhook",
+    "display_name": "verify_site",
+    "timeout_ms": 5000,
+    "webhook": {
+      "name": "verify_site",
+      "description": "Verify the caller for one site using the site ID and the 4-digit PIN that capture_details collected. Runs at the verify step.",
+      "url": "${EDGE_URL}/tools/verify-site",
+      "method": "POST",
+      "preset_body_fields": {
+        "site_id": "{{site_id}}",
+        "pin": "{{pin}}",
+        "call_control_id": "{{call_control_id}}",
+        "call_key": "{{call_key}}",
+        "trace_id": "{{trace_id}}",
+        "conversation_id": "{{telnyx_conversation_id}}"
+      },
+      "headers": [
+        {
+          "name": "X-Trace-Id",
+          "value": "{{trace_id}}"
+        }
+      ],
+      "store_fields_as_variables": [
+        { "name": "verify_result", "value_path": "verify_result" },
+        { "name": "attempts_left", "value_path": "attempts_left" },
+        { "name": "pin", "value_path": "pin" },
+        { "name": "call_key", "value_path": "call_key" },
+        { "name": "route_hint", "value_path": "route_hint" },
+        { "name": "site_id", "value_path": "site_id" },
+        { "name": "site_label", "value_path": "site_label" },
+        { "name": "caller_name", "value_path": "caller_name" },
+        { "name": "customer_name", "value_path": "customer_name" },
+        { "name": "incident_region", "value_path": "incident_region" },
+        { "name": "incident_started", "value_path": "incident_started" },
+        { "name": "incident_summary", "value_path": "incident_summary" },
+        { "name": "incident_eta", "value_path": "incident_eta" },
+        { "name": "open_ticket_note", "value_path": "open_ticket_note" }
+      ]
+    }
+  },
+  {
+    "type": "webhook",
+    "display_name": "open_ticket",
+    "timeout_ms": 8000,
+    "webhook": {
+      "name": "open_ticket",
+      "description": "Open or attach to the site's ticket using the details that capture_details collected. Runs at the ticket step.",
+      "url": "${EDGE_URL}/tools/open-ticket",
+      "method": "POST",
+      "preset_body_fields": {
+        "site_id": "{{site_id}}",
+        "symptom": "{{symptom}}",
+        "impact": "{{impact}}",
+        "service_affecting": "{{service_affecting}}",
+        "call_control_id": "{{call_control_id}}",
+        "call_key": "{{call_key}}",
+        "trace_id": "{{trace_id}}",
+        "conversation_id": "{{telnyx_conversation_id}}"
+      },
+      "headers": [
+        {
+          "name": "X-Trace-Id",
+          "value": "{{trace_id}}"
+        }
+      ],
+      "store_fields_as_variables": [
+        { "name": "ticket_id", "value_path": "ticket_id" },
+        { "name": "priority", "value_path": "priority" },
+        { "name": "created", "value_path": "created" },
+        { "name": "ticket_readback", "value_path": "ticket_readback" },
+        { "name": "incident_note", "value_path": "incident_note" },
+        { "name": "symptom", "value_path": "symptom" },
+        { "name": "impact", "value_path": "impact" }
+      ]
+    }
+  },
+  {
+    "type": "webhook",
+    "display_name": "join_incident",
+    "timeout_ms": 8000,
+    "webhook": {
+      "name": "join_incident",
+      "description": "Add the caller's branch to the active regional incident and open its ticket. Runs at the join step.",
+      "url": "${EDGE_URL}/tools/join-incident",
+      "method": "POST",
+      "preset_body_fields": {
+        "call_control_id": "{{call_control_id}}",
+        "call_key": "{{call_key}}",
+        "trace_id": "{{trace_id}}",
+        "conversation_id": "{{telnyx_conversation_id}}"
+      },
+      "headers": [
+        {
+          "name": "X-Trace-Id",
+          "value": "{{trace_id}}"
+        }
+      ],
+      "store_fields_as_variables": [
+        { "name": "ticket_id", "value_path": "ticket_id" },
+        { "name": "priority", "value_path": "priority" },
+        { "name": "created", "value_path": "created" },
+        { "name": "ticket_readback", "value_path": "ticket_readback" },
+        { "name": "incident_note", "value_path": "incident_note" },
+        { "name": "symptom", "value_path": "symptom" },
+        { "name": "impact", "value_path": "impact" }
+      ]
+    }
+  },
+  {
+    "type": "webhook",
+    "display_name": "log_callback",
+    "timeout_ms": 5000,
+    "webhook": {
+      "name": "log_callback",
+      "description": "Record the callback message the caller left when the on-call engineer could not be reached, and raise a page.",
+      "url": "${EDGE_URL}/tools/callback",
+      "method": "POST",
+      "preset_body_fields": {
+        "callback_note": "{{callback_note}}",
+        "call_control_id": "{{call_control_id}}",
+        "call_key": "{{call_key}}",
+        "trace_id": "{{trace_id}}",
+        "conversation_id": "{{telnyx_conversation_id}}"
+      },
+      "headers": [
+        {
+          "name": "X-Trace-Id",
+          "value": "{{trace_id}}"
+        }
+      ],
+      "store_fields_as_variables": [
+        { "name": "escalated", "value_path": "escalated" },
+        { "name": "callback_note", "value_path": "callback_note" }
+      ]
+    }
+  },
+  {
+    "type": "update_dynamic_variables",
+    "display_name": "capture_details",
+    "update_dynamic_variables": {
+      "name": "capture_details",
+      "description": "Record what the caller told you into the call's variables. Call it as soon as you have the values.",
+      "updatable_variables": [
+        {
+          "name": "site_id",
+          "type": "string",
+          "description": "The site identifier the caller gave, normalised, e.g. RUH-114. Use none if the caller has none."
+        },
+        {
+          "name": "pin",
+          "type": "string",
+          "description": "The 4-digit site PIN the caller said, digits only. Use none if the caller has none."
+        },
+        {
+          "name": "symptom",
+          "type": "string",
+          "description": "One-sentence description of the fault in the caller's words."
+        },
+        {
+          "name": "impact",
+          "type": "string",
+          "description": "Impact class: site_down, degraded, or single_user. Use unknown until the caller says."
+        },
+        {
+          "name": "service_affecting",
+          "type": "string",
+          "description": "Whether the service is affected for customers: yes or no. Use unknown until the caller says."
+        },
+        {
+          "name": "callback_note",
+          "type": "string",
+          "description": "The callback message the caller wants left for the on-call engineer."
+        }
+      ]
+    }
+  },
+  {
+    "type": "transfer",
+    "display_name": "transfer_oncall",
+    "transfer": {
+      "description": "Warm transfer to the on-call engineer. Runs at the handover step.",
+      "targets": [
+        {
+          "name": "On-call engineer",
+          "to": "${ONCALL_NUMBER}"
+        }
+      ],
+      "from": "{{telnyx_agent_target}}",
+      "voicemail_detection": {
+        "detection_mode": "premium",
+        "on_voicemail_detected": {
+          "action": "stop_transfer"
+        }
+      }
+    }
+  },
+  {
+    "type": "hangup",
+    "display_name": "end_call",
+    "hangup": {
+      "description": "End the call after the goodbye."
+    }
+  }
+]

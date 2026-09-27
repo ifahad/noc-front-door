@@ -2,6 +2,10 @@ import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import {
   findByName,
+  listAll,
+  maskSecrets,
+  normaliseAssistantReadback,
+  normaliseToolReadback,
   resolvePlaceholders,
   subsetDiff,
   unwrap,
@@ -115,4 +119,181 @@ test('subsetDiff flags sent object against non-object got', () => {
 test('subsetDiff ignores extra elements beyond sent array length', () => {
   const diffs = subsetDiff({ ids: ['a'] }, { ids: ['a', 'b', 'c'] });
   assert.deepEqual(diffs, []);
+});
+
+const pageRes = (data, totalPages) => ({ data, meta: { total_pages: totalPages } });
+
+test('listAll follows total_pages and finds an item on page 2', async () => {
+  const seen = [];
+  const fetchJson = async (path) => {
+    seen.push(path);
+    const page = Number(/page\[number\]=(\d+)/.exec(path)?.[1] ?? '1');
+    if (page === 1) return pageRes([{ id: 'a' }], 2);
+    return pageRes([{ id: 'b' }], 2);
+  };
+  const items = await listAll('/v2/ai/tools', fetchJson);
+  assert.deepEqual(items, [{ id: 'a' }, { id: 'b' }]);
+  assert.deepEqual(seen, [
+    '/v2/ai/tools?page[size]=100&page[number]=1',
+    '/v2/ai/tools?page[size]=100&page[number]=2',
+  ]);
+});
+
+test('listAll appends to an existing query string', async () => {
+  const seen = [];
+  const fetchJson = async (path) => {
+    seen.push(path);
+    return pageRes([{ id: 'x' }], undefined);
+  };
+  const items = await listAll('/v2/ai/tools?type=webhook', fetchJson);
+  assert.deepEqual(items, [{ id: 'x' }]);
+  assert.deepEqual(seen, ['/v2/ai/tools?type=webhook&page[size]=100&page[number]=1']);
+});
+
+test('listAll stops when meta has no total_pages', async () => {
+  let calls = 0;
+  const fetchJson = async () => {
+    calls += 1;
+    return { data: [{ id: 'a' }, { id: 'b' }] };
+  };
+  const items = await listAll('/v2/ai/assistants', fetchJson);
+  assert.deepEqual(items, [{ id: 'a' }, { id: 'b' }]);
+  assert.equal(calls, 1);
+});
+
+test('listAll tolerates a response without data', async () => {
+  const items = await listAll('/v2/ai/tools', async () => ({}));
+  assert.deepEqual(items, []);
+});
+
+test('listAll keeps paging through three pages', async () => {
+  const fetchJson = async (path) => {
+    const page = Number(/page\[number\]=(\d+)/.exec(path)?.[1] ?? '1');
+    return pageRes(
+      [{ id: `p${page}` }],
+      page < 3 ? 3 : 3,
+    );
+  };
+  const items = await listAll('/v2/ai/tools', fetchJson);
+  assert.deepEqual(items.map((i) => i.id), ['p1', 'p2', 'p3']);
+});
+
+const sentWebhookTool = {
+  type: 'webhook',
+  display_name: 'probe_echo',
+  timeout_ms: 5000,
+  webhook: {
+    name: 'probe_echo',
+    url: 'https://x.test/tools/echo',
+    method: 'POST',
+    store_fields_as_variables: [{ name: 'echo_result', value_path: 'result' }],
+  },
+};
+
+const gotToolLikeApi = (toolDefinition, displayName = 'probe_echo') => ({
+  id: 'tool-id-1',
+  type: 'webhook',
+  display_name: displayName,
+  tool_definition: toolDefinition,
+  created_at: '2026-01-01',
+});
+
+test('normaliseToolReadback lifts the per-type body so a real GET shape has zero DRIFT', () => {
+  const got = normaliseToolReadback(
+    gotToolLikeApi({
+      webhook: { ...sentWebhookTool.webhook, timeout_ms: 5000 },
+    }),
+  );
+  assert.deepEqual(subsetDiff(sentWebhookTool, got), []);
+});
+
+test('normaliseToolReadback still reports a real mismatch under tool_definition', () => {
+  const def = { webhook: { ...sentWebhookTool.webhook, timeout_ms: 5000 } };
+  def.webhook.url = 'https://x.test/other';
+  const got = normaliseToolReadback(gotToolLikeApi(def));
+  const diffs = subsetDiff(sentWebhookTool, got);
+  assert.deepEqual(diffs, [
+    {
+      path: 'webhook.url',
+      sent: 'https://x.test/tools/echo',
+      got: 'https://x.test/other',
+    },
+  ]);
+});
+
+test('normaliseToolReadback passes through a shape without tool_definition', () => {
+  const raw = { id: 'x', display_name: 'probe_echo' };
+  assert.deepEqual(normaliseToolReadback(raw), raw);
+  assert.equal(subsetDiff(sentWebhookTool, normaliseToolReadback(raw)).length, 3);
+});
+
+test('normaliseToolReadback accepts timeout_ms at the tool_definition top level', () => {
+  const got = normaliseToolReadback(
+    gotToolLikeApi({ timeout_ms: 5000, webhook: sentWebhookTool.webhook }),
+  );
+  assert.deepEqual(subsetDiff(sentWebhookTool, got), []);
+});
+
+test('normaliseToolReadback lifts update_dynamic_variables bodies', () => {
+  const sent = {
+    type: 'update_dynamic_variables',
+    display_name: 'probe_capture',
+    update_dynamic_variables: { name: 'probe_capture', updatable_variables: [] },
+  };
+  const got = normaliseToolReadback(
+    gotToolLikeApi(
+      { update_dynamic_variables: sent.update_dynamic_variables },
+      'probe_capture',
+    ),
+  );
+  got.type = 'update_dynamic_variables';
+  assert.deepEqual(subsetDiff(sent, got), []);
+});
+
+const sentAssistant = {
+  name: 'sanad-noc',
+  tool_ids: ['capture-tool-id'],
+  conversation_flow: { start_node_id: 's1', nodes: [{ id: 's1' }] },
+};
+
+test('normaliseAssistantReadback maps tools[].tool_id to tool_ids with zero DRIFT', () => {
+  const got = normaliseAssistantReadback({
+    id: 'asst-1',
+    name: 'sanad-noc',
+    tools: [{ tool_id: 'capture-tool-id' }],
+    conversation_flow: sentAssistant.conversation_flow,
+    created_at: '2026-01-01',
+  });
+  assert.deepEqual(subsetDiff(sentAssistant, got), []);
+});
+
+test('normaliseAssistantReadback reports a wrong tool in tools[]', () => {
+  const got = normaliseAssistantReadback({
+    name: 'sanad-noc',
+    tools: [{ tool_id: 'other-tool' }],
+    conversation_flow: sentAssistant.conversation_flow,
+  });
+  assert.deepEqual(subsetDiff(sentAssistant, got), [
+    { path: 'tool_ids.0', sent: 'capture-tool-id', got: 'other-tool' },
+  ]);
+});
+
+test('normaliseAssistantReadback passes through a shape without tools[]', () => {
+  const raw = { name: 'x' };
+  assert.deepEqual(normaliseAssistantReadback(raw), raw);
+});
+
+const PHONE = `+1${'312'}555${'0309'}`;
+
+test('maskSecrets masks E.164 numbers with the documented format', () => {
+  assert.equal(maskSecrets(`target ${PHONE} end`), 'target +1312****309 end');
+  assert.equal(maskSecrets('no number here'), 'no number here');
+  assert.equal(
+    maskSecrets(`+${'966'}${'500000000'}`),
+    '+9665****000',
+  );
+});
+
+test('maskSecrets masks numbers nested in printed drift values', () => {
+  assert.equal(maskSecrets(`{"to":"${PHONE}"}`), '{"to":"+1312****309"}');
 });

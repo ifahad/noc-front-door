@@ -1,0 +1,19 @@
+{
+  "integration_secret": {
+    "identifier": "noc_mcp_token",
+    "type": "bearer"
+  },
+  "server": {
+    "name": "noc-mcp",
+    "type": "http",
+    "url": "${EDGE_URL}/mcp",
+    "api_key_ref": "noc_mcp_token",
+    "allowed_tools": [
+      "find_site",
+      "get_site_status",
+      "check_known_incidents",
+      "get_ticket_status",
+      "add_ticket_note"
+    ]
+  }
+}

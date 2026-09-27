@@ -1,0 +1,987 @@
+{
+  "name": "sanad-noc",
+  "model": "moonshotai/Kimi-K2.6",
+  "greeting": "<assistant-speaks-first-with-model-generated-message>",
+  "voice_settings": {
+    "voice": "Telnyx.KokoroTTS.af_heart"
+  },
+  "transcription": {
+    "model": "deepgram/nova-3",
+    "language": "en",
+    "settings": {
+      "keyterm": [
+        "RUH",
+        "JED",
+        "DMM",
+        "Najd",
+        "Yasmin",
+        "Malqa",
+        "Hittin",
+        "Arabic"
+      ]
+    }
+  },
+  "interruption_settings": {
+    "disable_greeting_interruption": true
+  },
+  "telephony_settings": {
+    "time_limit_secs": 600,
+    "user_idle_timeout_secs": 60,
+    "supports_unauthenticated_web_calls": true
+  },
+  "dynamic_variables_webhook_url": "${EDGE_URL}/dv",
+  "dynamic_variables_webhook_timeout_ms": 2500,
+  "dynamic_variables": {
+    "msp_name": "Najd Networks",
+    "route_hint": "unverified",
+    "caller_name": "there",
+    "customer_name": "your organisation",
+    "site_id": "unknown",
+    "site_label": "your site",
+    "incident_region": "your area",
+    "incident_started": "earlier today",
+    "incident_summary": "a network incident",
+    "incident_eta": "shortly",
+    "open_ticket_note": "none",
+    "repeat_note": "none",
+    "trace_id": "t-none",
+    "call_key": "none",
+    "verify_result": "none",
+    "attempts_left": "3",
+    "pin": "none",
+    "symptom": "none",
+    "impact": "unknown",
+    "service_affecting": "unknown",
+    "ticket_id": "none",
+    "priority": "unknown",
+    "ticket_readback": "Your report has been logged.",
+    "callback_note": "none",
+    "escalated": "false",
+    "calls_today": "1",
+    "created": "false",
+    "incident_note": "none"
+  },
+  "tool_ids": ["${TOOL_capture_details}"],
+  "mcp_servers": [
+    {
+      "id": "${MCP_ID}",
+      "allowed_tools": [
+        "find_site",
+        "get_site_status",
+        "check_known_incidents",
+        "get_ticket_status",
+        "add_ticket_note"
+      ]
+    }
+  ],
+  "conversation_flow": {
+    "start_node_id": "s_open",
+    "nodes": [
+      {
+        "id": "s_open",
+        "type": "speak",
+        "name": "opening disclosure",
+        "message": "Thank you for calling {{msp_name}} network operations. This call is recorded and handled by an AI assistant to log and track your fault report."
+      },
+      {
+        "id": "s_advisory",
+        "type": "speak",
+        "name": "incident advisory",
+        "message": "Hi {{caller_name}}. We're already aware of an incident affecting {{incident_region}}, reported at {{incident_started}}: {{incident_summary}}. Engineers are working on it; the next update is due by {{incident_eta}}. Is the problem at {{site_label}} part of this incident?"
+      },
+      {
+        "id": "n_advisory_followup",
+        "type": "prompt",
+        "name": "advisory followup",
+        "instructions": "The caller is {{caller_name}} from {{customer_name}}; their site is {{site_label}} ({{site_id}}). If site_id is \"unknown\", ask which site. Interpret the caller's answer to the advisory question. If their problem is different, gather a one-line description of it.",
+        "instructions_mode": "append",
+        "shared_tool_ids": [],
+        "tools_mode": "replace"
+      },
+      {
+        "id": "s_join",
+        "type": "speak",
+        "name": "join moment",
+        "message": "One moment while I add your branch to the incident."
+      },
+      {
+        "id": "t_join_incident",
+        "type": "tool",
+        "name": "join incident",
+        "shared_tool_id": "${TOOL_join_incident}"
+      },
+      {
+        "id": "n_verify",
+        "type": "prompt",
+        "name": "verify caller",
+        "instructions": "The caller is {{caller_name}} from {{customer_name}}; their site is {{site_label}} ({{site_id}}). If site_id is \"unknown\", ask which site. Ask for the site ID and the 4-digit site PIN. Call capture_details with site_id (normalised, e.g. RUH-114) and pin (digits). Never repeat the PIN.",
+        "instructions_mode": "append",
+        "shared_tool_ids": ["${TOOL_capture_details}"],
+        "tools_mode": "replace"
+      },
+      {
+        "id": "t_verify",
+        "type": "tool",
+        "name": "verify site",
+        "shared_tool_id": "${TOOL_verify_site}"
+      },
+      {
+        "id": "s_pin_retry",
+        "type": "speak",
+        "name": "pin retry",
+        "message": "That PIN didn't match. You have {{attempts_left}} attempts left. Please tell me the site ID and PIN again."
+      },
+      {
+        "id": "s_locked",
+        "type": "speak",
+        "name": "verification locked",
+        "message": "For security, phone verification is locked for this call. I'll connect you to an engineer now."
+      },
+      {
+        "id": "s_verify_unavailable",
+        "type": "speak",
+        "name": "verification unavailable",
+        "message": "I can't verify you right now. I'll connect you to an engineer."
+      },
+      {
+        "id": "n_triage",
+        "type": "prompt",
+        "name": "triage",
+        "instructions": "The caller is {{caller_name}} from {{customer_name}}; their site is {{site_label}} ({{site_id}}). If site_id is \"unknown\", ask which site. Greet the caller by name. If {{open_ticket_note}} is not \"none\", mention it. If {{repeat_note}} is not \"none\", acknowledge it. Determine whether the caller reports a new fault, asks about an existing ticket, or wants a human. After PIN verification, you may call check_known_incidents once.",
+        "instructions_mode": "append",
+        "shared_tool_ids": null
+      },
+      {
+        "id": "n_collect",
+        "type": "prompt",
+        "name": "collect fault details",
+        "instructions": "The caller is {{caller_name}} from {{customer_name}}; their site is {{site_label}} ({{site_id}}). If site_id is \"unknown\", ask which site. Confirm the site; if the caller names a branch, call find_site. Ask what is wrong, since when, whether the impact is site_down, degraded, or single_user, and whether service is affected. Call get_site_status and tell the caller what the network shows. Call capture_details with site_id, symptom, impact, and service_affecting. Read back a one-sentence summary. Ask the caller to confirm before you open a ticket.",
+        "instructions_mode": "append",
+        "shared_tool_ids": null
+      },
+      {
+        "id": "s_one_moment",
+        "type": "speak",
+        "name": "one moment",
+        "message": "Thank you. One moment while I log that for you."
+      },
+      {
+        "id": "t_open_ticket",
+        "type": "tool",
+        "name": "open ticket",
+        "shared_tool_id": "${TOOL_open_ticket}"
+      },
+      {
+        "id": "s_confirm",
+        "type": "speak",
+        "name": "ticket readback",
+        "message": "{{ticket_readback}}"
+      },
+      {
+        "id": "n_ticket_failed",
+        "type": "prompt",
+        "name": "ticket failed",
+        "instructions": "The caller is {{caller_name}} from {{customer_name}}; their site is {{site_label}} ({{site_id}}). If site_id is \"unknown\", ask which site. Apologise that the ticket system did not respond. Offer to connect an engineer.",
+        "instructions_mode": "append",
+        "shared_tool_ids": [],
+        "tools_mode": "replace"
+      },
+      {
+        "id": "n_status",
+        "type": "prompt",
+        "name": "ticket status",
+        "instructions": "The caller is {{caller_name}} from {{customer_name}}; their site is {{site_label}} ({{site_id}}). If site_id is \"unknown\", ask which site. Call get_ticket_status for the caller's site by default. Offer to add a note with add_ticket_note if they have an update.",
+        "instructions_mode": "append",
+        "shared_tool_ids": null
+      },
+      {
+        "id": "n_wrapup",
+        "type": "prompt",
+        "name": "wrapup",
+        "instructions": "The caller is {{caller_name}} from {{customer_name}}; their site is {{site_label}} ({{site_id}}). If site_id is \"unknown\", ask which site. Ask if there is anything else. If {{ticket_id}} is not \"none\", restate it.",
+        "instructions_mode": "append",
+        "shared_tool_ids": [],
+        "tools_mode": "replace"
+      },
+      {
+        "id": "s_goodbye",
+        "type": "speak",
+        "name": "goodbye",
+        "message": "Thank you for calling {{msp_name}}. Goodbye."
+      },
+      {
+        "id": "t_hangup",
+        "type": "tool",
+        "name": "end call",
+        "shared_tool_id": "${TOOL_end_call}"
+      },
+      {
+        "id": "s_handover",
+        "type": "speak",
+        "name": "handover",
+        "message": "I'm connecting you to the on-call engineer now. Please stay on the line."
+      },
+      {
+        "id": "t_transfer",
+        "type": "tool",
+        "name": "transfer oncall",
+        "shared_tool_id": "${TOOL_transfer_oncall}"
+      },
+      {
+        "id": "n_take_message",
+        "type": "prompt",
+        "name": "take callback message",
+        "instructions": "The caller is {{caller_name}} from {{customer_name}}; their site is {{site_label}} ({{site_id}}). If site_id is \"unknown\", ask which site. Tell the caller the engineer could not be reached. Call capture_details to record their callback note in callback_note. Confirm the message back to the caller.",
+        "instructions_mode": "append",
+        "shared_tool_ids": ["${TOOL_capture_details}"],
+        "tools_mode": "replace"
+      },
+      {
+        "id": "t_callback",
+        "type": "tool",
+        "name": "log callback",
+        "shared_tool_id": "${TOOL_log_callback}"
+      }
+    ],
+    "edges": [
+      {
+        "id": "e_sopen_1",
+        "start_node_id": "s_open",
+        "target": { "type": "node", "node_id": "s_advisory" },
+        "condition": {
+          "type": "expression",
+          "expression": {
+            "type": "comparison",
+            "op": "==",
+            "left": { "type": "variable", "name": "route_hint" },
+            "right": { "type": "string_literal", "value": "known_incident" }
+          }
+        }
+      },
+      {
+        "id": "e_sopen_2",
+        "start_node_id": "s_open",
+        "target": { "type": "node", "node_id": "n_verify" },
+        "condition": {
+          "type": "expression",
+          "expression": {
+            "type": "comparison",
+            "op": "==",
+            "left": { "type": "variable", "name": "route_hint" },
+            "right": { "type": "string_literal", "value": "unverified" }
+          }
+        }
+      },
+      {
+        "id": "e_sopen_3",
+        "start_node_id": "s_open",
+        "target": { "type": "node", "node_id": "n_triage" },
+        "condition": { "type": "default" }
+      },
+      {
+        "id": "e_sadv_1",
+        "start_node_id": "s_advisory",
+        "target": { "type": "node", "node_id": "n_advisory_followup" },
+        "condition": { "type": "default" }
+      },
+      {
+        "id": "e_naf_1",
+        "start_node_id": "n_advisory_followup",
+        "target": { "type": "node", "node_id": "s_join" },
+        "condition": {
+          "type": "llm",
+          "prompt": "The caller said their problem is part of the announced incident."
+        }
+      },
+      {
+        "id": "e_naf_2",
+        "start_node_id": "n_advisory_followup",
+        "target": { "type": "node", "node_id": "n_collect" },
+        "condition": {
+          "type": "llm",
+          "prompt": "The caller said their problem is different from the announced incident."
+        }
+      },
+      {
+        "id": "e_naf_3",
+        "start_node_id": "n_advisory_followup",
+        "target": { "type": "node", "node_id": "s_handover" },
+        "condition": {
+          "type": "llm",
+          "prompt": "The caller asked to speak to a human engineer."
+        }
+      },
+      {
+        "id": "e_naf_4",
+        "start_node_id": "n_advisory_followup",
+        "target": { "type": "node", "node_id": "s_handover" },
+        "condition": {
+          "type": "expression",
+          "expression": {
+            "type": "bool_op",
+            "op": "and",
+            "operands": [
+              {
+                "type": "comparison",
+                "op": ">=",
+                "left": { "type": "variable", "name": "telnyx_conversation_duration_secs" },
+                "right": { "type": "number_literal", "value": 300 }
+              },
+              {
+                "type": "comparison",
+                "op": "!=",
+                "left": { "type": "variable", "name": "escalated" },
+                "right": { "type": "string_literal", "value": "true" }
+              }
+            ]
+          }
+        }
+      },
+      {
+        "id": "e_sjoin_1",
+        "start_node_id": "s_join",
+        "target": { "type": "node", "node_id": "t_join_incident" },
+        "condition": { "type": "default" }
+      },
+      {
+        "id": "e_tjoin_1",
+        "start_node_id": "t_join_incident",
+        "target": { "type": "node", "node_id": "s_confirm" },
+        "condition": {
+          "type": "expression",
+          "expression": {
+            "type": "bool_op",
+            "op": "or",
+            "operands": [
+              {
+                "type": "comparison",
+                "op": "==",
+                "left": { "type": "variable", "name": "telnyx_last_tool_status_code" },
+                "right": { "type": "string_literal", "value": "200" }
+              },
+              {
+                "type": "comparison",
+                "op": "==",
+                "left": { "type": "variable", "name": "telnyx_last_tool_status_code" },
+                "right": { "type": "number_literal", "value": 200 }
+              }
+            ]
+          }
+        }
+      },
+      {
+        "id": "e_tjoin_2",
+        "start_node_id": "t_join_incident",
+        "target": { "type": "node", "node_id": "n_verify" },
+        "condition": {
+          "type": "expression",
+          "expression": {
+            "type": "bool_op",
+            "op": "or",
+            "operands": [
+              {
+                "type": "comparison",
+                "op": "==",
+                "left": { "type": "variable", "name": "telnyx_last_tool_status_code" },
+                "right": { "type": "string_literal", "value": "403" }
+              },
+              {
+                "type": "comparison",
+                "op": "==",
+                "left": { "type": "variable", "name": "telnyx_last_tool_status_code" },
+                "right": { "type": "number_literal", "value": 403 }
+              }
+            ]
+          }
+        }
+      },
+      {
+        "id": "e_tjoin_3",
+        "start_node_id": "t_join_incident",
+        "target": { "type": "node", "node_id": "n_ticket_failed" },
+        "condition": { "type": "default" }
+      },
+      {
+        "id": "e_nverify_1",
+        "start_node_id": "n_verify",
+        "target": { "type": "node", "node_id": "t_verify" },
+        "condition": {
+          "type": "expression",
+          "expression": {
+            "type": "bool_op",
+            "op": "and",
+            "operands": [
+              {
+                "type": "comparison",
+                "op": "!=",
+                "left": { "type": "variable", "name": "pin" },
+                "right": { "type": "string_literal", "value": "none" }
+              },
+              {
+                "type": "comparison",
+                "op": "!=",
+                "left": { "type": "variable", "name": "site_id" },
+                "right": { "type": "string_literal", "value": "unknown" }
+              }
+            ]
+          }
+        }
+      },
+      {
+        "id": "e_nverify_2",
+        "start_node_id": "n_verify",
+        "target": { "type": "node", "node_id": "s_handover" },
+        "condition": {
+          "type": "llm",
+          "prompt": "The caller said they don't have the PIN or asked for a person."
+        }
+      },
+      {
+        "id": "e_nverify_3",
+        "start_node_id": "n_verify",
+        "target": { "type": "node", "node_id": "s_handover" },
+        "condition": {
+          "type": "expression",
+          "expression": {
+            "type": "bool_op",
+            "op": "and",
+            "operands": [
+              {
+                "type": "comparison",
+                "op": ">=",
+                "left": { "type": "variable", "name": "telnyx_conversation_duration_secs" },
+                "right": { "type": "number_literal", "value": 300 }
+              },
+              {
+                "type": "comparison",
+                "op": "!=",
+                "left": { "type": "variable", "name": "escalated" },
+                "right": { "type": "string_literal", "value": "true" }
+              }
+            ]
+          }
+        }
+      },
+      {
+        "id": "e_tverify_1",
+        "start_node_id": "t_verify",
+        "target": { "type": "node", "node_id": "s_advisory" },
+        "condition": {
+          "type": "expression",
+          "expression": {
+            "type": "bool_op",
+            "op": "and",
+            "operands": [
+              {
+                "type": "bool_op",
+                "op": "or",
+                "operands": [
+                  {
+                    "type": "comparison",
+                    "op": "==",
+                    "left": { "type": "variable", "name": "telnyx_last_tool_status_code" },
+                    "right": { "type": "string_literal", "value": "200" }
+                  },
+                  {
+                    "type": "comparison",
+                    "op": "==",
+                    "left": { "type": "variable", "name": "telnyx_last_tool_status_code" },
+                    "right": { "type": "number_literal", "value": 200 }
+                  }
+                ]
+              },
+              {
+                "type": "comparison",
+                "op": "==",
+                "left": { "type": "variable", "name": "verify_result" },
+                "right": { "type": "string_literal", "value": "ok" }
+              },
+              {
+                "type": "comparison",
+                "op": "==",
+                "left": { "type": "variable", "name": "route_hint" },
+                "right": { "type": "string_literal", "value": "known_incident" }
+              }
+            ]
+          }
+        }
+      },
+      {
+        "id": "e_tverify_2",
+        "start_node_id": "t_verify",
+        "target": { "type": "node", "node_id": "n_triage" },
+        "condition": {
+          "type": "expression",
+          "expression": {
+            "type": "bool_op",
+            "op": "and",
+            "operands": [
+              {
+                "type": "bool_op",
+                "op": "or",
+                "operands": [
+                  {
+                    "type": "comparison",
+                    "op": "==",
+                    "left": { "type": "variable", "name": "telnyx_last_tool_status_code" },
+                    "right": { "type": "string_literal", "value": "200" }
+                  },
+                  {
+                    "type": "comparison",
+                    "op": "==",
+                    "left": { "type": "variable", "name": "telnyx_last_tool_status_code" },
+                    "right": { "type": "number_literal", "value": 200 }
+                  }
+                ]
+              },
+              {
+                "type": "comparison",
+                "op": "==",
+                "left": { "type": "variable", "name": "verify_result" },
+                "right": { "type": "string_literal", "value": "ok" }
+              }
+            ]
+          }
+        }
+      },
+      {
+        "id": "e_tverify_3",
+        "start_node_id": "t_verify",
+        "target": { "type": "node", "node_id": "s_locked" },
+        "condition": {
+          "type": "expression",
+          "expression": {
+            "type": "bool_op",
+            "op": "and",
+            "operands": [
+              {
+                "type": "bool_op",
+                "op": "or",
+                "operands": [
+                  {
+                    "type": "comparison",
+                    "op": "==",
+                    "left": { "type": "variable", "name": "telnyx_last_tool_status_code" },
+                    "right": { "type": "string_literal", "value": "200" }
+                  },
+                  {
+                    "type": "comparison",
+                    "op": "==",
+                    "left": { "type": "variable", "name": "telnyx_last_tool_status_code" },
+                    "right": { "type": "number_literal", "value": 200 }
+                  }
+                ]
+              },
+              {
+                "type": "comparison",
+                "op": "==",
+                "left": { "type": "variable", "name": "verify_result" },
+                "right": { "type": "string_literal", "value": "locked" }
+              }
+            ]
+          }
+        }
+      },
+      {
+        "id": "e_tverify_4",
+        "start_node_id": "t_verify",
+        "target": { "type": "node", "node_id": "s_pin_retry" },
+        "condition": {
+          "type": "expression",
+          "expression": {
+            "type": "bool_op",
+            "op": "and",
+            "operands": [
+              {
+                "type": "bool_op",
+                "op": "or",
+                "operands": [
+                  {
+                    "type": "comparison",
+                    "op": "==",
+                    "left": { "type": "variable", "name": "telnyx_last_tool_status_code" },
+                    "right": { "type": "string_literal", "value": "200" }
+                  },
+                  {
+                    "type": "comparison",
+                    "op": "==",
+                    "left": { "type": "variable", "name": "telnyx_last_tool_status_code" },
+                    "right": { "type": "number_literal", "value": 200 }
+                  }
+                ]
+              },
+              {
+                "type": "comparison",
+                "op": "==",
+                "left": { "type": "variable", "name": "verify_result" },
+                "right": { "type": "string_literal", "value": "invalid" }
+              }
+            ]
+          }
+        }
+      },
+      {
+        "id": "e_tverify_5",
+        "start_node_id": "t_verify",
+        "target": { "type": "node", "node_id": "s_verify_unavailable" },
+        "condition": { "type": "default" }
+      },
+      {
+        "id": "e_spin_1",
+        "start_node_id": "s_pin_retry",
+        "target": { "type": "node", "node_id": "n_verify" },
+        "condition": { "type": "default" }
+      },
+      {
+        "id": "e_slock_1",
+        "start_node_id": "s_locked",
+        "target": { "type": "node", "node_id": "t_transfer" },
+        "condition": { "type": "default" }
+      },
+      {
+        "id": "e_sunav_1",
+        "start_node_id": "s_verify_unavailable",
+        "target": { "type": "node", "node_id": "t_transfer" },
+        "condition": { "type": "default" }
+      },
+      {
+        "id": "e_ntri_1",
+        "start_node_id": "n_triage",
+        "target": { "type": "node", "node_id": "n_collect" },
+        "condition": {
+          "type": "llm",
+          "prompt": "The caller is reporting a new outage, fault, or degradation."
+        }
+      },
+      {
+        "id": "e_ntri_2",
+        "start_node_id": "n_triage",
+        "target": { "type": "node", "node_id": "n_status" },
+        "condition": {
+          "type": "llm",
+          "prompt": "The caller is asking about an existing ticket or its status."
+        }
+      },
+      {
+        "id": "e_ntri_3",
+        "start_node_id": "n_triage",
+        "target": { "type": "node", "node_id": "s_handover" },
+        "condition": {
+          "type": "llm",
+          "prompt": "The caller asked to speak to a human engineer."
+        }
+      },
+      {
+        "id": "e_ntri_4",
+        "start_node_id": "n_triage",
+        "target": { "type": "node", "node_id": "s_handover" },
+        "condition": {
+          "type": "expression",
+          "expression": {
+            "type": "bool_op",
+            "op": "and",
+            "operands": [
+              {
+                "type": "comparison",
+                "op": ">=",
+                "left": { "type": "variable", "name": "telnyx_conversation_duration_secs" },
+                "right": { "type": "number_literal", "value": 300 }
+              },
+              {
+                "type": "comparison",
+                "op": "!=",
+                "left": { "type": "variable", "name": "escalated" },
+                "right": { "type": "string_literal", "value": "true" }
+              }
+            ]
+          }
+        }
+      },
+      {
+        "id": "e_ncoll_1",
+        "start_node_id": "n_collect",
+        "target": { "type": "node", "node_id": "s_one_moment" },
+        "condition": {
+          "type": "llm",
+          "prompt": "The caller confirmed the fault summary the assistant read back and agreed to open a ticket."
+        }
+      },
+      {
+        "id": "e_ncoll_2",
+        "start_node_id": "n_collect",
+        "target": { "type": "node", "node_id": "n_wrapup" },
+        "condition": {
+          "type": "llm",
+          "prompt": "The caller declined to open a ticket."
+        }
+      },
+      {
+        "id": "e_ncoll_3",
+        "start_node_id": "n_collect",
+        "target": { "type": "node", "node_id": "s_handover" },
+        "condition": {
+          "type": "llm",
+          "prompt": "The caller asked to speak to a human engineer."
+        }
+      },
+      {
+        "id": "e_ncoll_4",
+        "start_node_id": "n_collect",
+        "target": { "type": "node", "node_id": "s_handover" },
+        "condition": {
+          "type": "expression",
+          "expression": {
+            "type": "bool_op",
+            "op": "and",
+            "operands": [
+              {
+                "type": "comparison",
+                "op": ">=",
+                "left": { "type": "variable", "name": "telnyx_conversation_duration_secs" },
+                "right": { "type": "number_literal", "value": 300 }
+              },
+              {
+                "type": "comparison",
+                "op": "!=",
+                "left": { "type": "variable", "name": "escalated" },
+                "right": { "type": "string_literal", "value": "true" }
+              }
+            ]
+          }
+        }
+      },
+      {
+        "id": "e_sone_1",
+        "start_node_id": "s_one_moment",
+        "target": { "type": "node", "node_id": "t_open_ticket" },
+        "condition": { "type": "default" }
+      },
+      {
+        "id": "e_topen_1",
+        "start_node_id": "t_open_ticket",
+        "target": { "type": "node", "node_id": "s_confirm" },
+        "condition": {
+          "type": "expression",
+          "expression": {
+            "type": "bool_op",
+            "op": "or",
+            "operands": [
+              {
+                "type": "comparison",
+                "op": "==",
+                "left": { "type": "variable", "name": "telnyx_last_tool_status_code" },
+                "right": { "type": "string_literal", "value": "200" }
+              },
+              {
+                "type": "comparison",
+                "op": "==",
+                "left": { "type": "variable", "name": "telnyx_last_tool_status_code" },
+                "right": { "type": "number_literal", "value": 200 }
+              }
+            ]
+          }
+        }
+      },
+      {
+        "id": "e_topen_2",
+        "start_node_id": "t_open_ticket",
+        "target": { "type": "node", "node_id": "n_collect" },
+        "condition": {
+          "type": "expression",
+          "expression": {
+            "type": "bool_op",
+            "op": "or",
+            "operands": [
+              {
+                "type": "comparison",
+                "op": "==",
+                "left": { "type": "variable", "name": "telnyx_last_tool_status_code" },
+                "right": { "type": "string_literal", "value": "422" }
+              },
+              {
+                "type": "comparison",
+                "op": "==",
+                "left": { "type": "variable", "name": "telnyx_last_tool_status_code" },
+                "right": { "type": "number_literal", "value": 422 }
+              }
+            ]
+          }
+        }
+      },
+      {
+        "id": "e_topen_3",
+        "start_node_id": "t_open_ticket",
+        "target": { "type": "node", "node_id": "n_verify" },
+        "condition": {
+          "type": "expression",
+          "expression": {
+            "type": "bool_op",
+            "op": "or",
+            "operands": [
+              {
+                "type": "comparison",
+                "op": "==",
+                "left": { "type": "variable", "name": "telnyx_last_tool_status_code" },
+                "right": { "type": "string_literal", "value": "403" }
+              },
+              {
+                "type": "comparison",
+                "op": "==",
+                "left": { "type": "variable", "name": "telnyx_last_tool_status_code" },
+                "right": { "type": "number_literal", "value": 403 }
+              }
+            ]
+          }
+        }
+      },
+      {
+        "id": "e_topen_4",
+        "start_node_id": "t_open_ticket",
+        "target": { "type": "node", "node_id": "n_ticket_failed" },
+        "condition": { "type": "default" }
+      },
+      {
+        "id": "e_sconf_1",
+        "start_node_id": "s_confirm",
+        "target": { "type": "node", "node_id": "n_wrapup" },
+        "condition": { "type": "default" }
+      },
+      {
+        "id": "e_ntf_1",
+        "start_node_id": "n_ticket_failed",
+        "target": { "type": "node", "node_id": "s_handover" },
+        "condition": {
+          "type": "llm",
+          "prompt": "The caller accepted being connected to a human engineer."
+        }
+      },
+      {
+        "id": "e_ntf_2",
+        "start_node_id": "n_ticket_failed",
+        "target": { "type": "node", "node_id": "n_wrapup" },
+        "condition": {
+          "type": "llm",
+          "prompt": "The caller declined to be connected."
+        }
+      },
+      {
+        "id": "e_nstat_1",
+        "start_node_id": "n_status",
+        "target": { "type": "node", "node_id": "n_collect" },
+        "condition": {
+          "type": "llm",
+          "prompt": "The caller wants to report a new fault."
+        }
+      },
+      {
+        "id": "e_nstat_2",
+        "start_node_id": "n_status",
+        "target": { "type": "node", "node_id": "s_handover" },
+        "condition": {
+          "type": "llm",
+          "prompt": "The caller asked to speak to a human engineer."
+        }
+      },
+      {
+        "id": "e_nstat_3",
+        "start_node_id": "n_status",
+        "target": { "type": "node", "node_id": "n_wrapup" },
+        "condition": {
+          "type": "llm",
+          "prompt": "The caller said they have their answer and nothing else."
+        }
+      },
+      {
+        "id": "e_nstat_4",
+        "start_node_id": "n_status",
+        "target": { "type": "node", "node_id": "s_handover" },
+        "condition": {
+          "type": "expression",
+          "expression": {
+            "type": "bool_op",
+            "op": "and",
+            "operands": [
+              {
+                "type": "comparison",
+                "op": ">=",
+                "left": { "type": "variable", "name": "telnyx_conversation_duration_secs" },
+                "right": { "type": "number_literal", "value": 300 }
+              },
+              {
+                "type": "comparison",
+                "op": "!=",
+                "left": { "type": "variable", "name": "escalated" },
+                "right": { "type": "string_literal", "value": "true" }
+              }
+            ]
+          }
+        }
+      },
+      {
+        "id": "e_nwrap_1",
+        "start_node_id": "n_wrapup",
+        "target": { "type": "node", "node_id": "n_triage" },
+        "condition": {
+          "type": "llm",
+          "prompt": "The caller said they have another issue."
+        }
+      },
+      {
+        "id": "e_nwrap_2",
+        "start_node_id": "n_wrapup",
+        "target": { "type": "node", "node_id": "s_goodbye" },
+        "condition": {
+          "type": "llm",
+          "prompt": "The caller said there is nothing else."
+        }
+      },
+      {
+        "id": "e_sgood_1",
+        "start_node_id": "s_goodbye",
+        "target": { "type": "node", "node_id": "t_hangup" },
+        "condition": { "type": "default" }
+      },
+      {
+        "id": "e_shand_1",
+        "start_node_id": "s_handover",
+        "target": { "type": "node", "node_id": "t_transfer" },
+        "condition": { "type": "default" }
+      },
+      {
+        "id": "e_ttrans_1",
+        "start_node_id": "t_transfer",
+        "target": { "type": "node", "node_id": "n_take_message" },
+        "condition": { "type": "default" }
+      },
+      {
+        "id": "e_ntake_1",
+        "start_node_id": "n_take_message",
+        "target": { "type": "node", "node_id": "t_callback" },
+        "condition": {
+          "type": "expression",
+          "expression": {
+            "type": "comparison",
+            "op": "!=",
+            "left": { "type": "variable", "name": "callback_note" },
+            "right": { "type": "string_literal", "value": "none" }
+          }
+        }
+      },
+      {
+        "id": "e_ntake_2",
+        "start_node_id": "n_take_message",
+        "target": { "type": "node", "node_id": "n_wrapup" },
+        "condition": {
+          "type": "llm",
+          "prompt": "The caller declined to leave a message."
+        }
+      },
+      {
+        "id": "e_tcb_1",
+        "start_node_id": "t_callback",
+        "target": { "type": "node", "node_id": "n_wrapup" },
+        "condition": { "type": "default" }
+      }
+    ]
+  }
+}

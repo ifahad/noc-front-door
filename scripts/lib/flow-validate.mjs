@@ -31,7 +31,10 @@ function walkExpression(edgeId, node, errors) {
   }
 }
 
-export function validateFlow(flow) {
+export function validateFlow(
+  flow,
+  { requireHumanExits = false, humanExitExemptions = ['n_wrapup', 'n_take_message'] } = {},
+) {
   const errors = [];
   if (flow === null || typeof flow !== 'object') {
     errors.push('flow: not an object');
@@ -117,6 +120,79 @@ export function validateFlow(flow) {
       }
       if (node.shared_tool_ids !== null && !node.tools_mode) {
         errors.push(`prompt node "${node.id}" missing tools_mode`);
+      }
+      if (requireHumanExits && !humanExitExemptions.includes(node.id)) {
+        const llmPrompts = edges
+          .filter((e) => e?.start_node_id === node.id && e.condition?.type === 'llm')
+          .map((e) => String(e.condition.prompt ?? ''));
+        if (!llmPrompts.some((p) => /human engineer|a person/i.test(p))) {
+          errors.push(
+            `prompt node "${node.id}" has no human-request exit (no llm edge mentioning a human engineer or a person)`,
+          );
+        }
+      }
+    }
+  }
+  return errors;
+}
+
+const MUSTACHE_RE = /\{\{\s*([A-Za-z_][A-Za-z0-9_]*)\s*\}\}/g;
+
+const SYSTEM_VARIABLES = new Set([
+  'call_control_id',
+  'telnyx_conversation_id',
+  'telnyx_agent_target',
+  'telnyx_end_user_target',
+  'telnyx_conversation_duration_secs',
+  'telnyx_last_tool_status_code',
+]);
+
+function placeholderToolName(id) {
+  const m = /^\$\{TOOL_([A-Za-z0-9_]+)\}$/.exec(id);
+  return m ? m[1] : null;
+}
+
+export function validateAssistant(
+  assistant,
+  { toolName = placeholderToolName } = {},
+) {
+  const errors = [];
+  if (assistant === null || typeof assistant !== 'object') {
+    errors.push('assistant: not an object');
+    return errors;
+  }
+  const ids = Array.isArray(assistant.tool_ids) ? assistant.tool_ids : [];
+  const names = ids.map((id) => toolName(String(id)));
+  if (names.length !== 1 || names[0] !== 'capture_details') {
+    errors.push(
+      `tool_ids must be [capture_details], found ${JSON.stringify(names)}`,
+    );
+  }
+  const declared = new Set(Object.keys(assistant.dynamic_variables ?? {}));
+  const texts = [];
+  if (typeof assistant.instructions === 'string') {
+    texts.push(['instructions', assistant.instructions]);
+  }
+  if (typeof assistant.greeting === 'string') {
+    texts.push(['greeting', assistant.greeting]);
+  }
+  for (const node of Array.isArray(assistant.conversation_flow?.nodes)
+    ? assistant.conversation_flow.nodes
+    : []) {
+    if (typeof node?.message === 'string') {
+      texts.push([node.id ?? 'node', node.message]);
+    }
+    if (typeof node?.instructions === 'string') {
+      texts.push([node.id ?? 'node', node.instructions]);
+    }
+  }
+  for (const [where, text] of texts) {
+    for (const match of text.matchAll(MUSTACHE_RE)) {
+      const name = match[1];
+      if (!declared.has(name) && !SYSTEM_VARIABLES.has(name)) {
+        errors.push(
+          `{{${name}}} in "${where}" is not a declared dynamic variable or a known system variable`,
+        );
       }
     }
   }

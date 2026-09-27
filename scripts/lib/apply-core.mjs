@@ -34,6 +34,60 @@ export function findByName(list, field, name) {
   return list.find((item) => item?.[field] === name);
 }
 
+export async function listAll(path, fetchJson) {
+  const items = [];
+  let page = 1;
+  for (;;) {
+    const sep = path.includes('?') ? '&' : '?';
+    const res = await fetchJson(`${path}${sep}page[size]=100&page[number]=${page}`);
+    const list = Array.isArray(res?.data) ? res.data : [];
+    items.push(...list);
+    const totalPages = res?.meta?.total_pages;
+    if (!Number.isInteger(totalPages) || page >= totalPages) break;
+    page += 1;
+  }
+  return items;
+}
+
+export function normaliseToolReadback(got) {
+  if (
+    got !== null &&
+    typeof got === 'object' &&
+    !Array.isArray(got) &&
+    got.tool_definition !== null &&
+    typeof got.tool_definition === 'object' &&
+    !Array.isArray(got.tool_definition)
+  ) {
+    const def = got.tool_definition;
+    const typeKey = Object.keys(def).find(
+      (k) => def[k] !== null && typeof def[k] === 'object' && !Array.isArray(def[k]),
+    );
+    const inner = typeKey ? def[typeKey] : {};
+    return { ...inner, ...def, ...got };
+  }
+  return got;
+}
+
+export function normaliseAssistantReadback(got) {
+  if (
+    got !== null &&
+    typeof got === 'object' &&
+    !Array.isArray(got) &&
+    Array.isArray(got.tools)
+  ) {
+    return { ...got, tool_ids: got.tools.map((t) => t?.tool_id) };
+  }
+  return got;
+}
+
+const E164_RE = /\+[0-9]{7,15}\b/g;
+
+export function maskSecrets(text) {
+  return text.replace(E164_RE, (m) =>
+    m.length <= 8 ? `${m.slice(0, 5)}****` : `${m.slice(0, 5)}****${m.slice(-3)}`,
+  );
+}
+
 export function subsetDiff(sent, got, path = '') {
   const diffs = [];
   const child = (key) => (path ? `${path}.${key}` : String(key));

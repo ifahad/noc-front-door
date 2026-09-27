@@ -25,7 +25,13 @@ export async function telnyx(path, { method = 'GET', body } = {}) {
     }
     throw new Error(`telnyx ${method} ${path} -> ${res.status} ${code} ${title}`);
   }
-  return res.json();
+  const text = await res.text();
+  if (!text) return null;
+  try {
+    return JSON.parse(text);
+  } catch {
+    return text;
+  }
 }
 
 export function loadDotEnv(path = '.env') {
