@@ -143,14 +143,29 @@ export function validateFlow(
         }
         const sharedToolIds = Array.isArray(node.shared_tool_ids)
           ? node.shared_tool_ids
-          : [];
-        for (const id of sharedToolIds) {
-          const name = placeholderToolName(String(id));
-          if (name !== null && MANDATORY_TOOL_NODES.has(name)) {
-            errors.push(
-              `prompt node "${node.id}" must not list ${name} in shared_tool_ids; mandatory actions must be tool nodes`,
-            );
+          : node.shared_tool_ids === null
+            ? null
+            : [];
+        if (sharedToolIds !== null) {
+          for (const id of sharedToolIds) {
+            const name = placeholderToolName(String(id));
+            if (name !== null && MANDATORY_TOOL_NODES.has(name)) {
+              errors.push(
+                `prompt node "${node.id}" must not list ${name} in shared_tool_ids; mandatory actions must be tool nodes`,
+              );
+            }
           }
+        }
+        const mentionsCapture =
+          typeof node.instructions === 'string' &&
+          node.instructions.includes('capture_details');
+        const exposesCapture =
+          sharedToolIds === null ||
+          sharedToolIds.some((id) => placeholderToolName(String(id)) === 'capture_details');
+        if (mentionsCapture && !exposesCapture) {
+          errors.push(
+            `prompt node "${node.id}" mentions capture_details but does not expose it; set shared_tool_ids to null or include ${'${TOOL_capture_details}'}`,
+          );
         }
       if (requireHumanExits && !humanExitExemptions.includes(node.id)) {
         const llmPrompts = edges

@@ -267,6 +267,31 @@ test('validateFlow accepts prompt nodes whose shared tools are non-mandatory', (
   assert.deepEqual(validateFlow(flow), []);
 });
 
+test('validateFlow rejects a prompt node calling capture_details without exposing it', () => {
+  const flow = validFlow();
+  flow.nodes[1].instructions = 'Call capture_details to save the answer.';
+  flow.nodes[1].shared_tool_ids = [];
+  flow.nodes[1].tools_mode = 'replace';
+  const errs = validateFlow(flow);
+  assert.ok(errs.some((e) => e.includes('n1') && e.includes('capture_details')));
+});
+
+test('validateFlow accepts capture_details via the shared_tool_ids list', () => {
+  const flow = validFlow();
+  flow.nodes[1].instructions = 'Call capture_details to save the answer.';
+  flow.nodes[1].shared_tool_ids = ['${TOOL_capture_details}'];
+  flow.nodes[1].tools_mode = 'replace';
+  assert.deepEqual(validateFlow(flow), []);
+});
+
+test('validateFlow accepts capture_details via null shared_tool_ids', () => {
+  const flow = validFlow();
+  flow.nodes[3].instructions = 'Call capture_details to save the answer.';
+  flow.nodes[3].instructions_mode = 'replace';
+  flow.nodes[3].tools_mode = 'append';
+  assert.deepEqual(validateFlow(flow), []);
+});
+
 test('validateFlow rejects voice_settings on a speak node', () => {
   const flow = validFlow();
   flow.nodes[0].voice_settings = { voice: 'Telnyx.Bayan.Reem' };
