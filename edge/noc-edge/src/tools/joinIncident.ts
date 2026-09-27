@@ -40,8 +40,11 @@ export async function handleJoinIncident(
     if (pre.k === null) {
       return fail("tool.join_incident", deps, pre, 422, "no_identity");
     }
-    const session = await get(deps.kv, pre.k);
-    const flags = await flagsOf(deps);
+    const [session, flags] = await Promise.all([
+      get(deps.kv, pre.k),
+      flagsOf(deps),
+      pre.convPending ?? Promise.resolve(false),
+    ]);
     const ctx: TicketCtx = {
       actors: deps.actors,
       kv: deps.kv,
@@ -49,6 +52,7 @@ export async function handleJoinIncident(
       flags,
       now: deps.now(),
       trace_id: session.trace_id,
+      deferSync: true,
     };
     let result;
     try {

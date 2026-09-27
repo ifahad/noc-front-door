@@ -1,6 +1,7 @@
 import { sessionKey, traceId } from "../../../shared/src/ids";
 import type { SeedAdapter } from "../../../shared/src/itsm";
 import { CUSTOMERS } from "../../../shared/src/seed";
+import { deadline } from "../../../shared/src/timing";
 import { parseProjection } from "../dv/handler";
 import { verifySigned } from "../lib/signed";
 import { logEvent } from "../log";
@@ -75,7 +76,7 @@ export interface PreludeOk {
   callKey: string;
   trace_id: string;
   started: number;
-  convLinked: boolean;
+  convPending: Promise<boolean> | null;
 }
 
 export type PreludeResult = PreludeOk | { ok: false; response: Response };
@@ -143,15 +144,12 @@ export async function prelude(
       matches: false,
     });
   }
-  let convLinked = false;
   const convId = usable(body.conversation_id) ? body.conversation_id : null;
+  let convPending: Promise<boolean> | null = null;
   if (k !== null && convId !== null) {
-    try {
-      await linkConversation(deps.kv, convId, k);
-      convLinked = true;
-    } catch {
-      convLinked = false;
-    }
+    convPending = deadline(linkConversation(deps.kv, convId, k), 4000, "tool.conv").then(
+      (r) => r.ok,
+    );
   }
   return {
     ok: true,
@@ -160,7 +158,7 @@ export async function prelude(
     callKey: ccid ?? bodyKey ?? "none",
     trace_id,
     started,
-    convLinked,
+    convPending,
   };
 }
 

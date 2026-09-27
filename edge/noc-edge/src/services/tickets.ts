@@ -9,6 +9,7 @@ import {
 } from "../../../shared/src/readback";
 import { classify } from "../../../shared/src/severity";
 import type { SeedAdapter } from "../../../shared/src/itsm";
+import { deadline } from "../../../shared/src/timing";
 import { logEvent } from "../log";
 import type { ActorPort, ReportSiteInput, ReportSiteResult, SiteStateApi } from "./actorPort";
 import type { Flags } from "./flags";
@@ -59,6 +60,7 @@ export interface TicketCtx {
   flags: Flags;
   now: number;
   trace_id: string;
+  deferSync?: boolean;
 }
 
 export interface TicketInput {
@@ -180,7 +182,14 @@ async function openInternal(
       report = { incident: reportedResult.incident, upgraded: reportedResult.upgraded };
     }
   }
-  await syncProjection({ actors: ctx.actors, kv: ctx.kv }, site.region, ctx.trace_id);
+  const sync = deadline(
+    syncProjection({ actors: ctx.actors, kv: ctx.kv }, site.region, ctx.trace_id),
+    4000,
+    "tickets.sync",
+  );
+  if (ctx.deferSync !== true) await sync;
+  // With deferSync (tool webhooks) the projection write runs past the response; a
+  // missed projection is repaired by the external prober's deep-health heal in ~10 s.
   const readback = ticketReadback({
     ticket,
     created: opened.created,

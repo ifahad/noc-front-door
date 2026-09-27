@@ -2,7 +2,7 @@
   {
     "type": "webhook",
     "display_name": "verify_site",
-    "timeout_ms": 5000,
+    "timeout_ms": 8000,
     "webhook": {
       "name": "verify_site",
       "description": "Verify the caller for one site using the site ID and the 4-digit PIN that capture_details collected. Runs at the verify step.",

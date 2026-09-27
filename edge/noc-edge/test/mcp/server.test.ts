@@ -20,6 +20,8 @@ import {
   T0,
 } from "./helpers";
 import { FakeActorPort } from "../fakes/actors";
+import { SlowKv } from "../fakes/slow";
+import type { KvPort } from "../../src/services/kvPort";
 import { handleMcp } from "../../src/mcp/server";
 import { normalizeParsedBody } from "../../src/mcp/shim";
 import type { McpDeps } from "../../src/mcp/server";
@@ -536,6 +538,111 @@ describe("MCP session scope", () => {
     expect(typeof lines[0].total_ms).toBe("number");
     expect(typeof lines[0].trace_id).toBe("string");
     expect(String(lines[0].trace_id)).toMatch(/^t-/);
+  });
+});
+
+describe("MCP session lookup observability", () => {
+  async function mcpSessionCall(deps: McpDeps, convId: unknown): Promise<void> {
+    const response = await handleMcp(
+      postRequest(
+        { authorization: `Bearer ${MCP_TOKEN}` },
+        {
+          jsonrpc: "2.0",
+          id: 7,
+          method: "tools/call",
+          params: {
+            name: "get_site_status",
+            arguments: {},
+            _meta: convId === null ? undefined : { telnyx_conversation_id: convId },
+          },
+        },
+      ),
+      deps,
+    );
+    await response.text();
+  }
+
+  it("logs no_conv_id when the call carries no conversation id", async () => {
+    deps = makeDeps();
+    startLogs();
+    await mcpSessionCall(deps, null);
+    const lines = eventsWith("mcp.session");
+    expect(lines).toHaveLength(1);
+    expect(lines[0].outcome).toBe("fallback");
+    expect(lines[0].reason).toBe("no_conv_id");
+    expect(lines[0].kv_ms).toBe(0);
+  });
+
+  it("logs no_conv_link when the conversation is not linked", async () => {
+    deps = makeDeps();
+    startLogs();
+    await mcpSessionCall(deps, "conv-unknown");
+    const lines = eventsWith("mcp.session");
+    expect(lines).toHaveLength(1);
+    expect(lines[0].outcome).toBe("fallback");
+    expect(lines[0].reason).toBe("no_conv_link");
+    expect(lines[0].conv).toBe("conv-unk");
+  });
+
+  it("logs ok with the truncated conversation id when the session resolves", async () => {
+    deps = makeDeps();
+    await seedSession(deps.kv, {});
+    startLogs();
+    await mcpSessionCall(deps, CONV);
+    const lines = eventsWith("mcp.session");
+    expect(lines).toHaveLength(1);
+    expect(lines[0].outcome).toBe("ok");
+    expect(lines[0]).not.toHaveProperty("reason");
+    expect(lines[0].conv).toBe("conv-mcp");
+    expect(String(lines[0].conv).length).toBeLessThanOrEqual(8);
+    expect(typeof lines[0].kv_ms).toBe("number");
+  });
+
+  it("falls back with reason timeout when the lookup exceeds the deadline", { timeout: 30000 }, async () => {
+    const inner = newKv();
+    await seedSession(inner, {});
+    deps = makeDeps({ kv: new SlowKv(inner, 3500) });
+    startLogs();
+    await mcpSessionCall(deps, CONV);
+    const lines = eventsWith("mcp.session");
+    expect(lines).toHaveLength(1);
+    expect(lines[0].outcome).toBe("fallback");
+    expect(lines[0].reason).toBe("timeout");
+  });
+
+  it("falls back with reason error when the KV read fails", async () => {
+    const failing: KvPort = {
+      get: () => Promise.reject(new Error("kv_down")),
+      put: () => Promise.resolve(),
+      delete: () => Promise.resolve(),
+      list: () => Promise.resolve([]),
+    };
+    deps = makeDeps({ kv: failing });
+    startLogs();
+    await mcpSessionCall(deps, CONV);
+    const lines = eventsWith("mcp.session");
+    expect(lines).toHaveLength(1);
+    expect(lines[0].outcome).toBe("fallback");
+    expect(lines[0].reason).toBe("error");
+  });
+
+  it("logs no mcp.session event for ops scope", async () => {
+    deps = makeDeps();
+    startLogs();
+    const response = await handleMcp(
+      postRequest(
+        { authorization: `Bearer ${OPS_TOKEN}` },
+        {
+          jsonrpc: "2.0",
+          id: 7,
+          method: "tools/call",
+          params: { name: "get_site_status", arguments: {} },
+        },
+      ),
+      deps,
+    );
+    await response.text();
+    expect(eventsWith("mcp.session")).toHaveLength(0);
   });
 });
 

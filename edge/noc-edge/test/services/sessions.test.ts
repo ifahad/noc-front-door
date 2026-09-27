@@ -11,6 +11,7 @@ import {
   type DvSession,
 } from "../../src/services/sessions";
 import { FakeKv } from "../fakes/kv";
+import { SlowKv } from "../fakes/slow";
 
 const K = ["1a", "2b", "3c", "4d", "5e", "6f", "7a", "8b"].join("");
 const CONV_ID = ["conv", "1111", "2222", "3333", "4444"].join("-");
@@ -90,6 +91,18 @@ describe("sessions.putDv / putAuth / get", () => {
     expect(session.verified).toBe(true);
     expect(session.sites).toEqual(["RUH-121"]);
     expect(session.identified).toBe(false);
+  });
+
+  it("reads the dv and auth keys concurrently, not one after another", { timeout: 15000 }, async () => {
+    const kv = new SlowKv(new FakeKv());
+    kv.setNow(0);
+    await putDv(kv, K, DV);
+    await putAuth(kv, K, AUTH);
+    const started = Date.now();
+    const session = await get(kv, K);
+    expect(session.identified).toBe(true);
+    expect(session.verified).toBe(true);
+    expect(Date.now() - started).toBeLessThan(1900);
   });
 });
 

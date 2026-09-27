@@ -38,8 +38,11 @@ export async function handleOpenTicket(
     if (pre.k === null) {
       return fail("tool.open_ticket", deps, pre, 422, "no_identity");
     }
-    const session = await get(deps.kv, pre.k);
-    const flags = await flagsOf(deps);
+    const [session, flags] = await Promise.all([
+      get(deps.kv, pre.k),
+      flagsOf(deps),
+      pre.convPending ?? Promise.resolve(false),
+    ]);
     const ctx: TicketCtx = {
       actors: deps.actors,
       kv: deps.kv,
@@ -47,6 +50,7 @@ export async function handleOpenTicket(
       flags,
       now: deps.now(),
       trace_id: session.trace_id,
+      deferSync: true,
     };
     const result = await open(ctx, session, {
       site_id: str(pre.body.site_id as string | undefined, ""),

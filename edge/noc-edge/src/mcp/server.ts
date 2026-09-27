@@ -1,6 +1,7 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { WebStandardStreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/webStandardStreamableHttp.js";
 import type { SeedAdapter } from "../../../shared/src/itsm";
+import { deadline } from "../../../shared/src/timing";
 import { logEvent } from "../log";
 import type { ActorPort } from "../services/actorPort";
 import type { KvPort } from "../services/kvPort";
@@ -59,15 +60,52 @@ function logRejectedToolCall(
 }
 
 async function resolveSession(deps: McpDeps, parsedBody: unknown): Promise<Session | null> {
+  const startedAt = deps.now();
   const convId = conversationIdOf(parsedBody);
-  if (convId === null) return null;
-  try {
+  if (convId === null) {
+    logEvent("mcp.session", {
+      hop: MCP_HOP,
+      outcome: "fallback",
+      reason: "no_conv_id",
+      kv_ms: 0,
+    });
+    return null;
+  }
+  let failed = false;
+  const MISS = Symbol("miss");
+  const lookup = (async () => {
     const k = await byConversation(deps.kv, convId);
     if (k === null) return null;
     return await getSession(deps.kv, k);
-  } catch {
+  })().catch((err: unknown) => {
+    failed = true;
+    return MISS;
+  });
+  const result = await deadline(lookup, 3000, "mcp.session");
+  const kvMs = Math.max(0, deps.now() - startedAt);
+  const conv = convId.slice(0, 8);
+  if (!result.ok || typeof result.value === "symbol") {
+    logEvent("mcp.session", {
+      hop: MCP_HOP,
+      outcome: "fallback",
+      reason: failed ? "error" : "timeout",
+      kv_ms: kvMs,
+      conv,
+    });
     return null;
   }
+  if (result.value === null) {
+    logEvent("mcp.session", {
+      hop: MCP_HOP,
+      outcome: "fallback",
+      reason: "no_conv_link",
+      kv_ms: kvMs,
+      conv,
+    });
+    return null;
+  }
+  logEvent("mcp.session", { hop: MCP_HOP, outcome: "ok", kv_ms: kvMs, conv });
+  return result.value;
 }
 
 export async function handleMcp(request: Request, deps: McpDeps): Promise<Response> {

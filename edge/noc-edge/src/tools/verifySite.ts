@@ -84,69 +84,84 @@ export async function handleVerifySite(
     const valid = await deps.adapter.checkPin(pin, site.site_id);
     const fp = await fpOf(deps.pinPepper, k, pin);
     const trace_id = traceId(k);
-    const attempt = await deps.actors.site(site.site_id).recordPinAttempt({
+    const attemptP = deps.actors.site(site.site_id).recordPinAttempt({
       k,
       valid,
       fp,
       trace_id,
       at: deps.now(),
     });
+    const attemptAndConv = await Promise.all([
+      attemptP,
+      pre.convPending ?? Promise.resolve(false),
+    ]);
+    const attempt = attemptAndConv[0];
+    const convLinked = attemptAndConv[1];
     const verified = attempt.result === "ok";
-    let degraded = pre.k !== null && !pre.convLinked;
+    let degraded = pre.k !== null && !convLinked;
     let caller_name = DEFAULTS.caller_name;
     let customer_name = DEFAULTS.customer_name;
     let projection: IncidentProjection | null = null;
     let deflection = false;
     let open_note = DEFAULTS.open_ticket_note;
     if (verified && k !== null) {
-      try {
-        await putAuth(deps.kv, k, {
+      const convId = usable(pre.body.conversation_id)
+        ? pre.body.conversation_id
+        : null;
+      const results = await Promise.allSettled([
+        putAuth(deps.kv, k, {
           verified: true,
           site_id: site.site_id,
           customer_id: site.customer_id,
           at: deps.now(),
-        });
-      } catch {
+        }),
+        minted !== null && convId !== null
+          ? linkConversation(deps.kv, convId, k)
+          : Promise.resolve(),
+        (async () => {
+          const session = await get(deps.kv, k);
+          const contact =
+            session.contact_id !== null
+              ? await deps.adapter.findContactById(session.contact_id)
+              : null;
+          return {
+            caller: str(contact?.name, DEFAULTS.caller_name),
+            customer: str(
+              contact?.customer_name,
+              customersName(site.customer_id) ?? DEFAULTS.customer_name,
+            ),
+          };
+        })(),
+        flagsOf(deps),
+        readProjection(deps.kv, site.region),
+        deps.actors.site(site.site_id).getTicket({ trace_id }),
+      ]);
+      const [authR, linkR, contactR, flagsR, projR, ticketR] = results;
+      if (authR.status === "rejected") degraded = true;
+      if (linkR.status === "rejected") degraded = true;
+      if (contactR.status === "rejected") {
         degraded = true;
+      } else {
+        caller_name = contactR.value.caller;
+        customer_name = contactR.value.customer;
       }
-      if (pre.k === null) {
-        const convId = usable(pre.body.conversation_id)
-          ? pre.body.conversation_id
-          : null;
-        if (convId !== null) {
-          try {
-            await linkConversation(deps.kv, convId, k);
-          } catch {
-            degraded = true;
-          }
-        }
-      }
-      try {
-        const session = await get(deps.kv, k);
-        const contact =
-          session.contact_id !== null
-            ? await deps.adapter.findContactById(session.contact_id)
-            : null;
-        caller_name = str(contact?.name, DEFAULTS.caller_name);
-        customer_name = str(
-          contact?.customer_name,
-          customersName(site.customer_id) ?? DEFAULTS.customer_name,
-        );
-      } catch {
+      if (flagsR.status === "rejected") {
         degraded = true;
+      } else {
+        deflection = flagsR.value.deflection_enabled;
       }
-      try {
-        const flags = await flagsOf(deps);
-        projection = await readProjection(deps.kv, site.region);
-        deflection = flags.deflection_enabled;
-      } catch {
+      if (projR.status === "rejected") {
         degraded = true;
+      } else {
+        projection = projR.value;
       }
-      try {
-        const got = await deps.actors.site(site.site_id).getTicket({ trace_id });
-        open_note = got.ticket !== null ? openTicketNote({ id: got.ticket.id }) : "none";
-      } catch {
+      if (ticketR.status === "rejected") {
         degraded = true;
+      } else {
+        open_note =
+          ticketR.value.ticket !== null
+            ? openTicketNote({ id: ticketR.value.ticket.id })
+            : "none";
       }
     }
     const call_key =

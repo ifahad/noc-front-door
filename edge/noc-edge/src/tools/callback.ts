@@ -19,7 +19,10 @@ export async function handleCallback(
     if (pre.k === null) {
       return fail("tool.callback", deps, pre, 422, "no_identity");
     }
-    const session = await get(deps.kv, pre.k);
+    const [session] = await Promise.all([
+      get(deps.kv, pre.k),
+      pre.convPending ?? Promise.resolve(false),
+    ]);
     const siteId = session.sites[0] ?? null;
     const trace_id = session.trace_id;
     let noted = false;
