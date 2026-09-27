@@ -2,11 +2,11 @@
 
 **The question:** how would you know within a minute that the assistant is broken, and what would you look at first?
 
-**The answer:** run the external prober — it alerts on `GET /ops/health/deep` failing twice in a row (worst case ≈ 23 s). First look at the live invocation log, then pull the per-call trace, then the Portal conversation, then the actor subsystem. Details below.
+**The answer:** run the external prober — it alerts on `GET /ops/health/deep` failing twice in a row (worst case ≈ 30 s: outage starts just after a good probe → failure 1 by ~18 s, failure 2 by ~28 s → banner). First look at the live invocation log, then pull the per-call trace, then the Portal conversation, then the actor subsystem. Details below.
 
 Prerequisites: `.env` with `EDGE_URL` (default `https://noc-edge-41d2a334-7.telnyxcompute.com`) and `OPS_TOKEN`. All scripts read `.env` themselves; no token is ever printed.
 
-## 1. Detect (≤ ~23 s)
+## 1. Detect (≤ ~30 s)
 
 ```sh
 node scripts/prober.mjs                # loop: every 10 s, minute summary, alerts

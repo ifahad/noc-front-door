@@ -94,10 +94,12 @@ function banner(edgeUrl, threshold, result) {
 
 async function once(edgeUrl, opsToken) {
   const result = await probe(edgeUrl, opsToken);
+  const prober = createProber({ failThreshold: 1 });
+  const { state } = prober.observe(result);
   const slow = result.slow.length ? ` slow=[${result.slow.join(',')}]` : '';
   const degraded = result.degraded ? ' degraded' : '';
   console.log(`probe ok=${result.ok}${degraded} ms=${result.ms}${slow}${result.detail ? ` detail=${result.detail}` : ''}`);
-  process.exit(result.ok ? 0 : 1);
+  process.exit(state === 'down' ? 1 : 0);
 }
 
 async function loop(edgeUrl, opsToken, intervalSec) {
