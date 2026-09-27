@@ -58,15 +58,36 @@ async function deleteScoped(storage: ActorStorage, prefix: string): Promise<void
   }
 }
 
-export function prefixedStorage(storage: ActorStorage, prefix: string): PrefixedStorage {
+export interface EntityAlarms {
+  key: string;
+  reconcile: () => Promise<void>;
+}
+
+export function prefixedStorage(
+  storage: ActorStorage,
+  prefix: string,
+  alarms?: EntityAlarms,
+): PrefixedStorage {
   return {
     get: <T,>(key: string) => storage.get<T>(prefix + key),
     put: <T,>(key: string, value: T) => storage.put(prefix + key, value),
     delete: (key: string) => storage.delete(prefix + key),
     list: <T,>(options?: ListOptions) => listScoped<T>(storage, prefix, options),
     deleteAll: () => deleteScoped(storage, prefix),
-    getAlarm: async () => null,
-    setAlarm: async () => {},
-    deleteAlarm: async () => {},
+    getAlarm: alarms
+      ? async () => (await storage.get<number>(alarms.key)) ?? null
+      : async () => null,
+    setAlarm: alarms
+      ? async (when: number) => {
+          await storage.put(alarms.key, when);
+          await alarms.reconcile();
+        }
+      : async () => {},
+    deleteAlarm: alarms
+      ? async () => {
+          await storage.delete(alarms.key);
+          await alarms.reconcile();
+        }
+      : async () => {},
   };
 }
