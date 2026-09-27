@@ -349,6 +349,16 @@ export class RegionState extends StatefulActor {
     const incident = await this.incidentWithPages();
     await this.ctx.storage.deleteAlarm();
     if (incident) {
+      // A resolve drops the incident's pending pages: they must never be
+      // claimed and sent later for an incident that no longer exists.
+      const pages = (await this.ctx.storage.get<Page[]>(PAGES_KEY)) ?? [];
+      const prefix = incident.id + ":p";
+      const remaining = pages.filter((page) => !page.id.startsWith(prefix));
+      if (remaining.length === 0) {
+        await this.ctx.storage.delete(PAGES_KEY);
+      } else {
+        await this.ctx.storage.put(PAGES_KEY, remaining);
+      }
       await this.ctx.storage.delete("incident");
       await this.ctx.storage.delete("members");
       await this.pushEvent({
@@ -369,12 +379,15 @@ export class RegionState extends StatefulActor {
   async ack(input: AckInput): Promise<AckResult> {
     const started = Date.now();
     const incident = (await this.ctx.storage.get<Incident | null>("incident")) ?? null;
-    if (incident && incident.ackAt === null) {
-      incident.ackAt = input.at;
-      incident.version += 1;
-      if (incident.esc !== null) {
-        incident.esc.acked = true;
+    // Ack keys on the escalation state, not on ackAt: a P2→P1 upgrade resets
+    // esc to unacked, so the operator can stop the (re-armed) P1 ladder. ackAt
+    // stays the first-ack time for reporting.
+    if (incident !== null && incident.esc !== null && !incident.esc.acked) {
+      if (incident.ackAt === null) {
+        incident.ackAt = input.at;
       }
+      incident.version += 1;
+      incident.esc.acked = true;
       await this.ctx.storage.put("incident", incident);
       await this.ctx.storage.deleteAlarm();
       await this.pushEvent({

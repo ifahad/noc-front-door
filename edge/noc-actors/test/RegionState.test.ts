@@ -21,6 +21,10 @@ function membersOf(storage: { raw(key: string): unknown }): Members {
 }
 
 describe("RegionState", () => {
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
   it("a single reported site does not declare an incident", async () => {
     const h = makeRegionState("riyadh-north");
     const r = await h.actor.reportSite(report());
@@ -368,6 +372,35 @@ describe("RegionState", () => {
     expect(repeat.incident?.version).toBe(2);
   });
 
+  it("an ack after a P2-to-P1 upgrade stops the P1 ladder", async () => {
+    const h = makeRegionState("riyadh-north");
+    await h.actor.reportSite(report());
+    await h.actor.reportSite(
+      report({ siteId: "site-b", ticketId: "NJD-1402", trace_id: "t-2" }),
+    );
+    const firstAck = await h.actor.ack({ by: "ops-1", trace_id: "t-3", at: T0 + MIN });
+    expect(firstAck.incident?.ackAt).toBe(T0 + MIN);
+    expect(firstAck.incident?.esc).toEqual({ level: 0, dueAt: T0 + 300_000, acked: true });
+    const up = await h.actor.reportSite({
+      siteId: "site-c",
+      ticketId: "NJD-1403",
+      regionCode: "1",
+      trace_id: "t-4",
+      at: T0 + 2 * MIN,
+    });
+    expect(up.upgraded).toBe(true);
+    expect(up.incident?.esc).toEqual({ level: 0, dueAt: T0 + 2 * MIN + 120_000, acked: false });
+    expect(await h.storage.getAlarm()).toBe(T0 + 2 * MIN + 120_000);
+    const secondAck = await h.actor.ack({ by: "ops-2", trace_id: "t-5", at: T0 + 3 * MIN });
+    expect(secondAck.incident?.ackAt).toBe(T0 + MIN);
+    expect(secondAck.incident?.esc).toEqual({ level: 0, dueAt: T0 + 2 * MIN + 120_000, acked: true });
+    expect(secondAck.incident?.version).toBe(4);
+    expect(await h.storage.getAlarm()).toBeNull();
+    const out = await h.actor.tick({ now: T0 + 2 * MIN + 120_000 + 1 });
+    expect(out).toEqual({ escalated: false, level: null });
+    expect((await h.actor.getPages()).pages).toHaveLength(0);
+  });
+
   it("reset clears the incident and alarm but keeps the sequence", async () => {
     const h = makeRegionState("riyadh-north");
     await h.actor.reportSite(report());
@@ -418,15 +451,19 @@ describe("RegionState", () => {
     expect(empty.incident).toBeNull();
   });
 
-  it("alarm is a no-op that never throws", async () => {
+  it("alarm before due escalates nothing and never throws", async () => {
     const h = makeRegionState("riyadh-north");
+    vi.spyOn(Date, "now").mockReturnValue(T0 - 1);
     await expect(h.actor.alarm()).resolves.toBeUndefined();
     await h.actor.reportSite(report());
     await h.actor.reportSite(
       report({ siteId: "site-b", ticketId: "NJD-1402", trace_id: "t-2" }),
     );
     await expect(h.actor.alarm()).resolves.toBeUndefined();
-    expect(h.storage.calls).toEqual([]);
+    expect((await h.actor.getPages({ trace_id: "t-1" })).pages).toHaveLength(0);
+    const live = await h.actor.getIncident({ trace_id: "t-1" });
+    expect(live.incident?.esc?.level).toBe(0);
+    expect(live.incident?.pages).toEqual([]);
   });
 
   it("every result is JSON-serialisable and carries trace_id and actor_ms", async () => {
@@ -792,6 +829,26 @@ describe("RegionState escalation ladder", () => {
     const resolved = await h.actor.resolve({ trace_id: "t-4", at: T1 + P2_WINDOW_MS + 1 });
     const resolvedPages = (resolved.incident?.pages ?? []) as unknown as Page[];
     expect(resolvedPages.map((p) => p.id)).toEqual(["INC-1001:p1"]);
+  });
+
+  it("resolve drops the resolved incident's pending pages so they are never sent later", async () => {
+    const h = makeRegionState("riyadh-north");
+    const inc = await declareIncident(h, { at: T1 });
+    const at = (inc.esc?.dueAt ?? 0) + 1;
+    expect(await h.actor.tick({ now: at })).toEqual({ escalated: true, level: 1 });
+    expect((await h.actor.getPages()).pages).toHaveLength(1);
+    const resolved = await h.actor.resolve({ trace_id: "t-2", at: at + 1 });
+    expect(resolved.incident?.id).toBe("INC-1001");
+    expect((await h.actor.getPages({ trace_id: "t-3" })).pages).toEqual([]);
+    const claim = await h.actor.claimPage({
+      pageId: "INC-1001:p1",
+      claimer: "prober",
+      now: at + 2,
+    });
+    expect(claim.claimed).toBe(false);
+    expect(claim.page).toBeNull();
+    const stored = ((await h.storage.get("pages")) ?? []) as unknown as Page[];
+    expect(stored).toEqual([]);
   });
 
   it("alarm() at due escalates with the real clock and duplicate delivery is harmless", async () => {

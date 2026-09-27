@@ -104,6 +104,7 @@ export interface AddNoteInput {
 export interface ResolveTicketInput {
   trace_id: string;
   at?: number;
+  ticketId?: string;
 }
 
 export interface ResetInput {
@@ -255,6 +256,22 @@ export class SiteState extends StatefulActor {
       };
     }
     const call: PinCallState = existing ?? { failures: [], results: {} };
+    // §7: once a call has CALL_TIER_LIMIT failures it stays locked for the
+    // rest of the call — even a correct PIN cannot verify on it again.
+    if (call.failures.length >= CALL_TIER_LIMIT) {
+      const result: PinResult = "locked";
+      call.results[input.fp] = { result, attemptsLeft: 0, at: input.at };
+      pin.byCall[input.k] = call;
+      await this.ctx.storage.put("pin", pin);
+      await this.pushEvent({
+        evt: "pin_attempt",
+        at: input.at,
+        k: input.k,
+        trace_id: input.trace_id,
+        result,
+      });
+      return { result, attemptsLeft: 0, trace_id: input.trace_id, actor_ms: Date.now() - started };
+    }
     let result: PinResult;
     let attemptsLeft: number;
     if (input.valid) {
@@ -473,7 +490,8 @@ export class SiteState extends StatefulActor {
   async resolveTicket(input: ResolveTicketInput): Promise<ResolveTicketResult> {
     const started = Date.now();
     const ticket = (await this.ctx.storage.get<Ticket | null>("ticket")) ?? null;
-    if (ticket) {
+    const matched = ticket !== null && (input.ticketId === undefined || ticket.id === input.ticketId);
+    if (matched && ticket !== null) {
       await this.ctx.storage.delete("ticket");
       await this.pushEvent({
         evt: "ticket_resolved",
@@ -482,7 +500,7 @@ export class SiteState extends StatefulActor {
         ticket_id: ticket.id,
       });
     }
-    return { ticket, trace_id: input.trace_id, actor_ms: Date.now() - started };
+    return { ticket: matched ? ticket : null, trace_id: input.trace_id, actor_ms: Date.now() - started };
   }
 
   async reset(input: ResetInput = {}): Promise<ResetResult> {

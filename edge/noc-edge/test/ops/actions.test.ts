@@ -13,6 +13,7 @@ import {
   type ActionDeps,
 } from "../../src/ops/actions";
 import { syncProjection } from "../../src/services/incidents";
+import { open as openTicket, type TicketCtx } from "../../src/services/tickets";
 import { LAST_REPORT_KEY, reportKey } from "../../src/services/reports";
 import { FakeActorPort } from "../fakes/actors";
 import { FakeBucket } from "../fakes/bucket";
@@ -200,6 +201,70 @@ describe("ops resolve and ack", () => {
     const { deps, kv, actors } = DEPS();
     await expect(ackIncident(deps, "nope")).rejects.toThrow(OpsActionError);
     await expect(resolveIncident(deps, "nope")).rejects.toThrow(OpsActionError);
+  });
+
+  it("resolving closes every member site's ticket", async () => {
+    const { deps, actors } = DEPS();
+    await resetAll(deps);
+    await stageIncident(deps, "riyadh-north");
+    const resolved = await resolveIncident(deps, "riyadh-north");
+    expect(resolved.resolved).not.toBeNull();
+    for (const siteId of ["RUH-121", "RUH-133"]) {
+      const live = await actors.site(siteId).getTicket({ trace_id: "t-2" });
+      expect(live.ticket).toBeNull();
+    }
+    const incident = await actors.region("riyadh-north").getIncident({ trace_id: "t-3" });
+    expect(incident.incident).toBeNull();
+  });
+
+  it("a later call from a member site does not hear a stale ticket and re-declares", async () => {
+    const { deps, kv, actors } = DEPS();
+    await resetAll(deps);
+    await stageIncident(deps, "riyadh-north");
+    await resolveIncident(deps, "riyadh-north");
+    const ctx: TicketCtx = {
+      actors: deps.actors,
+      kv: deps.kv,
+      adapter: deps.adapter,
+      flags: {
+        deflection_enabled: true,
+        require_pin: false,
+        demo_caller: null,
+        fault_open_ticket: null,
+        fault_dv_delay_ms: null,
+        actor_mode: "per-entity",
+      },
+      now: deps.now,
+      trace_id: deps.trace_id,
+    };
+    const session = (siteId: string): Session => ({
+      k: `fresh-${siteId}`,
+      trace_id: `t-fresh-${siteId}`,
+      identified: true,
+      verified: true,
+      contact_id: null,
+      customer_id: "c-alwaha",
+      sites: [siteId],
+      region: "riyadh-north",
+    });
+    const first = await openTicket(ctx, session("RUH-121"), {
+      site_id: "RUH-121",
+      symptom: "WAN link down",
+      impact: "site_down",
+      service_affecting: "true",
+    });
+    expect(first.created).toBe("true");
+    expect(first.ticket_id).toBe("NJD-2102");
+    const second = await openTicket(ctx, session("RUH-133"), {
+      site_id: "RUH-133",
+      symptom: "WAN link down",
+      impact: "site_down",
+      service_affecting: "true",
+    });
+    expect(second.created).toBe("true");
+    expect(second.ticket_id).toBe("NJD-3302");
+    const incident = await actors.region("riyadh-north").getIncident({ trace_id: "t-9" });
+    expect(incident.incident?.id).toBe("INC-1002");
   });
 });
 

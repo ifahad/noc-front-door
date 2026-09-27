@@ -21,7 +21,10 @@ beforeEach(() => {
 
 describe("diag race", () => {
   it("actor mode creates exactly one ticket for 20 concurrent opens", async () => {
-    const actors = new FakeActorPort({ serialise: true });
+    // storageDelayMs makes the fake's gets yield between racers, so this test
+    // fails if the port ever stops serialising one actor's turns (see the
+    // unserialised contrast below).
+    const actors = new FakeActorPort({ serialise: true, storageDelayMs: 1 });
     const deps = DEPS({ actors });
     const result = await runRace(deps, "actor", 20, "r1");
     expect(result).toMatchObject({ mode: "actor", n: 20, created_count: 1 });
@@ -29,6 +32,14 @@ describe("diag race", () => {
     expect(result.ticket_ids[0]).toBe("NJD-9901");
     const members = actors.regionMembers("lab") as Record<string, { ticketId: string }>;
     expect(Object.keys(members)).toEqual(["TST-001"]);
+  });
+
+  it("the delayed fake really races when serialisation is off (fidelity)", async () => {
+    const actors = new FakeActorPort({ serialise: false, storageDelayMs: 1 });
+    const deps = DEPS({ actors });
+    const result = await runRace(deps, "actor", 20, "r8");
+    expect(result.created_count).toBeGreaterThan(1);
+    expect(new Set(result.ticket_ids).size).toBe(result.created_count);
   });
 
   it("kv mode creates more than one ticket when gets interleave before puts", async () => {

@@ -166,6 +166,30 @@ describe("SiteState", () => {
     expect(first.repeat).toBeUndefined();
   });
 
+  it("a locked call cannot verify even with the correct PIN", async () => {
+    const h = makeSiteState("RUH-114");
+    await h.actor.recordPinAttempt(invalid(k1, fpA, T0));
+    await h.actor.recordPinAttempt(invalid(k1, fpB, T0 + 1000));
+    const third = await h.actor.recordPinAttempt(invalid(k1, fpC, T0 + 2000));
+    expect(third).toMatchObject({ result: "locked", attemptsLeft: 0 });
+    const correct = await h.actor.recordPinAttempt({
+      k: k1,
+      valid: true,
+      fp: fpD,
+      trace_id: "t-1",
+      at: T0 + 3000,
+    });
+    expect(correct).toMatchObject({ result: "locked", attemptsLeft: 0 });
+    const otherCall = await h.actor.recordPinAttempt({
+      k: k2,
+      valid: true,
+      fp: fpD,
+      trace_id: "t-2",
+      at: T0 + 4000,
+    });
+    expect(otherCall).toMatchObject({ result: "ok", attemptsLeft: 3 });
+  });
+
   it("recordPinAttempt: valid clears that call's failures", async () => {
     const h = makeSiteState("RUH-114");
     await h.actor.recordPinAttempt(invalid(k1, fpA, T0));
@@ -305,6 +329,19 @@ describe("SiteState", () => {
     expect(resolved.ticket?.id).toBe("NJD-1401");
     const live = await h.actor.getTicket({ trace_id: "t-3" });
     expect(live.ticket).toBeNull();
+  });
+
+  it("resolveTicket ignores a mismatched ticket id", async () => {
+    const h = makeSiteState("RUH-114");
+    await h.actor.openOrAttach(attachInput());
+    const none = await h.actor.resolveTicket({ ticketId: "NJD-9999", trace_id: "t-2", at: T0 + MIN });
+    expect(none.ticket).toBeNull();
+    const live = await h.actor.getTicket({ trace_id: "t-3" });
+    expect(live.ticket?.id).toBe("NJD-1401");
+    const matched = await h.actor.resolveTicket({ ticketId: "NJD-1401", trace_id: "t-4", at: T0 + 2 * MIN });
+    expect(matched.ticket?.id).toBe("NJD-1401");
+    const gone = await h.actor.getTicket({ trace_id: "t-5" });
+    expect(gone.ticket).toBeNull();
   });
 
   it("reset preserves seq, drops the ticket and clears the alarm", async () => {

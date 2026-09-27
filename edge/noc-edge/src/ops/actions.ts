@@ -447,6 +447,23 @@ export async function resolveIncident(
   const { incident } = await deps.actors
     .region(region)
     .resolve({ trace_id: deps.trace_id, at: deps.now });
+  // Closing the region closes the incident's member sites' tickets too: the
+  // incident is over, so a later verify_site or site_down must not hear a
+  // stale ticket or attach to one. The ticket-id guard makes a mismatched
+  // (e.g. already re-opened) ticket a no-op. One site failing must not fail
+  // the resolve that already succeeded.
+  const siteItems: ActionItem[] = [];
+  if (incident !== null) {
+    for (const [siteId, member] of Object.entries(incident.sites)) {
+      await reportEntry(siteItems, `site/${siteId}`, () =>
+        deps.actors.site(siteId).resolveTicket({
+          ticketId: member.ticketId,
+          trace_id: deps.trace_id,
+          at: deps.now,
+        }),
+      );
+    }
+  }
   await syncProjection({ actors: deps.actors, kv: deps.kv }, region, deps.trace_id);
   // Only the resolve() call's own incident gates the report: a report is
   // written for an incident that this call actually resolved. RegionState
@@ -461,6 +478,8 @@ export async function resolveIncident(
     outcome: "ok",
     region,
     incident_id: incident?.id ?? "none",
+    sites_closed: siteItems.filter((i) => i.ok).length,
+    site_failures: siteItems.filter((i) => !i.ok).length,
     report_ok: report.ok,
   });
   return { region, resolved: incident?.id ?? null, report };

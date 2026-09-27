@@ -127,11 +127,34 @@ export function makeRegionActor(name: string): RegionState {
 
 export interface FakeActorPortOpts {
   serialise?: boolean;
+  // Adds a real timer await to every storage get, so concurrent calls can
+  // actually interleave inside an actor. Used to prove that the serialised
+  // port (one shared queue per entity) is what makes actor turns atomic.
+  storageDelayMs?: number;
+}
+
+// A storage fake whose get yields to the macrotask queue before answering.
+class DelayedFakeStorage extends FakeStorage {
+  private delayMs: number;
+
+  constructor(delayMs: number) {
+    super();
+    this.delayMs = delayMs;
+  }
+
+  async get<T>(key: string): Promise<T | undefined> {
+    if (this.delayMs > 0) {
+      await new Promise((resolve) => setTimeout(resolve, this.delayMs));
+    }
+    return super.get<T>(key);
+  }
 }
 
 export class FakeActorPort implements ActorPort {
   private sites = new Map<string, FaultySiteState>();
   private regions = new Map<string, FaultyRegionState>();
+  private siteApis = new Map<string, SiteStateApi>();
+  private regionApis = new Map<string, RegionStateApi>();
   private opts: FakeActorPortOpts;
 
   constructor(opts: FakeActorPortOpts = {}) {
@@ -139,23 +162,44 @@ export class FakeActorPort implements ActorPort {
   }
 
   site(siteId: string): SiteStateApi {
+    // One wrapper per entity: every caller shares the same queue, matching
+    // how the platform runs a single actor instance per entity.
+    const cached = this.siteApis.get(siteId);
+    if (cached !== undefined) return cached;
     let actor = this.sites.get(siteId);
     if (actor === undefined) {
-      actor = new FaultySiteState(ctxFor(new FakeStorage(), siteId), {} as Env);
+      actor = new FaultySiteState(
+        ctxFor(this.storageFor(siteId), siteId),
+        {} as Env,
+      );
       this.sites.set(siteId, actor);
     }
     const api = actor as unknown as SiteStateApi;
-    return this.opts.serialise === true ? serialise(api, SITE_METHODS) : api;
+    const out = this.opts.serialise === true ? serialise(api, SITE_METHODS) : api;
+    this.siteApis.set(siteId, out);
+    return out;
   }
 
   region(region: string): RegionStateApi {
+    const cached = this.regionApis.get(region);
+    if (cached !== undefined) return cached;
     let actor = this.regions.get(region);
     if (actor === undefined) {
-      actor = new FaultyRegionState(ctxFor(new FakeStorage(), region), {} as Env);
+      actor = new FaultyRegionState(
+        ctxFor(this.storageFor(region), region),
+        {} as Env,
+      );
       this.regions.set(region, actor);
     }
     const api = actor as unknown as RegionStateApi;
-    return this.opts.serialise === true ? serialise(api, REGION_METHODS) : api;
+    const out = this.opts.serialise === true ? serialise(api, REGION_METHODS) : api;
+    this.regionApis.set(region, out);
+    return out;
+  }
+
+  private storageFor(entity: string): FakeStorage {
+    const delay = this.opts.storageDelayMs ?? 0;
+    return delay > 0 ? new DelayedFakeStorage(delay) : new FakeStorage();
   }
 
   failNextReport(region: string, count: number): void {
