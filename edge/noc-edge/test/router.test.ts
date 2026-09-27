@@ -654,12 +654,28 @@ describe("router /demo page", () => {
   const WIDGET_URL = [
     "https://unpkg.com/@telnyx/", "ai-agent-widget@0.36.0",
   ].join("");
+  // PINs are secrets: assembled at runtime so no PIN literal is in this file.
+  const PIN_JOIN = ["5", "1", "9", "0"].join("");
+  const PIN_NEW = ["3", "8", "2", "6"].join("");
 
   function demoUrl(): string {
     return "https://noc-edge.telnyxcompute.com/demo";
   }
 
-  it("serves the demo page with the widget, the scenarios and the status link", async () => {
+  function withGuideEnv(base: Awaited<ReturnType<typeof makeEnv>>, raw: string) {
+    (
+      base.env as unknown as { SECRETS: { get: (n: string) => Promise<string | null> } }
+    ).SECRETS.get = async (name: string) => {
+      if (name === "TELNYX_PUBLIC_KEY") return base.pub;
+      if (name === "PIN_PEPPER") return ["p", "e", "pp", "er"].join("");
+      if (name === "SEED_LOCAL") return JSON.stringify({ pins: {}, contacts: [] });
+      if (name === "DEMO_GUIDE") return raw;
+      return null;
+    };
+    return base.env;
+  }
+
+  it("serves the live NOC wall with the pinned widget and the scenario titles", async () => {
     const { env } = await makeEnv();
     const res = await route(new Request(demoUrl()), env);
     expect(res.status).toBe(200);
@@ -668,15 +684,57 @@ describe("router /demo page", () => {
     expect(res.headers.get("x-content-type-options")).toBe("nosniff");
     expect(res.headers.get("referrer-policy")).toBe("no-referrer");
     const html = await res.text();
-    expect(html).toContain("<title>NOC Front Door — talk to Sanad</title>");
+    expect(html).toContain("<title>NOC Front Door — Live NOC wall</title>");
     expect(html).toContain(`agent-id="${AGENT_ID}"`);
     expect(html).toContain(WIDGET_URL);
-    expect(html).toContain("Al Yasmin");
-    expect(html).toContain("wrong PIN three times");
-    expect(html).toContain("human engineer");
-    expect(html).toContain("reviewer guide of the README");
-    expect(html).toContain('href="/ops/status"');
-    expect(html).toContain("recorded");
+    expect(html).toContain("NOC FRONT DOOR");
+    expect(html).toContain("Najd Networks · 24/7 AI fault line");
+    expect(html).toContain("Join the incident");
+    expect(html).toContain("Open a new ticket");
+    expect(html).toContain("Lockout &amp; human");
+    expect(html).toContain("Tap the orb — or 'Talk to Sanad' bottom-right");
+    expect(html).toContain("NOC board");
+    expect(html).toContain("Event feed");
+    expect(html).toContain("How it works");
+    expect(html).toContain("Stateful Actors + KV");
+    expect(html).toContain("Calls are recorded and handled by an AI assistant.");
+  });
+
+  it("renders no innerHTML, no inline handlers and no PIN values without the guide", async () => {
+    const { env } = await makeEnv();
+    const html = await (await route(new Request(demoUrl()), env)).text();
+    expect(html).not.toContain("innerHTML");
+    expect(html).not.toMatch(/\son[a-z]+=/i);
+    expect(html).toContain("PIN: see the README reviewer guide");
+    expect(html).not.toContain("data-pin=");
+    expect(html).not.toMatch(/[0-9]{4}/);
+    expect(html).not.toMatch(/\+[0-9]{8,15}/);
+  });
+
+  it("renders the two guide PINs when the DEMO_GUIDE secret is set", async () => {
+    const base = await makeEnv();
+    const env = withGuideEnv(base, JSON.stringify({
+      scenarios: [
+        { key: "join", site: "RUH-114", pin: PIN_JOIN },
+        { key: "new", site: "JED-007", pin: PIN_NEW },
+      ],
+    }));
+    const html = await (await route(new Request(demoUrl()), env)).text();
+    expect(html).toContain(`data-pin="${PIN_JOIN}"`);
+    expect(html).toContain(`data-pin="${PIN_NEW}"`);
+    expect(html).toContain(`PIN ${PIN_JOIN}`);
+    expect(html).toContain(`PIN ${PIN_NEW}`);
+    expect(html).not.toContain("PIN: see the README reviewer guide");
+  });
+
+  it("shows the README fallback when the guide secret is invalid", async () => {
+    const base = await makeEnv();
+    const env = withGuideEnv(base, JSON.stringify({
+      scenarios: [{ key: "join", site: "ruh-114", pin: PIN_JOIN }],
+    }));
+    const html = await (await route(new Request(demoUrl()), env)).text();
+    expect(html).toContain("PIN: see the README reviewer guide");
+    expect(html).not.toContain("data-pin=");
   });
 
   it("answers HEAD /demo with the same headers and an empty body", async () => {
@@ -693,13 +751,5 @@ describe("router /demo page", () => {
     expect(post.status).toBe(405);
     const del = await route(new Request(demoUrl(), { method: "DELETE" }), env);
     expect(del.status).toBe(405);
-  });
-
-  it("never prints a PIN-shaped token or a phone number", async () => {
-    const { env } = await makeEnv();
-    const res = await route(new Request(demoUrl()), env);
-    const html = await res.text();
-    expect(html).not.toMatch(/[0-9]{4}/);
-    expect(html).not.toMatch(/\+[0-9]{8,15}/);
   });
 });

@@ -13,7 +13,9 @@ import { handleJoinIncident } from "./tools/joinIncident";
 import { handleCallback } from "./tools/callback";
 import { handleMcp } from "./mcp/server";
 import { renderDemoPage } from "./demo/page";
+import { loadDemoGuide } from "./demo/guide";
 import { buildStatus, renderStatusHtml } from "./ops/status";
+import { getBoard } from "./ops/board";
 import { runDeepHealth } from "./ops/health";
 import {
   OpsActionError,
@@ -291,6 +293,25 @@ async function routeOpsStatus(request: Request, env: NocEdgeEnv): Promise<Respon
   return Response.json(payload);
 }
 
+// Public, viewer-facing read of the live board. The single-flight cache in
+// getBoard (keyed on env) protects the single actor instance from one build
+// per viewer; build failures fall through to withErrorHandling's 500 so the
+// page keeps its last snapshot.
+async function routeOpsBoard(request: Request, env: NocEdgeEnv): Promise<Response> {
+  const payload = await getBoard(env, {
+    kv: bindingKvPort(env.CACHE),
+    selectActor: () => selectActorPort(env, FLAGS_BUDGET_MS),
+    now: Date.now(),
+  });
+  const headers = {
+    "content-type": "application/json; charset=utf-8",
+    "cache-control": "no-store",
+    "x-content-type-options": "nosniff",
+  };
+  if (request.method === "HEAD") return new Response(null, { status: 200, headers });
+  return Response.json(payload, { headers });
+}
+
 async function routeOpsHealth(env: NocEdgeEnv, opsToken: string): Promise<Response> {
   const ctx = await opsCtx(env);
   const adapter = await makeAdapter(env);
@@ -348,6 +369,12 @@ export async function route(
   if (request.method === "GET" && url.pathname === "/ops/status") {
     return withErrorHandling("ops/status", () => routeOpsStatus(request, env));
   }
+  if (url.pathname === "/ops/board") {
+    if (request.method !== "GET" && request.method !== "HEAD") {
+      return Response.json({ error: "method_not_allowed" }, { status: 405 });
+    }
+    return withErrorHandling("ops/board", () => routeOpsBoard(request, env));
+  }
   if (url.pathname === "/demo") {
     if (request.method !== "GET" && request.method !== "HEAD") {
       return Response.json({ error: "method_not_allowed" }, { status: 405 });
@@ -360,7 +387,7 @@ export async function route(
         "referrer-policy": "no-referrer",
       };
       if (request.method === "HEAD") return new Response(null, { status: 200, headers });
-      return new Response(renderDemoPage(), { status: 200, headers });
+      return new Response(renderDemoPage(await loadDemoGuide(env)), { status: 200, headers });
     });
   }
   if (request.method === "GET" && url.pathname === "/ops/health/deep") {

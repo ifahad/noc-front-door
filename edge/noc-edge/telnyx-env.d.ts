@@ -7,7 +7,7 @@ declare global {
     SITES: __TelnyxActorNamespace;
     REGIONS: __TelnyxActorNamespace;
     CACHE: __TelnyxKvNamespace;
-    SECRETS: { get(binding: "TELNYX_PUBLIC_KEY" | "MCP_TOKEN" | "OPS_TOKEN" | "PIN_PEPPER" | "ONCALL_NUMBER" | "SEED_LOCAL"): Promise<string> };
+    SECRETS: { get(binding: "TELNYX_PUBLIC_KEY" | "MCP_TOKEN" | "OPS_TOKEN" | "PIN_PEPPER" | "ONCALL_NUMBER" | "SEED_LOCAL" | "DEMO_GUIDE"): Promise<string> };
   }
 }
 
@@ -16,7 +16,7 @@ declare module "@telnyx/edge-runtime" {
     SITES: __TelnyxActorNamespace;
     REGIONS: __TelnyxActorNamespace;
     CACHE: __TelnyxKvNamespace;
-    SECRETS: { get(binding: "TELNYX_PUBLIC_KEY" | "MCP_TOKEN" | "OPS_TOKEN" | "PIN_PEPPER" | "ONCALL_NUMBER" | "SEED_LOCAL"): Promise<string> };
+    SECRETS: { get(binding: "TELNYX_PUBLIC_KEY" | "MCP_TOKEN" | "OPS_TOKEN" | "PIN_PEPPER" | "ONCALL_NUMBER" | "SEED_LOCAL" | "DEMO_GUIDE"): Promise<string> };
   }
 }
 
