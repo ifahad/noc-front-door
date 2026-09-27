@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { createProber, planPaging } from './lib/prober-core.mjs';
+import { apiErrorMessage, createPagingHealth, createProber, planPaging } from './lib/prober-core.mjs';
 
 const OK = { ok: true, ms: 1200, at: 0 };
 const FAIL = { ok: false, ms: 1200, at: 0 };
@@ -126,8 +126,8 @@ const PAGE_B = { id: 'INC-1002:2', region: 'jeddah', level: 2, created_local: '9
 
 test('planPaging claims every pending page when nothing was claimed', () => {
   assert.deepEqual(planPaging([PAGE_A, PAGE_B], []), [
-    { region: 'riyadh-north', pageId: 'INC-1001:1' },
-    { region: 'jeddah', pageId: 'INC-1002:2' },
+    { region: 'riyadh-north', pageId: 'INC-1001:1', retry: false },
+    { region: 'jeddah', pageId: 'INC-1002:2', retry: false },
   ]);
 });
 
@@ -139,25 +139,91 @@ test('planPaging returns nothing without pending pages', () => {
 
 test('planPaging skips pages already claimed this run', () => {
   assert.deepEqual(planPaging([PAGE_A, PAGE_B], new Set(['INC-1001:1'])), [
-    { region: 'jeddah', pageId: 'INC-1002:2' },
+    { region: 'jeddah', pageId: 'INC-1002:2', retry: false },
   ]);
 });
 
 test('planPaging claims each id once even when the id repeats', () => {
   assert.deepEqual(planPaging([PAGE_A, { ...PAGE_A, level: 1 }, PAGE_B], []), [
-    { region: 'riyadh-north', pageId: 'INC-1001:1' },
-    { region: 'jeddah', pageId: 'INC-1002:2' },
+    { region: 'riyadh-north', pageId: 'INC-1001:1', retry: false },
+    { region: 'jeddah', pageId: 'INC-1002:2', retry: false },
   ]);
 });
 
 test('planPaging ignores malformed entries', () => {
   assert.deepEqual(planPaging([null, {}, { id: 'x' }, { id: '', region: 'r' }, { id: 'y', region: '' }, PAGE_A], []), [
-    { region: 'riyadh-north', pageId: 'INC-1001:1' },
+    { region: 'riyadh-north', pageId: 'INC-1001:1', retry: false },
   ]);
 });
 
 test('planPaging accepts claimed ids as an array or set and preserves order', () => {
   assert.deepEqual(planPaging([PAGE_B, PAGE_A], ['INC-1002:2']), [
-    { region: 'riyadh-north', pageId: 'INC-1001:1' },
+    { region: 'riyadh-north', pageId: 'INC-1001:1', retry: false },
   ]);
+});
+
+test('planPaging items carry the retry flag: false without a retry set', () => {
+  assert.deepEqual(planPaging([PAGE_A], []), [{ region: 'riyadh-north', pageId: 'INC-1001:1', retry: false }]);
+});
+
+test('planPaging replans a claimed page whose sent-mark failed (retry set wins)', () => {
+  const plan = planPaging([PAGE_A, PAGE_B], new Set(['INC-1001:1', 'INC-1002:2']), new Set(['INC-1001:1']));
+  assert.deepEqual(plan, [
+    { region: 'riyadh-north', pageId: 'INC-1001:1', retry: true },
+  ]);
+});
+
+test('planPaging does not replan a claimed page that is not in the retry set', () => {
+  const plan = planPaging([PAGE_A, PAGE_B], new Set(['INC-1001:1']), new Set([]));
+  assert.deepEqual(plan, [{ region: 'jeddah', pageId: 'INC-1002:2', retry: false }]);
+});
+
+test('planPaging plans a retry page once even when it repeats', () => {
+  const plan = planPaging([PAGE_A, PAGE_A], new Set(['INC-1001:1']), new Set(['INC-1001:1']));
+  assert.deepEqual(plan, [{ region: 'riyadh-north', pageId: 'INC-1001:1', retry: true }]);
+});
+
+test('apiErrorMessage names the method, path and status and nothing else', () => {
+  assert.equal(apiErrorMessage('POST', '/ops/pages/sent', 500), 'POST /ops/pages/sent -> 500');
+  assert.equal(apiErrorMessage('GET', '/ops/pages/pending', 401), 'GET /ops/pages/pending -> 401');
+});
+
+test('apiErrorMessage carries no token or headers even when the path has a query', () => {
+  const msg = apiErrorMessage('POST', '/ops/unlock?site=RUH-114', 403);
+  assert.equal(msg, 'POST /ops/unlock?site=RUH-114 -> 403');
+  assert.equal(/token|authorization|bearer/i.test(msg), false);
+});
+
+test('paging streak stays silent below the stall threshold', () => {
+  const paging = createPagingHealth();
+  assert.deepEqual(paging.record(true), { stalled: false, streak: 1 });
+  assert.deepEqual(paging.record(true), { stalled: false, streak: 2 });
+});
+
+test('paging.stalled fires once after 3 consecutive failed cycles', () => {
+  const paging = createPagingHealth();
+  paging.record(true);
+  paging.record(true);
+  const r = paging.record(true);
+  assert.equal(r.stalled, true);
+  assert.equal(r.streak, 3);
+  const again = paging.record(true);
+  assert.equal(again.stalled, false);
+  assert.equal(again.streak, 4);
+});
+
+test('a clean cycle resets the paging streak', () => {
+  const paging = createPagingHealth();
+  paging.record(true);
+  paging.record(true);
+  paging.record(false);
+  const r = paging.record(true);
+  assert.equal(r.stalled, false);
+  assert.equal(r.streak, 1);
+});
+
+test('paging health is customisable and validates its input', () => {
+  const paging = createPagingHealth({ stallAfter: 1 });
+  assert.equal(paging.record(true).stalled, true);
+  assert.throws(() => createPagingHealth({ stallAfter: 0 }), /positive integer/);
 });

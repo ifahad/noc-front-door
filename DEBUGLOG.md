@@ -21,7 +21,7 @@ Blocking findings from the build, with evidence. One entry per finding.
 - Evidence: the Portal messages (screens seen by Fahad during the number search).
 - Hypothesis: Trial accounts are limited to local numbers in Saudi Arabia, but Telnyx has no search coverage there, so ordering is impossible until the account is verified.
 - Fix: Emailed Telnyx Team asking for Verified status on the account.
-- Verification: Pending Telnyx Team's reply. Workaround in the meantime: web calls (the trial account supports web calls only anyway).
+- Verification: Pending Telnyx Team's reply (email sent 2026-09-26). Workaround in the meantime: web calls (the trial account supports web calls only anyway).
 - Also: the brief's CLI URL (`telnyx-edge-linux-amd64`) does not match this aarch64 host; the v0.5.4 linux-arm64 asset was used instead.
 
 ## #2 — 2026-09-26 — OpenCode silent stop: exit 0 with no work done
@@ -42,7 +42,7 @@ Blocking findings from the build, with evidence. One entry per finding.
 - Fix: always invoke with `< /dev/null`.
 - Verification: the identical command completes in 6 s and 3 s with stdin redirected from `/dev/null`.
 
-## #4 — 2026-09-26 — Actor RPC fails with 502 after ~30 s (IN PROGRESS)
+## #4 — 2026-09-26 — Actor RPC fails with 502 after ~30 s (resolved by the mux workaround)
 
 - Symptom: every `ProbeActor` RPC from `noc-probe` (armAlarm/ping/status) fails; smoke checks 4.3/4.4 blocked. Non-actor routes on the same function are unaffected.
 - Signal: `actor invocation <account>__ProbeActor/probe1.<method> returned 502: bad gateway` after ~30 s; non-actor routes answer in ~4 ms; the ProbeActor actor type shows status ready/owner while its revision is stuck "deploying". ~10 function-runtime boots in 38 s were observed during the rollout (scale-out/restarts).
@@ -60,6 +60,7 @@ Blocking findings from the build, with evidence. One entry per finding.
 - Fix (in flight): run experiment E to confirm/refute the secrets-binding cause. Workaround adopted regardless of the root cause: a binding-free owner function (`noc-actors`, classes only) plus `noc-edge` as a reference binder holding KV, secrets, routes and MCP — which also delivers least privilege (actor processes get no secrets).
 - Verification: pending — experiment E result, then re-run smoke 4.3/4.4 against the workaround topology.
 - Update (2026-09-27): the workaround is live — mux mode since 05:20 UTC+3 (`flag/actor_mode=mux`): all actor calls route through the one working instance (`Counter/demo` on noc-actor-canary, now shipped as `edge/noc-actor-host`), which multiplexes the real `SiteState`/`RegionState` classes. `Counter/demo` **survived the identical rebuild** (experiment G: value 45→46), so rebuilding the owner does not kill the contingency. A 9-hour recovery watcher (ended 11:04; last probe 10:53) saw **no recovery** — a fresh actor type still returned 502 after 30 s. Escalated to Telnyx. Live in mux mode: `/ops/actor-ping` → site RUH-114 pong 220–454 ms, region riyadh-north pong 220 ms.
+- Update (2026-09-27, shipped-edge smoke, from the plan-1 SDD ledger): with the mux workaround live, the smoke checks that were blocked by the 502s now pass: `GET /ops/status` → 200; unsigned `POST /dv` → 403; `POST /mcp` without a bearer → 401; `GET /mcp` → 405. The actor-level smoke (4.3/4.4) is covered by `/ops/actor-ping` returning `mode:"mux"` with pongs.
 
 ## #5 — 2026-09-27 — Flag-read budget wrong for real KV latency: every request fell back
 
@@ -126,8 +127,8 @@ Blocking findings from the build, with evidence. One entry per finding.
 ## #12 — 2026-09-28 — Actor alarms work although new instances cannot be created
 
 - Symptom: given DEBUG #4 (new actor instances cannot activate on this account), it was reasonable to assume actor alarms would also not fire.
-- Signal: the live INC-1004 test (00:46:50 stage → 00:51:4x escalation): the ladder escalated to L1 and minted page `INC-1004:p1` while **every** `/ops/tick` in the window reported `fired:0` (incl. 21:51:51Z, 4 s before the claim) — so the escalation was driven by the **platform alarm** on the mux host, fanned out to the entity (not the tick fallback).
-- Evidence: [docs/evidence/alarms-live.md](docs/evidence/alarms-live.md); the prober claimed and "sent" the page at 00:51:53 (PAGE banner, `page.sent` log, pending 0).
+- Signal: the live INC-1004 test (2026-09-27 21:46:50Z stage → 21:51:4xZ escalation; all times UTC): the ladder escalated to L1 and minted page `INC-1004:p1` while **every** `/ops/tick` in the window reported `fired:0` (incl. 21:51:51Z, 4 s before the claim) — so the escalation was driven by the **platform alarm** on the mux host, fanned out to the entity (not the tick fallback).
+- Evidence: [docs/evidence/alarms-live.md](docs/evidence/alarms-live.md); the prober claimed and "sent" the page at 21:51:53Z (PAGE banner, `page.sent` log, pending 0).
 - Hypothesis: the mux host (`Counter/demo`) is the one pre-existing instance, and its own alarm — set via `ctx.storage.setAlarm` — is delivered by the platform; the host's `alarm()` fans out to the entities.
 - Fix: none needed — this is the finding: the mux host's alarm path is live.
 - Verification: live alarm test (see the evidence file); the tick fallback stays as a belt-and-braces path.

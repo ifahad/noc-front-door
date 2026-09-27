@@ -4,7 +4,14 @@
 
 **The answer:** run the external prober — it alerts on `GET /ops/health/deep` failing twice in a row (worst case ≈ 30 s: outage starts just after a good probe → failure 1 by ~18 s, failure 2 by ~28 s → banner). First look at the live invocation log, then pull the per-call trace, then the Portal conversation, then the actor subsystem. Details below.
 
-Prerequisites: `.env` with `EDGE_URL` (default `https://noc-edge-41d2a334-7.telnyxcompute.com`) and `OPS_TOKEN`. All scripts read `.env` themselves; no token is ever printed.
+Prerequisites: `.env` with `EDGE_URL` (default `https://noc-edge-41d2a334-7.telnyxcompute.com`) and `OPS_TOKEN`. All scripts read `.env` themselves; no token is ever printed. One-off ops commands go through the helper — it reads `.env`, never echoes the token, prints `HTTP <status>` plus the body, and exits 0 only on 2xx:
+
+```sh
+node scripts/ops.mjs GET /ops/health/deep          # e.g.
+node scripts/ops.mjs POST '/ops/ack?region=riyadh-north'
+```
+
+Do not use raw `curl … $OPS_TOKEN` — nothing exports the token into your shell.
 
 ## 1. Detect (≤ ~30 s)
 
@@ -17,7 +24,7 @@ node scripts/prober.mjs --interval 5   # tighter loop
 - External probe on the dev box, outside the failure domain; the same loop keeps the edge function warm (spec §11.4).
 - Every 10 s: `GET $EDGE_URL/ops/health/deep` with `Authorization: Bearer $OPS_TOKEN` and an 8 s abort timeout. 2 consecutive failures → console banner + `notify-send` (if installed).
 - `degraded:true` with `slow:["kv"]` in the body is **not** a failure: it appears in the minute summary (`slow=[kv]`) and does not raise an alert (DEBUGLOG #6).
-- Why the 8 s timeout (not 3 s): deep health runs KV checks sequentially and one KV read costs ~1–2 s on this account, so a full pass takes seconds (DEBUGLOG #6; Task 12b parallelises the checks).
+- Why the 8 s timeout (not 3 s): deep health runs its checks concurrently, but each check has a 4 s deadline of its own (Task 12b) and one KV op costs ~1–2 s on this account, so a full pass takes seconds when KV is slow (DEBUGLOG #6).
 - Cross-checks: `telnyx-edge metrics` (5xx/error rate) and `dv.late` events in the logs — `dv.late` means the platform gave up on the webhook and spoke the greeting with defaults (fail-open by design, spec §5.4).
 
 ## 2. First look (~30 s): the invocation log
@@ -34,7 +41,7 @@ Per-invocation records: `method`, `path`, `status_code`, `duration_ms`. Look for
 SINCE=15m scripts/trace.sh t-<call key>    # SINCE defaults to 30m
 ```
 
-- `trace_id = "t-" + k` travels with the call (returned by `/dv`, carried in signed bodies, echoed by actors, recovered by MCP from `conv/<id>`). If the call never got a trace, the logs show `trace.missing_key` — the DV webhook never fired.
+- `trace_id = "t-" + k` travels with the call (returned by `/dv`, carried in signed bodies, echoed by actors, recovered by MCP from `conv/<id>`). If the call never got a trace, there is no `trace_id` to grep — check the Portal conversation's Dynamic Variable Webhook Logs tab instead (the DV webhook never fired).
 - Output: aligned columns `ts  hop  evt  outcome  total_ms` plus key extras (`route_hint`, `tool`, `site`, `status`), then the hop chain (`hops: dv → tool → mcp …`) and the total span.
 - Read it like this: `outcome=error|denied|fallback` marks the broken hop; `total_ms` shows where the time went — `kv` hops of 1–2 s are the usual suspect on this account (DEBUGLOG #6).
 
@@ -46,7 +53,7 @@ SINCE=15m scripts/trace.sh t-<call key>    # SINCE defaults to 30m
 ## 5. Then: the actor subsystem
 
 ```sh
-curl -sS -H "Authorization: Bearer $OPS_TOKEN" "$EDGE_URL/ops/actor-ping?site=TST-001"
+node scripts/ops.mjs GET '/ops/actor-ping?site=TST-001'
 ```
 
 Returns `{mode, site:{…, actor_ms}, region:{…, actor_ms}}` — the active actor mode plus per-actor latency (warm ≈ 220 ms in mux mode).
@@ -64,26 +71,27 @@ nohup node scripts/prober.mjs > ~/code/telnyx-fde/ops-logs/prober.log 2>&1 &
 What the single process does, on two independent timers:
 
 - **Every 10 s — deep health + projection heal.** `GET /ops/health/deep` runs the KV, actor and MCP checks plus `syncCheck`, which re-syncs each region's incident projection **from actor truth** (the KV projection only has a 2 h TTL — `PROJECTION_TTL_SECONDS = 7200`). This is what keeps `/ops/status` and the NOC wall board accurate, and it keeps the edge warm. Alert after 2 consecutive failures (worst case ≈ 30 s); `degraded` is not an outage.
-- **Every 30 s — escalation tick fallback + paging.** `POST /ops/tick` drives the SLA escalation ladder in `RegionState` as a fallback for the platform alarm (on this account the platform alarm does fire — DEBUGLOG #12 — so `fired:0` per tick is normal); then `GET /ops/pages/pending` → `POST /ops/pages/claim` → **PAGE banner** + `notify-send` + `page.sent` log line → `POST /ops/pages/sent`. Claim is exclusive (one claimer wins) and a page is never sent twice; the claimer id is `hostname:pid`.
+- **Every 30 s — escalation tick fallback + paging.** `POST /ops/tick` drives the SLA escalation ladder in `RegionState` as a fallback for the platform alarm (on this account the platform alarm does fire — DEBUGLOG #12 — so `fired:0` per tick is normal); then `GET /ops/pages/pending` → `POST /ops/pages/claim` → **PAGE banner** + `notify-send` + `page.sent` log line → `POST /ops/pages/sent`. Claim is exclusive (one claimer wins) and a page is never sent twice; the claimer id is `hostname:pid`. Non-2xx answers (401/5xx) throw and are logged as `paging.*_failed` warns; a failed sent-mark is retried in the same cycle (initial try + up to 3 retries) and again on later cycles, so a page is never silently dropped; `paging.stalled` warns after 3 consecutive failed cycles.
 
 If the board shows nothing or pages never fire, the first suspect is **the prober is not running**.
 
 ## 7. Paging drill
 
-1. Stage an incident: `POST /ops/reset`, then `POST /ops/stage-incident?region=riyadh-north` (or the NOC wall operator drawer). The staged P2 incident gets an escalation due time **5 min** out (P1: **2 min** — `P2_ACK_WINDOW_MS`/`P1_ACK_WINDOW_MS`).
+1. Stage an incident: `node scripts/ops.mjs POST /ops/reset`, then `node scripts/ops.mjs POST '/ops/stage-incident?region=riyadh-north'` (or the NOC wall operator drawer). The staged P2 incident gets an escalation due time **5 min** out (P1: **2 min** — `P2_ACK_WINDOW_MS`/`P1_ACK_WINDOW_MS`).
 2. Do nothing. When the due time passes without an acknowledgement, the ladder escalates (L1, L2, … up to L3) and mints a page (`INC-<n>:p<k>` — a monotonic per-incident counter, so an upgrade after a sent page never collides, DEBUGLOG #14).
 3. Within ~30 s the prober's paging cycle claims the page: a loud **PAGE banner** in the prober log, a desktop notification (`notify-send`), and a `page.sent` JSON line; the pending queue returns to 0.
-4. Stop the ladder: **Acknowledge** from the NOC wall operator drawer, or `POST /ops/ack?region=riyadh-north` with `Bearer $OPS_TOKEN`. The escalation column on the board flips to `ACKED`.
+4. Stop the ladder: **Acknowledge** from the NOC wall operator drawer, or `node scripts/ops.mjs POST '/ops/ack?region=riyadh-north'`. The escalation column on the board flips to `ACKED`.
+5. Recovery: if a demo site reports locked (the site-wide PIN lock after 6 failures from 2 calls), clear it with `node scripts/ops.mjs POST '/ops/unlock?site=RUH-114'` — note this also resets that site's ticket and call history.
 
 ## 8. Reading incident reports
 
-On `resolve` (via `/ops/resolve`, the operator drawer, or a caller resolution), `RegionState`/the edge writes a JSON incident report to Telnyx Cloud Storage (bucket `noc-reports-fb8131`) — no presigned URLs (an API key cannot live in the function), so reports are read back through the ops-token routes:
+On `resolve` (via `node scripts/ops.mjs POST '/ops/resolve?region=<region>'` or the operator drawer — only `/ops/resolve` writes reports), `RegionState`/the edge writes a JSON incident report to Telnyx Cloud Storage (bucket `noc-reports-fb8131`) — no presigned URLs (an API key cannot live in the function), so reports are read back through the ops-token routes:
 
 ```sh
 # list (newest first):
-curl -sS -H "Authorization: Bearer $OPS_TOKEN" "$EDGE_URL/ops/reports"
+node scripts/ops.mjs GET /ops/reports
 # fetch one by key (as returned by the list / the board's last_report pointer):
-curl -sS -H "Authorization: Bearer $OPS_TOKEN" "$EDGE_URL/ops/reports/<key>"
+node scripts/ops.mjs GET /ops/reports/<key>
 ```
 
 The NOC wall board carries the `last_report` pointer for the most recently resolved region.
@@ -104,7 +112,7 @@ Get the namespace id once (`telnyx-edge storage kv list` → the `noc-kv` id, be
    telnyx-edge storage kv key put "$KV_ID" flag/fault/open_ticket 503 --ttl 600s
    ```
 
-   The next `open_ticket` (and `join_incident`) returns the injected status. Verify: `scripts/trace.sh` shows the tool hop with `outcome=error` and `status=503`; the caller is told the report failed.
+   The next `open_ticket` (and `join_incident`) returns the injected status. Verify: `scripts/trace.sh` shows the tool hop with `outcome=error` (the raw log line carries `reason:"fault_injected"` — the injected status itself is not printed by the trace view); the caller is told the report failed.
    Clear: `telnyx-edge storage kv key put "$KV_ID" flag/fault/open_ticket 0 --ttl 600s`.
 
 2. **DV delay** (exercises the fail-open greeting):
@@ -115,4 +123,16 @@ Get the namespace id once (`telnyx-edge storage kv list` → the `noc-kv` id, be
 
    Any injected delay logs `dv.late` with `fault_injected:true`; ~3000 ms pushes `/dv` past the platform's 2500 ms timeout, so the platform speaks the greeting with static defaults. Verify: the log line `dv.late … fault_injected:true`, and the conversation shows the default `site_id`/`route_hint`. Clear with `0`.
 
-3. After each drill, check the prober stayed quiet (or fired and recovered), and reset lab state if the drill created tickets: `POST /ops/reset` with `Bearer $OPS_TOKEN`.
+3. After each drill, check the prober stayed quiet (or fired and recovered), and reset lab state if the drill created tickets: `node scripts/ops.mjs POST /ops/reset`.
+
+## Demo-call toggles
+
+Two KV flags change who a web call is on the wire (the flags memo holds ~60 s after a write):
+
+```sh
+telnyx-edge storage kv key put "$KV_ID" flag/demo_caller c-khalid --ttl 600s   # identify every web caller as a seeded contact
+telnyx-edge storage kv key put "$KV_ID" flag/deflection_enabled false --ttl 600s  # no incident advisory; verified callers go straight to triage
+```
+
+- With `flag/demo_caller` set and `flag/require_pin=false`, every web caller is identified as that contact — the Arabic intake (`c-khalid`, `preferred_language: ar`) and the deflection A/B (`c-ahmed`) are driven this way. **Never leave `demo_caller` set with `require_pin=false` on the public demo.** `/ops/reset` rewrites `require_pin=false` and does not clear `demo_caller`, so clear the toggles yourself: `telnyx-edge storage kv key delete "$KV_ID" flag/demo_caller` (or let the 600 s TTLs self-heal).
+- Identified routing (route_hint `known_incident` / `verified` / `arabic`) is proven in unit tests and by these toggles; anonymous web calls always get the safe `unverified` path.

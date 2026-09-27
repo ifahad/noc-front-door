@@ -2,7 +2,7 @@
 import { execFile } from 'node:child_process';
 import os from 'node:os';
 import { loadDotEnv } from './lib/telnyx.mjs';
-import { createProber, planPaging } from './lib/prober-core.mjs';
+import { createPagingHealth, createProber, apiErrorMessage, planPaging } from './lib/prober-core.mjs';
 
 const DEFAULT_EDGE_URL = 'https://noc-edge-41d2a334-7.telnyxcompute.com';
 const PROBE_TIMEOUT_MS = 8000;
@@ -103,7 +103,8 @@ function errorText(err) {
 }
 
 // /ops/* helper. The OPS_TOKEN only ever goes into the Authorization header;
-// it is never printed or logged.
+// it is never printed or logged. A non-2xx status throws (method + path +
+// status, never headers or the token) so every paging failure is observable.
 async function apiCall(edgeUrl, opsToken, method, path, body) {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), PAGING_TIMEOUT_MS);
@@ -117,6 +118,9 @@ async function apiCall(edgeUrl, opsToken, method, path, body) {
       body: body === undefined ? undefined : JSON.stringify(body),
       signal: controller.signal,
     });
+    if (!res.ok) {
+      throw new Error(apiErrorMessage(method, path, res.status));
+    }
     try {
       return await res.json();
     } catch {
@@ -136,67 +140,95 @@ function pageBanner(pageId, region, level) {
 
 // "Sending" a page = a loud banner + a desktop notification + one JSON log
 // line, then marking it sent. A failure at any step must not crash the
-// prober loop, and the page is never sent twice: only one claimer wins.
-async function pagingCycle(edgeUrl, opsToken, claimer, claimedIds) {
+// prober loop. A failed sent-mark is retried in the same cycle (initial try +
+// up to SENT_RETRIES retries) and again on later cycles via retryIds, so the
+// page is never silently dropped; only the mark-sent is retried — the banner
+// and claim are not repeated.
+const SENT_RETRIES = 3;
+
+async function markSent(edgeUrl, opsToken, region, pageId) {
+  for (let attempt = 0; attempt <= SENT_RETRIES; attempt += 1) {
+    try {
+      await apiCall(edgeUrl, opsToken, 'POST', '/ops/pages/sent', {
+        region,
+        pageId,
+      });
+      return true;
+    } catch (err) {
+      logLine('paging.sent_failed', {
+        lvl: 'warn',
+        outcome: 'error',
+        region,
+        page_id: pageId,
+        attempt: attempt + 1,
+        error: errorText(err),
+      });
+    }
+  }
+  return false;
+}
+
+async function pagingCycle(edgeUrl, opsToken, claimer, claimedIds, retryIds, paging) {
   const started = Date.now();
   try {
     await apiCall(edgeUrl, opsToken, 'POST', '/ops/tick');
   } catch (err) {
     logLine('paging.tick_failed', { lvl: 'warn', outcome: 'error', error: errorText(err) });
+    const { stalled } = paging.record(true);
+    if (stalled) logLine('paging.stalled', { lvl: 'warn', outcome: 'error', streak: paging.streak });
     return;
   }
+  let cycleFailed = false;
   let pending;
   try {
     const body = await apiCall(edgeUrl, opsToken, 'GET', '/ops/pages/pending');
     pending = Array.isArray(body?.pages) ? body.pages : [];
   } catch (err) {
+    cycleFailed = true;
+    pending = [];
     logLine('paging.pending_failed', { lvl: 'warn', outcome: 'error', error: errorText(err) });
-    return;
   }
-  for (const item of planPaging(pending, claimedIds)) {
-    let claim;
-    try {
-      claim = await apiCall(edgeUrl, opsToken, 'POST', '/ops/pages/claim', {
-        region: item.region,
-        pageId: item.pageId,
-        claimer,
-      });
-    } catch (err) {
-      logLine('paging.claim_failed', {
-        lvl: 'warn',
-        outcome: 'error',
+  for (const item of planPaging(pending, claimedIds, retryIds)) {
+    if (!item.retry) {
+      let claim;
+      try {
+        claim = await apiCall(edgeUrl, opsToken, 'POST', '/ops/pages/claim', {
+          region: item.region,
+          pageId: item.pageId,
+          claimer,
+        });
+      } catch (err) {
+        cycleFailed = true;
+        logLine('paging.claim_failed', {
+          lvl: 'warn',
+          outcome: 'error',
+          region: item.region,
+          page_id: item.pageId,
+          error: errorText(err),
+        });
+        continue;
+      }
+      if (claim?.claimed !== true) continue;
+      claimedIds.add(item.pageId);
+      const level = claim.page?.level ?? item.level ?? '?';
+      pageBanner(item.pageId, item.region, level);
+      notify('NOC Front Door: page', `${item.pageId} level ${level} (${item.region})`);
+      logLine('page.sent', {
         region: item.region,
         page_id: item.pageId,
-        error: errorText(err),
+        total_ms: Date.now() - started,
+        outcome: 'ok',
       });
-      continue;
     }
-    if (claim?.claimed !== true) continue;
-    claimedIds.add(item.pageId);
-    const level = claim.page?.level ?? item.level ?? '?';
-    pageBanner(item.pageId, item.region, level);
-    notify('NOC Front Door: page', `${item.pageId} level ${level} (${item.region})`);
-    logLine('page.sent', {
-      region: item.region,
-      page_id: item.pageId,
-      total_ms: Date.now() - started,
-      outcome: 'ok',
-    });
-    try {
-      await apiCall(edgeUrl, opsToken, 'POST', '/ops/pages/sent', {
-        region: item.region,
-        pageId: item.pageId,
-      });
-    } catch (err) {
-      logLine('paging.sent_failed', {
-        lvl: 'warn',
-        outcome: 'error',
-        region: item.region,
-        page_id: item.pageId,
-        error: errorText(err),
-      });
+    if (await markSent(edgeUrl, opsToken, item.region, item.pageId)) {
+      retryIds.delete(item.pageId);
+    } else {
+      cycleFailed = true;
+      retryIds.add(item.pageId);
     }
   }
+  const { stalled } = paging.record(cycleFailed);
+  if (stalled) logLine('paging.stalled', { lvl: 'warn', outcome: 'error', streak: paging.streak });
 }
 
 function banner(edgeUrl, threshold, result) {
@@ -279,13 +311,15 @@ async function loop(edgeUrl, opsToken, intervalSec) {
   setInterval(guardedTick, intervalMs);
 
   const claimedIds = new Set();
+  const retryIds = new Set();
+  const paging = createPagingHealth();
   const claimer = `${os.hostname()}:${process.pid}`;
   let pagingRunning = false;
   const guardedPaging = async () => {
     if (pagingRunning) return;
     pagingRunning = true;
     try {
-      await pagingCycle(edgeUrl, opsToken, claimer, claimedIds);
+      await pagingCycle(edgeUrl, opsToken, claimer, claimedIds, retryIds, paging);
     } catch {
       // the paging cycle must never take the prober down
     } finally {

@@ -1,39 +1,29 @@
 # noc-actors
 
-A Telnyx Edge **StatefulActor** project, scaffolded with `telnyx-edge new-func --actor`.
+The **actor owner** for the NOC Front Door project: it declares and ships the
+StatefulActor classes, with no bindings of its own.
 
-> **Preview.** StatefulActor support is in preview — this project is ready to
-> build against and ship with `telnyx-edge`; the surface may still change
-> before general availability.
-
-## Layout
+## What lives here
 
 | File | Purpose |
 | --- | --- |
-| `telnyx.toml` | Project manifest. Declares the `COUNTER` actor binding (mapped to the `Counter` class) and the function identity. |
-| `src/index.ts` | The function entry point (`main`). Handles HTTP requests, calls the actor through `env.COUNTER`, and re-exports the `Counter` class so it ships with the function. |
-| `src/counter.ts` | The `Counter` actor class. |
-| `package.json` / `tsconfig.json` | TypeScript project configuration. |
+| `src/SiteState.ts` | Per-site state: ticket open/attach, PIN verification (per-call and site-wide lockout tiers), call history |
+| `src/RegionState.ts` | Per-region state: incident declaration, P2→P1 upgrade at 3 sites, SLA escalation ladder, pages |
+| `src/index.ts` | Function entry point; re-exports the actor classes so the owner function ships with them |
+
+Owner vs reference binder: this function declares `SITES`/`REGIONS` in
+`telnyx.toml` but holds no KV, secrets or routes — `edge/noc-edge` binds the
+same classes by reference and is the only caller that carries secrets (least
+privilege). On this Trial account new actor instances cannot activate
+(DEBUGLOG #4), so production runs in **mux mode**: `edge/noc-actor-host` runs
+these identical classes inside the one working `Counter/demo` instance.
 
 ## Deploy
-
-Install dependencies and ship:
 
 ```sh
 npm install
 telnyx-edge ship
 ```
 
-## Using the actor
-
-`src/index.ts` resolves an actor instance by name and calls a method on it:
-
-```ts
-const counter = env.COUNTER.idFromName("demo");
-const value = await counter.increment(1);
-```
-
-`COUNTER` is the binding declared under `[[actors]]` in `telnyx.toml`; it maps to
-the `Counter` class in `src/counter.ts`. Add methods to that class and call them
-through the binding. Generate the `env.COUNTER` types (`Env`) with
-`telnyx-edge types`.
+Unit tests live in `test/` and run against in-memory storage fakes (C11 — there
+is no local actor runtime).

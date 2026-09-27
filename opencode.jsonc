@@ -39,10 +39,17 @@
     "external_directory": "deny"
   },
   "mcp": {
+    // The deployed noc-edge MCP server (5 tools, two bearer scopes).
+    // Disabled: the assistant's prompt nodes already call MCP through its own
+    // noc-mcp integration (applied by scripts/apply.mjs), and an always-on
+    // remote MCP in OpenCode sessions would burn tokens on handshake/roundtrips
+    // the coding agent does not need. Kept here so reviewers can point OpenCode
+    // at the public /mcp endpoint (auth: ops-scope bearer from env — the server
+    // accepts either scope; stateless POST only, 405 on GET).
     "noc-mcp": {
       "type": "remote",
       "enabled": false,
-      "url": "https://REPLACE_AFTER_CORE_SHIP/mcp",
+      "url": "https://noc-edge-41d2a334-7.telnyxcompute.com/mcp",
       "headers": {
         "Authorization": "Bearer {env:NOC_OPS_TOKEN}"
       }

@@ -26,7 +26,10 @@
   "telephony_settings": {
     "time_limit_secs": 600,
     "user_idle_timeout_secs": 60,
-    "supports_unauthenticated_web_calls": true
+    "supports_unauthenticated_web_calls": true,
+    "recording_settings": {
+      "enabled": true
+    }
   },
   "dynamic_variables_webhook_url": "${EDGE_URL}/dv",
   "dynamic_variables_webhook_timeout_ms": 2500,
