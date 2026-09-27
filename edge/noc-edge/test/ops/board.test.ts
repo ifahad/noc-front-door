@@ -119,6 +119,37 @@ describe("ops board cache", () => {
     }
   });
 
+  it("joins an in-flight build past the TTL and reuses it for 8 s after settle observation", async () => {
+    const kv = new FakeKv();
+    const actors = new FakeActorPort();
+    await openSiteTicket(actors, "RUH-114", "14", "aa11bb22cc33dd44", T0);
+    const counters: Counters = { builds: 0 };
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const deps = makeDeps(kv, actors, counters, { gate });
+    const cacheKey = {};
+
+    const first = getBoard(cacheKey, deps(T0));
+    const joined = getBoard(cacheKey, deps(T0 + 9_000));
+    expect(counters.builds).toBe(1);
+
+    release();
+    const boards = await Promise.all([first, joined]);
+
+    const observed = await getBoard(cacheKey, deps(T0 + 10_000));
+    expect(counters.builds).toBe(1);
+    expect(observed).toBe(boards[0]);
+
+    const stillFresh = await getBoard(cacheKey, deps(T0 + 16_999));
+    expect(counters.builds).toBe(1);
+    expect(stillFresh).toBe(boards[0]);
+
+    await getBoard(cacheKey, deps(T0 + 17_000));
+    expect(counters.builds).toBe(2);
+  });
+
   it("keeps a slow in-flight build out of the actor path of later concurrent viewers", async () => {
     const kv = new FakeKv();
     const actors = new FakeActorPort();

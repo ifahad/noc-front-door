@@ -27,13 +27,15 @@ export interface BoardDeps {
 }
 
 // Viewer protection: the board is the demo page's public read path, so the
-// single actor instance must not see one build per viewer. A finished build
-// is reused for BOARD_TTL_MS; concurrent requests join the in-flight build;
-// a rejected build is dropped so the next request rebuilds.
+// single actor instance must not see one build per viewer. Callers join an
+// in-flight build regardless of its age; once a build settles successfully the
+// reuse window runs for BOARD_TTL_MS from the settle time observed by the
+// latest joiner (or the building request itself when nobody joins); a rejected
+// build is dropped so the next request rebuilds.
 const BOARD_TTL_MS = 8_000;
 
 interface BoardCacheEntry {
-  at: number;
+  settledAt: number | undefined;
   promise: Promise<BoardPayload>;
 }
 
@@ -41,15 +43,31 @@ const boardCaches = new WeakMap<object, BoardCacheEntry>();
 
 export function getBoard(cacheKey: object, deps: BoardDeps): Promise<BoardPayload> {
   const existing = boardCaches.get(cacheKey);
-  if (existing !== undefined && deps.now - existing.at < BOARD_TTL_MS) {
-    return existing.promise;
+  if (existing !== undefined) {
+    if (existing.settledAt === undefined || deps.now - existing.settledAt < BOARD_TTL_MS) {
+      if (existing.settledAt === undefined) {
+        const observedAt = deps.now;
+        existing.promise.then(
+          () => {
+            existing.settledAt = observedAt;
+          },
+          () => {},
+        );
+      }
+      return existing.promise;
+    }
   }
   const promise = buildBoard(deps);
-  const entry: BoardCacheEntry = { at: deps.now, promise };
+  const entry: BoardCacheEntry = { settledAt: undefined, promise };
   boardCaches.set(cacheKey, entry);
-  promise.catch(() => {
-    if (boardCaches.get(cacheKey) === entry) boardCaches.delete(cacheKey);
-  });
+  promise.then(
+    () => {
+      entry.settledAt = deps.now;
+    },
+    () => {
+      if (boardCaches.get(cacheKey) === entry) boardCaches.delete(cacheKey);
+    },
+  );
   return promise;
 }
 
