@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { getBoard, type BoardDeps } from "../../src/ops/board";
 import { route } from "../../src/router";
 import { SITES } from "../../../shared/src/seed";
+import { LAST_REPORT_KEY } from "../../src/services/reports";
 import { FakeActorPort } from "../fakes/actors";
 import { FakeKv } from "../fakes/kv";
 import { bearer, makeRouterEnv, openSiteTicket, OPS_TOKEN, T0 } from "./helpers";
@@ -166,6 +167,41 @@ describe("ops board cache", () => {
     release();
     await Promise.all([first, second]);
     expect(counters.builds).toBe(1);
+  });
+});
+
+describe("ops board last_report", () => {
+  it("carries the last_report pointer once resolve wrote it", async () => {
+    const kv = new FakeKv();
+    const actors = new FakeActorPort();
+    const deps = makeDeps(kv, actors, { builds: 0 });
+    const none = await getBoard({}, deps(T0));
+    expect(none.last_report).toBeNull();
+
+    const pointer = {
+      key: "incidents/INC-1001-2026-09-27T06-00-00Z.json",
+      incident_id: "INC-1001",
+      resolved_at: new Date(T0).toISOString(),
+    };
+    await kv.put(LAST_REPORT_KEY, JSON.stringify(pointer));
+    const board = await getBoard({}, deps(T0 + 1_000));
+    expect(board.last_report).toEqual(pointer);
+  });
+
+  it("treats a malformed pointer as no report", async () => {
+    const kv = new FakeKv();
+    const actors = new FakeActorPort();
+    await kv.put(LAST_REPORT_KEY, "not json");
+    const board = await getBoard({}, makeDeps(kv, actors, { builds: 0 })(T0));
+    expect(board.last_report).toBeNull();
+  });
+
+  it("fails open to null when the pointer read fails", async () => {
+    const kv = new FakeKv();
+    const actors = new FakeActorPort();
+    kv.failNext(1);
+    const board = await getBoard({}, makeDeps(kv, actors, { builds: 0 })(T0));
+    expect(board.last_report).toBeNull();
   });
 });
 

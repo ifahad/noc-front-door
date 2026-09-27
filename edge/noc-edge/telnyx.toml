@@ -20,6 +20,10 @@ type = "Counter"
 [storage.kv.CACHE]
 id = "f08b8bc7-4208-4c63-9e8f-0f851d02cd0f"
 
+# Incident reports (P2-4): bucket created by the architect in us-central-1.
+[storage.cloudstorage.REPORTS]
+bucket_name = "noc-reports-fb8131"
+
 [[secrets]]
 binding = "TELNYX_PUBLIC_KEY"
 name = "TELNYX_PUBLIC_KEY"

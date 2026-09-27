@@ -13,7 +13,9 @@ import {
   type ActionDeps,
 } from "../../src/ops/actions";
 import { syncProjection } from "../../src/services/incidents";
+import { LAST_REPORT_KEY, reportKey } from "../../src/services/reports";
 import { FakeActorPort } from "../fakes/actors";
+import { FakeBucket } from "../fakes/bucket";
 import { FakeKv } from "../fakes/kv";
 import { PEPPER, T0 } from "./helpers";
 
@@ -198,6 +200,75 @@ describe("ops resolve and ack", () => {
     const { deps, kv, actors } = DEPS();
     await expect(ackIncident(deps, "nope")).rejects.toThrow(OpsActionError);
     await expect(resolveIncident(deps, "nope")).rejects.toThrow(OpsActionError);
+  });
+});
+
+describe("ops resolve report", () => {
+  it("writes the incident report and the last-report pointer on resolve", async () => {
+    const { deps, kv, actors } = DEPS();
+    const bucket = new FakeBucket();
+    deps.reports = bucket;
+    await resetAll(deps);
+    await stageTwoSites({ deps, actors });
+    await ackIncident(deps, "riyadh-north");
+
+    const resolved = await resolveIncident(deps, "riyadh-north");
+    expect(resolved.resolved).not.toBeNull();
+    expect(resolved.report.ok).toBe(true);
+    expect(resolved.report.key).toMatch(/^incidents\/INC-\d+-\d{4}-\d{2}-\d{2}T\d{2}-\d{2}-\d{2}Z\.json$/);
+    expect(resolved.report.key).toBe(reportKey({ incident_id: resolved.resolved as string, declared_at: new Date(T0).toISOString() }));
+    const report = JSON.parse(bucket.raw(resolved.report.key) as string) as {
+      incident_id: string;
+      region: string;
+      region_label: string;
+      priority: string;
+      sites: { site_id: string; ticket_id: string; priority: string }[];
+      branches: number;
+      escalation: { acked: boolean; time_to_ack_s: number };
+      resolved_at: string;
+      trace_ids: string[];
+    };
+    expect(report.incident_id).toBe(resolved.resolved);
+    expect(report.region).toBe("riyadh-north");
+    expect(report.region_label).toBe("Riyadh North");
+    expect(report.priority).toBe("P2");
+    expect(report.sites.map((s) => s.site_id).sort()).toEqual(["RUH-121", "RUH-133"]);
+    expect(report.branches).toBe(2);
+    expect(report.escalation.acked).toBe(true);
+    expect(report.escalation.time_to_ack_s).toBe(0);
+    expect(report.trace_ids).toEqual(["t-ops-1"]);
+    expect(JSON.parse(kv.raw(LAST_REPORT_KEY) as string)).toEqual({
+      key: resolved.report.key,
+      incident_id: resolved.resolved,
+      resolved_at: report.resolved_at,
+    });
+  });
+
+  it("keeps the resolve successful when the report write fails", async () => {
+    const { deps, kv, actors } = DEPS();
+    const bucket = new FakeBucket();
+    bucket.failNextPut(1);
+    deps.reports = bucket;
+    await resetAll(deps);
+    await stageTwoSites({ deps, actors });
+
+    const resolved = await resolveIncident(deps, "riyadh-north");
+    expect(resolved.resolved).not.toBeNull();
+    expect(resolved.report.ok).toBe(false);
+    expect(kv.raw(LAST_REPORT_KEY)).toBeNull();
+  });
+
+  it("skips the report when there was no incident to resolve", async () => {
+    const { deps, kv, actors } = DEPS();
+    const bucket = new FakeBucket();
+    deps.reports = bucket;
+    await resetAll(deps);
+
+    const resolved = await resolveIncident(deps, "riyadh-north");
+    expect(resolved.resolved).toBeNull();
+    expect(resolved.report).toEqual({ ok: false, key: "" });
+    expect(bucket.keys()).toEqual([]);
+    expect(kv.raw(LAST_REPORT_KEY)).toBeNull();
   });
 });
 

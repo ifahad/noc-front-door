@@ -35,6 +35,11 @@ const OPS_PATHS: { method: string; path: string }[] = [
   { method: "GET", path: "/ops/pages/pending" },
   { method: "POST", path: "/ops/pages/claim" },
   { method: "POST", path: "/ops/pages/sent" },
+  { method: "GET", path: "/ops/reports" },
+  {
+    method: "GET",
+    path: "/ops/reports/incidents/INC-1001-2026-09-27T06-00-00Z.json",
+  },
   { method: "POST", path: "/diag/race" },
 ];
 
@@ -165,5 +170,82 @@ describe("ops routes wired", () => {
     await opsRequest("GET", "/ops/health/deep", bearer(OPS_TOKEN), env);
     expect(eventsWith("canary.check")).toHaveLength(1);
     expect(eventsWith("canary.summary")).toHaveLength(1);
+  });
+});
+
+describe("ops reports routes", () => {
+  it("lists stored reports newest first", async () => {
+    const env = makeRouterEnv(OPS_TOKEN);
+    for (const id of ["INC-1002", "INC-1001", "INC-1003"]) {
+      await env.bucket.put(`incidents/${id}-2026-09-27T06-00-00Z.json`, "{}");
+    }
+    const res = await opsRequest("GET", "/ops/reports", bearer(OPS_TOKEN), env);
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as { reports: { key: string; size: number; uploaded: string }[] };
+    expect(body.reports.map((r) => r.key)).toEqual([
+      "incidents/INC-1003-2026-09-27T06-00-00Z.json",
+      "incidents/INC-1002-2026-09-27T06-00-00Z.json",
+      "incidents/INC-1001-2026-09-27T06-00-00Z.json",
+    ]);
+    for (const entry of body.reports) {
+      expect(entry.size).toBe(2);
+      expect(typeof entry.uploaded).toBe("string");
+    }
+  });
+
+  it("serves a stored report as json", async () => {
+    const env = makeRouterEnv(OPS_TOKEN);
+    const report = { schema: "noc.incident-report/1", incident_id: "INC-1001" };
+    const key = "incidents/INC-1001-2026-09-27T06-00-00Z.json";
+    await env.bucket.put(key, JSON.stringify(report));
+    const res = await opsRequest("GET", `/ops/reports/${key}`, bearer(OPS_TOKEN), env);
+    expect(res.status).toBe(200);
+    expect(res.headers.get("content-type")).toContain("application/json");
+    expect(await res.json()).toEqual(report);
+  });
+
+  it("404s a missing report", async () => {
+    const env = makeRouterEnv(OPS_TOKEN);
+    const res = await opsRequest(
+      "GET",
+      "/ops/reports/incidents/INC-9999-2026-09-27T06-00-00Z.json",
+      bearer(OPS_TOKEN),
+      env,
+    );
+    expect(res.status).toBe(404);
+  });
+
+  it("400s keys outside the incidents namespace", async () => {
+    const env = makeRouterEnv(OPS_TOKEN);
+    for (const path of [
+      "/ops/reports/other/x.json",
+      "/ops/reports/incidents/sub/x.json",
+      "/ops/reports/INC-1001.json",
+      "/ops/reports/incidents/x.json.bak",
+    ]) {
+      const res = await opsRequest("GET", path, bearer(OPS_TOKEN), env);
+      expect(res.status).toBe(400);
+    }
+  });
+
+  it("carries the report outcome and the last-report pointer through the resolve route", async () => {
+    const env = makeRouterEnv(OPS_TOKEN);
+    await opsRequest("POST", "/ops/reset", bearer(OPS_TOKEN), env);
+    await opsRequest("POST", "/ops/stage-incident?region=riyadh-north", bearer(OPS_TOKEN), env);
+    const resolve = await opsRequest(
+      "POST",
+      "/ops/resolve?region=riyadh-north",
+      bearer(OPS_TOKEN),
+      env,
+    );
+    expect(resolve.status).toBe(200);
+    const body = (await resolve.json()) as {
+      resolved: string | null;
+      report: { ok: boolean; key: string };
+    };
+    expect(body.resolved).not.toBeNull();
+    expect(body.report.ok).toBe(true);
+    expect(env.bucket.raw(body.report.key)).not.toBeNull();
+    expect(env.kv.raw(kvKey("report", "last"))).not.toBeNull();
   });
 });

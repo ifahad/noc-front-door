@@ -17,6 +17,7 @@ import { loadDemoGuide } from "./demo/guide";
 import { buildStatus, renderStatusHtml } from "./ops/status";
 import { getBoard } from "./ops/board";
 import { runDeepHealth } from "./ops/health";
+import { listReports, readReport } from "./services/reports";
 import {
   OpsActionError,
   OpsBadRequestError,
@@ -253,7 +254,14 @@ async function opsCtx(env: NocEdgeEnv): Promise<OpsCtx> {
 async function actionCtx(env: NocEdgeEnv): Promise<ActionDeps> {
   const ctx = await opsCtx(env);
   const adapter = await makeAdapter(env);
-  return { kv: ctx.kv, actors: ctx.actors, adapter, now: ctx.now, trace_id: ctx.trace_id };
+  return {
+    kv: ctx.kv,
+    actors: ctx.actors,
+    adapter,
+    now: ctx.now,
+    trace_id: ctx.trace_id,
+    reports: env.REPORTS ?? null,
+  };
 }
 
 async function raceCtx(env: NocEdgeEnv): Promise<RaceDeps> {
@@ -475,6 +483,37 @@ export async function route(
       const ctx = await opsCtx(env);
       const input = pageSentInput(await readJsonBody(request));
       return Response.json(await markRegionPageSent(ctx, input));
+    });
+  }
+  if (request.method === "GET" && url.pathname === "/ops/reports") {
+    return routeOps(request, env, "ops/reports", async () => {
+      const out = await listReports(env.REPORTS ?? null);
+      if (out.degraded) {
+        return Response.json({ reports: [], degraded: true }, { status: 502 });
+      }
+      return Response.json({ reports: out.reports });
+    });
+  }
+  if (request.method === "GET" && url.pathname.startsWith("/ops/reports/")) {
+    return routeOps(request, env, "ops/reports-get", async () => {
+      const raw = url.pathname.slice("/ops/reports/".length);
+      let key: string;
+      try {
+        key = decodeURIComponent(raw);
+      } catch {
+        return Response.json({ error: "invalid_key" }, { status: 400 });
+      }
+      const out = await readReport(env.REPORTS ?? null, key);
+      if (out.status === "invalid_key") {
+        return Response.json({ error: "invalid_key" }, { status: 400 });
+      }
+      if (out.status === "missing") {
+        return Response.json({ error: "not_found" }, { status: 404 });
+      }
+      if (out.status === "error") {
+        return Response.json({ error: "storage" }, { status: 502 });
+      }
+      return Response.json(out.report);
     });
   }
   if (request.method === "POST" && url.pathname === "/diag/race") {

@@ -3,6 +3,7 @@ import type { ActorMode } from "../services/flags";
 import { logEvent } from "../log";
 import type { ActorPort } from "../services/actorPort";
 import type { KvPort } from "../services/kvPort";
+import { readLastReport, type LastReportPointer } from "../services/reports";
 import { buildStatus, type StatusPayload, type StatusSite } from "./status";
 
 const REGION_BY_SITE = SITES.map((site) => [site.site_id, site.region] as const);
@@ -13,6 +14,7 @@ export interface BoardPayload extends StatusPayload {
   sites: BoardSite[];
   actor_mode: ActorMode;
   generated_at: string;
+  last_report: LastReportPointer | null;
 }
 
 export interface BoardActorChoice {
@@ -74,7 +76,10 @@ export function getBoard(cacheKey: object, deps: BoardDeps): Promise<BoardPayloa
 async function buildBoard(deps: BoardDeps): Promise<BoardPayload> {
   const started = Date.now();
   const choice = await deps.selectActor();
-  const status = await buildStatus({ kv: deps.kv, actors: choice.port, now: deps.now });
+  const [status, last_report] = await Promise.all([
+    buildStatus({ kv: deps.kv, actors: choice.port, now: deps.now }),
+    readLastReport(deps.kv),
+  ]);
   const regionBySite = new Map(REGION_BY_SITE);
   const sites: BoardSite[] = status.sites.map((site) => ({
     ...site,
@@ -86,11 +91,13 @@ async function buildBoard(deps: BoardDeps): Promise<BoardPayload> {
     total_ms: Date.now() - started,
     mode: choice.mode,
     degraded: status.degraded === true,
+    last_report: last_report !== null,
   });
   return {
     ...status,
     sites,
     actor_mode: choice.mode,
     generated_at: new Date(deps.now).toISOString(),
+    last_report,
   };
 }

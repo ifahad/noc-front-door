@@ -3,6 +3,7 @@ import type { Session } from "../../../shared/src/types";
 import type { NocEdgeEnv } from "../../src/actors";
 import type { Flags } from "../../src/services/flags";
 import { FakeActorPort } from "../fakes/actors";
+import { FakeBucket } from "../fakes/bucket";
 import { FakeKv } from "../fakes/kv";
 import { makeRegionActor, makeSiteActor } from "../fakes/actors";
 
@@ -59,6 +60,7 @@ export interface RouterEnvBundle {
   env: NocEdgeEnv;
   kv: FakeKv;
   actors: FakeActorPort;
+  bucket: FakeBucket;
   regions: Map<string, ReturnType<typeof makeRegionActor>>;
   sites: Map<string, ReturnType<typeof makeSiteActor>>;
 }
@@ -76,6 +78,7 @@ export function regionActorOf(
 export function makeRouterEnv(opsToken: string | null): RouterEnvBundle {
   const kv = new FakeKv();
   const actors = new FakeActorPort();
+  const bucket = new FakeBucket();
   const sites = new Map<string, ReturnType<typeof makeSiteActor>>();
   const regions = new Map<string, ReturnType<typeof makeRegionActor>>();
   const env = {
@@ -89,6 +92,7 @@ export function makeRouterEnv(opsToken: string | null): RouterEnvBundle {
         list_complete: true,
       }),
     },
+    REPORTS: bucket,
     SITES: {
       idFromName: (name: string) => {
         let actor = sites.get(name);
@@ -127,7 +131,7 @@ export function makeRouterEnv(opsToken: string | null): RouterEnvBundle {
   const muxStub = {
     tick: async () => ({ fired: ["region/riyadh-north"], failed: [], next: null }),
   };
-  return { env, kv, actors, regions, sites };
+  return { env, kv, actors, bucket, regions, sites };
 }
 
 export async function openSiteTicket(

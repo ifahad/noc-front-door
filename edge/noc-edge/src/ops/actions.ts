@@ -9,9 +9,22 @@ import { logEvent } from "../log";
 import type { MuxBinding } from "../actors";
 import type { ActorPort } from "../services/actorPort";
 import type { ActorMode } from "../services/flags";
-import { projectionOf, syncProjection, type IncidentProjection } from "../services/incidents";
+import {
+  projectionOf,
+  regionLabelOf,
+  syncProjection,
+  type IncidentProjection,
+} from "../services/incidents";
 import { MUX_ACTOR_NAME } from "../services/muxActorPort";
 import type { KvPort } from "../services/kvPort";
+import {
+  buildIncidentReport,
+  writeLastReportPointer,
+  writeReport,
+  type ReportBucket,
+  type ReportIncident,
+  type ReportWriteResult,
+} from "../services/reports";
 import { open as openTicket } from "../services/tickets";
 
 export interface ActionDeps {
@@ -20,6 +33,7 @@ export interface ActionDeps {
   adapter: SeedAdapter;
   now: number;
   trace_id: string;
+  reports?: ReportBucket | null;
 }
 
 export interface ActionItem {
@@ -46,6 +60,7 @@ export interface AckResult {
 export interface ResolveResult {
   region: string;
   resolved: string | null;
+  report: ReportWriteResult;
 }
 
 export interface UnlockResult {
@@ -423,18 +438,69 @@ export async function resolveIncident(
   if (!REGIONS.some((r) => r.region === region)) {
     throw new OpsActionError("unknown_region");
   }
+  // The incident is gone once resolve lands, so read the actor truth first.
+  const before = await deps.actors.region(region).getIncident({ trace_id: deps.trace_id });
   const { incident } = await deps.actors
     .region(region)
     .resolve({ trace_id: deps.trace_id, at: deps.now });
   await syncProjection({ actors: deps.actors, kv: deps.kv }, region, deps.trace_id);
+  const report =
+    before.incident === null
+      ? { ok: false, key: "" }
+      : await writeReportAfterResolve(deps, region, before.incident);
   logEvent("ops.resolve", {
     hop: "ops/resolve",
     trace_id: deps.trace_id,
     outcome: "ok",
     region,
     incident_id: incident?.id ?? "none",
+    report_ok: report.ok,
   });
-  return { region, resolved: incident?.id ?? null };
+  return { region, resolved: incident?.id ?? null, report };
+}
+
+// A failed report write (bucket error, timeout, pointer error) never fails
+// the resolve that already succeeded.
+async function writeReportAfterResolve(
+  deps: ActionDeps,
+  region: string,
+  incident: ReportIncident | null,
+): Promise<ReportWriteResult> {
+  const started = Date.now();
+  if (incident === null) return { ok: false, key: "" };
+  try {
+    const report = buildIncidentReport({
+      region,
+      regionLabel: regionLabelOf(region),
+      incident,
+      resolvedAt: deps.now,
+      trace_id: deps.trace_id,
+    });
+    const out = await writeReport(deps.reports ?? null, report);
+    if (out.ok) {
+      await writeLastReportPointer(deps.kv, report, out.key);
+      logEvent("report.written", {
+        hop: "ops/resolve",
+        trace_id: deps.trace_id,
+        outcome: "ok",
+        incident_id: report.incident_id,
+        key: out.key,
+        total_ms: Date.now() - started,
+      });
+    }
+    return out;
+  } catch (err) {
+    logEvent("report.write_failed", {
+      lvl: "warn",
+      hop: "ops/resolve",
+      trace_id: deps.trace_id,
+      incident_id: incident.id,
+      outcome: "error",
+      total_ms: Date.now() - started,
+      error: String(err),
+    });
+    return { ok: false, key: "" };
+  }
 }
 
 export async function unlockSite(deps: ActionDeps, siteId: string): Promise<UnlockResult> {
