@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { withErrorHandling, route } from "../src/router";
+import { withErrorHandling, route, __resetActorModeForTests } from "../src/router";
 import type { NocEdgeEnv } from "../src/actors";
 import { putAuth } from "../src/services/sessions";
 import { sessionKey } from "../../shared/src/ids";
@@ -21,6 +21,7 @@ let logs: string[];
 
 beforeEach(() => {
   logs = [];
+  __resetActorModeForTests();
   vi.spyOn(console, "log").mockImplementation((line: unknown) => {
     logs.push(String(line));
   });
@@ -257,6 +258,81 @@ describe("router actor-mode selection", () => {
       { binding: "MUX", kind: "site", name: "RUH-114", method: "ping" },
       { binding: "MUX", kind: "region", name: "riyadh-north", method: "ping" },
     ]);
+  });
+
+  function withSlowGet(kv: FakeKv, ms: number): FakeKv {
+    return {
+      get: async (key: string) => {
+        await new Promise((r) => setTimeout(r, ms));
+        return kv.get(key);
+      },
+      put: (key: string, value: string) => kv.put(key, value),
+      delete: (key: string) => kv.delete(key),
+      list: (prefix: string) => kv.list(prefix),
+    } as unknown as FakeKv;
+  }
+
+  function hangKv(): FakeKv {
+    return {
+      get: () => new Promise<string>(() => undefined),
+      put: () => Promise.resolve(),
+      delete: () => Promise.resolve(),
+      list: () => Promise.resolve([]),
+    } as unknown as FakeKv;
+  }
+
+  it("selects mux on a non-dv route when the flags read takes 400 ms", async () => {
+    const { env, cache, pings } = await makePingEnv();
+    await cache.put(kvKey("flag", "actor_mode"), "mux");
+    (env as unknown as { CACHE: unknown }).CACHE = withSlowGet(cache, 400);
+    const res = await actorPing(env);
+    expect(res.status).toBe(200);
+    const out = (await res.json()) as { mode: string };
+    expect(out.mode).toBe("mux");
+    expect(pings.map((p) => p.method)).toEqual(["ping", "ping"]);
+    const reads = eventsWith("actor_mode.read");
+    expect(reads).toHaveLength(1);
+    expect(reads[0].lvl).toBe("info");
+    expect(reads[0].mode).toBe("mux");
+    expect(reads[0].total_ms).toBeGreaterThanOrEqual(400);
+  });
+
+  it("times the /dv flags read out at 250 ms and falls back per-entity when nothing is known", async () => {
+    const { env, priv, cache } = await makeEnv();
+    await cache.put(kvKey("flag", "actor_mode"), "mux");
+    (env as unknown as { CACHE: unknown }).CACHE = withSlowGet(cache, 400);
+    const payload = {
+      call_control_id: "CC-1",
+      telnyx_conversation_id: "CONV-1",
+      telnyx_end_user_target: E164,
+    };
+    const body = JSON.stringify({
+      data: { record_type: "event", event_type: "assistant.initialization", payload },
+    });
+    const res = await route(await signedRequest(body, priv), env);
+    expect(res.status).toBe(200);
+    const fallbacks = eventsWith("flags.fallback");
+    expect(fallbacks).toHaveLength(1);
+    expect(fallbacks[0].lvl).toBe("warn");
+    expect(fallbacks[0].mode).toBe("per-entity");
+    expect(eventsWith("actor_mode.read")).toHaveLength(0);
+  });
+
+  it("reuses the last-known-good mux mode when a later flags read times out", async () => {
+    const { env, cache, pings } = await makePingEnv();
+    await cache.put(kvKey("flag", "actor_mode"), "mux");
+    const first = await actorPing(env);
+    expect(((await first.json()) as { mode: string }).mode).toBe("mux");
+    (env as unknown as { CACHE: unknown }).CACHE = hangKv();
+    const res = await actorPing(env);
+    expect(res.status).toBe(200);
+    const out = (await res.json()) as { mode: string };
+    expect(out.mode).toBe("mux");
+    expect(pings.slice(2).map((p) => p.method)).toEqual(["ping", "ping"]);
+    const fallbacks = eventsWith("flags.fallback");
+    expect(fallbacks).toHaveLength(1);
+    expect(fallbacks[0].mode).toBe("mux");
+    expect(eventsWith("actor_mode.read")).toHaveLength(1);
   });
 });
 

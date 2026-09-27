@@ -35,29 +35,55 @@ const opsTokenGetters = new WeakMap<NocEdgeEnv, SecretGetter>();
 // actor_mode is a KV flag (flag/actor_mode): "mux" routes every actor call
 // through the single working Counter instance on noc-actor-canary (the
 // DEBUGLOG #4 contingency); anything else uses the per-entity bindings.
-// A KV failure must never take a route down: fail open to per-entity.
-const FLAGS_BUDGET_MS = 250;
+// A KV failure must never take a route down: fail open to the last
+// known-good mode, or per-entity when nothing is known yet. The /dv
+// webhook blocks on this read (C3), so it uses a tight budget; tool and
+// ops webhooks allow seconds.
+const FLAGS_BUDGET_MS = 2000;
+const DV_FLAGS_BUDGET_MS = 250;
+
+let lastKnownMode: ActorMode | null = null;
+
+export function __resetActorModeForTests(): void {
+  lastKnownMode = null;
+}
 
 async function selectActorPort(
   env: NocEdgeEnv,
+  budgetMs: number,
 ): Promise<{ port: ActorPort; mode: ActorMode }> {
+  const started = Date.now();
   const result = await deadline(
-    readFlags(bindingKvPort(env.CACHE), Date.now()),
-    FLAGS_BUDGET_MS,
+    readFlags(bindingKvPort(env.CACHE), started),
+    budgetMs,
     "actor.flags",
   );
   if (!result.ok) {
+    const mode: ActorMode = lastKnownMode ?? "per-entity";
     logEvent("flags.fallback", {
       lvl: "warn",
       hop: "actor-mode",
       outcome: "fallback",
-      mode: "per-entity",
+      mode,
     });
-    return { port: bindingActorPort(env), mode: "per-entity" };
+    return {
+      port: mode === "mux" ? muxActorPort(env) : bindingActorPort(env),
+      mode,
+    };
   }
-  return result.value.actor_mode === "mux"
-    ? { port: muxActorPort(env), mode: "mux" }
-    : { port: bindingActorPort(env), mode: "per-entity" };
+  const mode: ActorMode =
+    result.value.actor_mode === "mux" ? "mux" : "per-entity";
+  lastKnownMode = mode;
+  logEvent("actor_mode.read", {
+    lvl: "info",
+    hop: "actor-mode",
+    outcome: "ok",
+    total_ms: Date.now() - started,
+    mode,
+  });
+  return mode === "mux"
+    ? { port: muxActorPort(env), mode }
+    : { port: bindingActorPort(env), mode };
 }
 
 export function makeOpsTokenGetter(env: NocEdgeEnv): SecretGetter {
@@ -100,7 +126,7 @@ export async function routeOpsActorPing(
   }
 
   try {
-    const { port, mode } = await selectActorPort(env);
+    const { port, mode } = await selectActorPort(env, FLAGS_BUDGET_MS);
     const siteResult = await pingOne(site, () => port.site(site).ping());
     const regionResult = await pingOne(region, () => port.region(region).ping());
     return Response.json({ mode, site: siteResult, region: regionResult });
@@ -135,7 +161,7 @@ async function routeDv(request: Request, env: NocEdgeEnv): Promise<Response> {
   ]);
   return handleDv(request, {
     kv: bindingKvPort(env.CACHE),
-    actors: (await selectActorPort(env)).port,
+    actors: (await selectActorPort(env, DV_FLAGS_BUDGET_MS)).port,
     adapter,
     publicKey: publicKey ?? "",
     now: () => Date.now(),
@@ -155,7 +181,7 @@ async function routeTool(
   ]);
   return handler(request, {
     kv: bindingKvPort(env.CACHE),
-    actors: (await selectActorPort(env)).port,
+    actors: (await selectActorPort(env, FLAGS_BUDGET_MS)).port,
     adapter,
     publicKey: publicKey ?? "",
     pinPepper: pinPepper ?? "",
@@ -171,7 +197,7 @@ async function routeMcp(request: Request, env: NocEdgeEnv): Promise<Response> {
   ]);
   return handleMcp(request, {
     kv: bindingKvPort(env.CACHE),
-    actors: (await selectActorPort(env)).port,
+    actors: (await selectActorPort(env, FLAGS_BUDGET_MS)).port,
     adapter,
     now: () => Date.now(),
     mcpToken: mcpToken ?? "",
@@ -193,7 +219,7 @@ interface OpsCtx {
 async function opsCtx(env: NocEdgeEnv): Promise<OpsCtx> {
   return {
     kv: bindingKvPort(env.CACHE),
-    actors: (await selectActorPort(env)).port,
+    actors: (await selectActorPort(env, FLAGS_BUDGET_MS)).port,
     now: Date.now(),
     trace_id: opsTraceId(),
   };
