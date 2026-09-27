@@ -180,12 +180,12 @@ async function main() {
 
   // shared tools
   state.tools = {};
+  const toolList = await listAll('/v2/ai/tools', telnyx);
   for (const tool of tools) {
     try {
       const resolved = resolvePlaceholders(tool, vars);
       const name = tool.display_name;
-      const list = await listAll('/v2/ai/tools', telnyx);
-      const existing = findByName(list, 'display_name', name);
+      const existing = findByName(toolList, 'display_name', name);
       let saved;
       if (existing) {
         console.log(`exists tool:${name} ${existing.id}`);

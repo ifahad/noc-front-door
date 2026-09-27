@@ -118,7 +118,7 @@ export function validateFlow(
       if (!node.instructions_mode) {
         errors.push(`prompt node "${node.id}" missing instructions_mode`);
       }
-      if (node.shared_tool_ids !== null && !node.tools_mode) {
+      if (!node.tools_mode) {
         errors.push(`prompt node "${node.id}" missing tools_mode`);
       }
       if (requireHumanExits && !humanExitExemptions.includes(node.id)) {

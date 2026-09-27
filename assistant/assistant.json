@@ -149,7 +149,8 @@
         "name": "triage",
         "instructions": "The caller is {{caller_name}} from {{customer_name}}; their site is {{site_label}} ({{site_id}}). If site_id is \"unknown\", ask which site. Greet the caller by name. If {{open_ticket_note}} is not \"none\", mention it. If {{repeat_note}} is not \"none\", acknowledge it. Determine whether the caller reports a new fault, asks about an existing ticket, or wants a human. After PIN verification, you may call check_known_incidents once.",
         "instructions_mode": "append",
-        "shared_tool_ids": null
+        "shared_tool_ids": null,
+        "tools_mode": "append"
       },
       {
         "id": "n_collect",
@@ -157,7 +158,8 @@
         "name": "collect fault details",
         "instructions": "The caller is {{caller_name}} from {{customer_name}}; their site is {{site_label}} ({{site_id}}). If site_id is \"unknown\", ask which site. Confirm the site; if the caller names a branch, call find_site. Ask what is wrong, since when, whether the impact is site_down, degraded, or single_user, and whether service is affected. Call get_site_status and tell the caller what the network shows. Call capture_details with site_id, symptom, impact, and service_affecting. Read back a one-sentence summary. Ask the caller to confirm before you open a ticket.",
         "instructions_mode": "append",
-        "shared_tool_ids": null
+        "shared_tool_ids": null,
+        "tools_mode": "append"
       },
       {
         "id": "s_one_moment",
@@ -192,7 +194,8 @@
         "name": "ticket status",
         "instructions": "The caller is {{caller_name}} from {{customer_name}}; their site is {{site_label}} ({{site_id}}). If site_id is \"unknown\", ask which site. Call get_ticket_status for the caller's site by default. Offer to add a note with add_ticket_note if they have an update.",
         "instructions_mode": "append",
-        "shared_tool_ids": null
+        "shared_tool_ids": null,
+        "tools_mode": "append"
       },
       {
         "id": "n_wrapup",

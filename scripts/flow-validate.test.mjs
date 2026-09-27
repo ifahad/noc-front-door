@@ -126,8 +126,13 @@ test('prompt node with shared_tool_ids array missing tools_mode is rejected', ()
   assert.ok(errs.some((e) => e.includes('n1') && e.includes('tools_mode')));
 });
 
-test('prompt node with shared_tool_ids null may omit tools_mode', () => {
-  assert.deepEqual(validateFlow(validFlow()), []);
+test('prompt node with shared_tool_ids null must still set tools_mode', () => {
+  const flow = validFlow();
+  flow.nodes.push(promptNode('n3'));
+  flow.edges.push(edge('e5', 'n2', llm_('done'), 'n3'));
+  delete flow.nodes[3].tools_mode;
+  const errs = validateFlow(flow);
+  assert.ok(errs.some((e) => e.includes('n2') && e.includes('tools_mode')));
 });
 
 test('expression edge with disallowed node type is rejected', () => {

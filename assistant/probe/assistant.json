@@ -89,7 +89,8 @@
         "name": "mcp null tools",
         "instructions": "Immediately call the MCP tool echo_probe with text null-node, then tell the caller exactly what it returned. Then ask the caller to say the word finish.",
         "instructions_mode": "append",
-        "shared_tool_ids": null
+        "shared_tool_ids": null,
+        "tools_mode": "append"
       },
       {
         "id": "n_mcp_replace",
