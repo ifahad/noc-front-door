@@ -24,6 +24,10 @@ const REGION_METHODS = [
   "resolve",
   "ack",
   "reset",
+  "tick",
+  "claimPage",
+  "markPageSent",
+  "getPages",
 ] as const;
 
 function muxApi<API>(

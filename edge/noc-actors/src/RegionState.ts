@@ -1,10 +1,68 @@
 import { StatefulActor } from "@telnyx/edge-runtime";
+import { logEvent } from "../../shared/src/log";
 import { mintIncidentId } from "../../shared/src/ids";
-import type { Incident } from "../../shared/src/types";
+import type { EscState, Incident } from "../../shared/src/types";
 
 const STALE_MS = 6 * 60 * 60 * 1000;
 const UPDATE_WINDOW_MS = 30 * 60 * 1000;
 const EVENTS_LIMIT = 100;
+
+const P1_ACK_WINDOW_MS = 120_000;
+const P2_ACK_WINDOW_MS = 300_000;
+const MAX_ESCALATION_LEVEL = 3;
+const CLAIM_STALE_MS = 60_000;
+const ESC_GRACE_MS = 1_000;
+const PAGES_KEY = "pages";
+
+export interface Page {
+  id: string;
+  level: number;
+  region: string;
+  created_at: number;
+  claimedBy: string | null;
+  claimedAt: number | null;
+  sentAt: number | null;
+}
+
+export interface TickInput {
+  now: number;
+}
+
+export interface TickResult {
+  escalated: boolean;
+  level: number | null;
+}
+
+export interface ClaimPageInput {
+  pageId: string;
+  claimer: string;
+  now: number;
+}
+
+export interface ClaimPageResult {
+  claimed: boolean;
+  page: Page | null;
+}
+
+export interface MarkPageSentInput {
+  pageId: string;
+  now: number;
+}
+
+export interface MarkPageSentResult {
+  ok: boolean;
+  pageId: string;
+}
+
+export interface GetPagesInput {
+  trace_id?: string;
+}
+
+export interface GetPagesResult {
+  pages: Page[];
+  trace_id: string;
+  actor_ms: number;
+}
 
 interface Member {
   ticketId: string;
@@ -150,19 +208,22 @@ export class RegionState extends StatefulActor {
         };
       }
       const seq = ((await this.ctx.storage.get<number>("seq")) ?? 0) + 1;
+      const priority: Incident["priority"] = siteCount >= 3 ? "P1" : "P2";
+      const esc = this.freshEsc(input.at, priority);
       const created: Incident = {
         id: mintIncidentId(input.regionCode, seq),
         version: 1,
         declaredAt: input.at,
-        priority: siteCount >= 3 ? "P1" : "P2",
+        priority,
         sites: this.snapshot(members),
         nextUpdateAt: input.at + UPDATE_WINDOW_MS,
         ackAt: null,
-        esc: null,
+        esc,
         pages: [],
       };
       await this.ctx.storage.put("seq", seq);
       await this.ctx.storage.put("incident", created);
+      await this.ctx.storage.setAlarm(esc.dueAt);
       await this.pushEvent({
         evt: "incident_declared",
         at: input.at,
@@ -192,8 +253,13 @@ export class RegionState extends StatefulActor {
       incident.version += 1;
       if (upgraded) {
         incident.nextUpdateAt = input.at + UPDATE_WINDOW_MS;
+        const esc = this.freshEsc(input.at, incident.priority);
+        incident.esc = esc;
+        await this.ctx.storage.put("incident", incident);
+        await this.ctx.storage.setAlarm(esc.dueAt);
+      } else {
+        await this.ctx.storage.put("incident", incident);
       }
-      await this.ctx.storage.put("incident", incident);
       await this.pushEvent({
         evt: upgraded ? "incident_upgraded" : "incident_sites_updated",
         at: input.at,
@@ -293,7 +359,11 @@ export class RegionState extends StatefulActor {
     if (incident && incident.ackAt === null) {
       incident.ackAt = input.at;
       incident.version += 1;
+      if (incident.esc !== null) {
+        incident.esc.acked = true;
+      }
       await this.ctx.storage.put("incident", incident);
+      await this.ctx.storage.deleteAlarm();
       await this.pushEvent({
         evt: "incident_acked",
         at: input.at,
@@ -323,7 +393,125 @@ export class RegionState extends StatefulActor {
     };
   }
 
-  async alarm(): Promise<void> {}
+  // §12.1: both alarm() and tick() drive the same escalation step. They are
+  // catch-all guarded: a throwing alarm handler loses its alarm on the
+  // platform, so nothing in here may propagate.
+  async alarm(): Promise<void> {
+    try {
+      await this.escalateIfDue(Date.now());
+    } catch (err) {
+      logEvent({
+        svc: "noc-actors",
+        hop: "region/alarm",
+        evt: "region.alarm_failed",
+        lvl: "error",
+        outcome: "error",
+        region: String(this.ctx.id),
+        error: err instanceof Error ? err.message : String(err),
+      });
+    }
+  }
+
+  async tick(input: TickInput): Promise<TickResult> {
+    try {
+      return await this.escalateIfDue(input.now);
+    } catch (err) {
+      logEvent({
+        svc: "noc-actors",
+        hop: "region/tick",
+        evt: "region.tick_failed",
+        lvl: "error",
+        outcome: "error",
+        region: String(this.ctx.id),
+        error: err instanceof Error ? err.message : String(err),
+      });
+      return { escalated: false, level: null };
+    }
+  }
+
+  async claimPage(input: ClaimPageInput): Promise<ClaimPageResult> {
+    const pages = (await this.ctx.storage.get<Page[]>(PAGES_KEY)) ?? [];
+    const page = pages.find((p) => p.id === input.pageId);
+    if (page === undefined || page.sentAt !== null) {
+      return { claimed: false, page: null };
+    }
+    if (
+      page.claimedBy !== null &&
+      (page.claimedAt === null || input.now - page.claimedAt <= CLAIM_STALE_MS)
+    ) {
+      return { claimed: false, page: null };
+    }
+    page.claimedBy = input.claimer;
+    page.claimedAt = input.now;
+    await this.ctx.storage.put(PAGES_KEY, pages);
+    return { claimed: true, page };
+  }
+
+  async markPageSent(input: MarkPageSentInput): Promise<MarkPageSentResult> {
+    const pages = (await this.ctx.storage.get<Page[]>(PAGES_KEY)) ?? [];
+    const page = pages.find((p) => p.id === input.pageId);
+    if (page === undefined) {
+      return { ok: false, pageId: input.pageId };
+    }
+    page.sentAt = input.now;
+    await this.ctx.storage.put(PAGES_KEY, pages);
+    return { ok: true, pageId: input.pageId };
+  }
+
+  async getPages(input: GetPagesInput = {}): Promise<GetPagesResult> {
+    const started = Date.now();
+    const pages = (await this.ctx.storage.get<Page[]>(PAGES_KEY)) ?? [];
+    return {
+      pages: pages.filter((p) => p.sentAt === null),
+      trace_id: input.trace_id ?? "none",
+      actor_ms: Date.now() - started,
+    };
+  }
+
+  private ackWindow(priority: Incident["priority"]): number {
+    return priority === "P1" ? P1_ACK_WINDOW_MS : P2_ACK_WINDOW_MS;
+  }
+
+  private freshEsc(at: number, priority: Incident["priority"]): EscState {
+    return { level: 0, dueAt: at + this.ackWindow(priority), acked: false };
+  }
+
+  // §12.1: a duplicate or early delivery must be harmless, so anything due
+  // within the grace window escalates exactly one level.
+  private async escalateIfDue(now: number): Promise<TickResult> {
+    const incident = (await this.ctx.storage.get<Incident | null>("incident")) ?? null;
+    const esc = incident?.esc ?? null;
+    if (
+      incident === null ||
+      esc === null ||
+      esc.acked ||
+      esc.level >= MAX_ESCALATION_LEVEL ||
+      now < esc.dueAt - ESC_GRACE_MS
+    ) {
+      return { escalated: false, level: null };
+    }
+    const level = esc.level + 1;
+    const pages = (await this.ctx.storage.get<Page[]>(PAGES_KEY)) ?? [];
+    pages.push({
+      id: incident.id + ":" + level,
+      level,
+      region: String(this.ctx.id),
+      created_at: now,
+      claimedBy: null,
+      claimedAt: null,
+      sentAt: null,
+    });
+    await this.ctx.storage.put(PAGES_KEY, pages);
+    esc.level = level;
+    esc.dueAt = now + this.ackWindow(incident.priority);
+    await this.ctx.storage.put("incident", incident);
+    if (level < MAX_ESCALATION_LEVEL) {
+      await this.ctx.storage.setAlarm(esc.dueAt);
+    } else {
+      await this.ctx.storage.deleteAlarm();
+    }
+    return { escalated: true, level };
+  }
 
   private pruneMembers(members: Members, at: number): boolean {
     const cutoff = at - STALE_MS;

@@ -20,7 +20,17 @@ export type SiteStateApi = Pick<
 
 export type RegionStateApi = Pick<
   RegionState,
-  "ping" | "reportSite" | "withdrawSite" | "getIncident" | "resolve" | "ack" | "reset"
+  | "ping"
+  | "reportSite"
+  | "withdrawSite"
+  | "getIncident"
+  | "resolve"
+  | "ack"
+  | "reset"
+  | "tick"
+  | "claimPage"
+  | "markPageSent"
+  | "getPages"
 >;
 
 export interface ActorPort {

@@ -20,10 +20,12 @@ export interface RegionsBinding extends ActorNamespace {
 
 // The MUX binding is a reference to the one working actor type on this trial
 // account (Counter on noc-actor-canary, DEBUGLOG #4). The mux port multiplexes
-// real SiteState/RegionState logic through that single instance.
+// real SiteState/RegionState logic through that single instance. tick(now) is
+// the host-level alarm fallback driver (P2-1).
 export interface MuxStub extends ActorStub {
   site(name: string, method: string, input?: unknown): Promise<unknown>;
   region(name: string, method: string, input?: unknown): Promise<unknown>;
+  tick(now: number): Promise<unknown>;
 }
 
 export interface MuxBinding extends ActorNamespace {

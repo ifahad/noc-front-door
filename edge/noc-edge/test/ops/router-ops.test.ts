@@ -31,6 +31,10 @@ const OPS_PATHS: { method: string; path: string }[] = [
   { method: "POST", path: "/ops/resolve" },
   { method: "POST", path: "/ops/ack" },
   { method: "POST", path: "/ops/unlock" },
+  { method: "POST", path: "/ops/tick" },
+  { method: "GET", path: "/ops/pages/pending" },
+  { method: "POST", path: "/ops/pages/claim" },
+  { method: "POST", path: "/ops/pages/sent" },
   { method: "POST", path: "/diag/race" },
 ];
 
@@ -39,11 +43,20 @@ async function opsRequest(
   path: string,
   auth: string | null,
   env?: RouterEnvBundle,
+  body?: unknown,
 ): Promise<Response> {
   const bundle = env ?? makeRouterEnv(OPS_TOKEN);
   const headers: Record<string, string> =
     auth === null ? {} : { authorization: auth };
-  return route(new Request(`https://x${path}`, { method, headers }), bundle.env);
+  if (body !== undefined) headers["content-type"] = "application/json";
+  return route(
+    new Request(`https://x${path}`, {
+      method,
+      headers,
+      body: body === undefined ? undefined : JSON.stringify(body),
+    }),
+    bundle.env,
+  );
 }
 
 describe("ops routes auth", () => {

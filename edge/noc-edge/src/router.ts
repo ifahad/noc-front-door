@@ -19,13 +19,21 @@ import { getBoard } from "./ops/board";
 import { runDeepHealth } from "./ops/health";
 import {
   OpsActionError,
+  OpsBadRequestError,
   ackIncident,
+  claimRegionPage,
+  markRegionPageSent,
+  pageClaimInput,
+  pageSentInput,
+  pendingPages,
   resetAll,
   resolveIncident,
   stageIncident,
+  tickRegions,
   unlockSite,
   type ActionDeps,
 } from "./ops/actions";
+import { MUX_ACTOR_NAME } from "./services/muxActorPort";
 import { RaceError, runRace, type RaceDeps } from "./ops/race";
 import type { ToolDeps } from "./tools/common";
 import { deadline } from "../../shared/src/timing";
@@ -227,14 +235,17 @@ function opsTraceId(): string {
 interface OpsCtx {
   kv: ReturnType<typeof bindingKvPort>;
   actors: ActorPort;
+  mode: ActorMode;
   now: number;
   trace_id: string;
 }
 
 async function opsCtx(env: NocEdgeEnv): Promise<OpsCtx> {
+  const { port, mode } = await selectActorPort(env, FLAGS_BUDGET_MS);
   return {
     kv: bindingKvPort(env.CACHE),
-    actors: (await selectActorPort(env, FLAGS_BUDGET_MS)).port,
+    actors: port,
+    mode,
     now: Date.now(),
     trace_id: opsTraceId(),
   };
@@ -274,9 +285,20 @@ async function routeOps(
       });
       return Response.json({ error: err.message }, { status: err.status });
     }
+    if (err instanceof OpsBadRequestError) {
+      return Response.json({ error: err.message }, { status: 400 });
+    }
     const detail = err instanceof Error ? err.message : String(err);
     logEvent("error", { lvl: "error", hop, outcome: "error", error: detail });
     return Response.json({ error: "internal" }, { status: 500 });
+  }
+}
+
+async function readJsonBody(request: Request): Promise<unknown> {
+  try {
+    return await request.json();
+  } catch {
+    throw new OpsBadRequestError("invalid_json");
   }
 }
 
@@ -427,6 +449,33 @@ export async function route(
       const ctx = await actionCtx(env);
       const site = new URL(request.url).searchParams.get("site") ?? "";
       return Response.json(await unlockSite(ctx, site));
+    });
+  }
+  if (request.method === "POST" && url.pathname === "/ops/tick") {
+    return routeOps(request, env, "ops/tick", async () => {
+      const ctx = await opsCtx(env);
+      const mux = ctx.mode === "mux" ? env.MUX : null;
+      return Response.json(await tickRegions(ctx, mux));
+    });
+  }
+  if (request.method === "GET" && url.pathname === "/ops/pages/pending") {
+    return routeOps(request, env, "ops/pages-pending", async () => {
+      const ctx = await opsCtx(env);
+      return Response.json({ mode: ctx.mode, pages: await pendingPages(ctx) });
+    });
+  }
+  if (request.method === "POST" && url.pathname === "/ops/pages/claim") {
+    return routeOps(request, env, "ops/pages-claim", async () => {
+      const ctx = await opsCtx(env);
+      const input = pageClaimInput(await readJsonBody(request));
+      return Response.json(await claimRegionPage(ctx, input));
+    });
+  }
+  if (request.method === "POST" && url.pathname === "/ops/pages/sent") {
+    return routeOps(request, env, "ops/pages-sent", async () => {
+      const ctx = await opsCtx(env);
+      const input = pageSentInput(await readJsonBody(request));
+      return Response.json(await markRegionPageSent(ctx, input));
     });
   }
   if (request.method === "POST" && url.pathname === "/diag/race") {

@@ -1,7 +1,7 @@
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import type { Incident } from "../../shared/src/types";
-import type { Members, ReportSiteInput } from "../src/RegionState";
-import { makeRegionState } from "./fakes/storage";
+import type { Members, Page, ReportSiteInput } from "../src/RegionState";
+import { makeRegionState, type RegionStateHarness } from "./fakes/storage";
 
 const T0 = Date.UTC(2026, 8, 26, 6, 0, 0);
 const MIN = 60_000;
@@ -48,7 +48,7 @@ describe("RegionState", () => {
     expect(inc.declaredAt).toBe(T0 + MIN);
     expect(inc.nextUpdateAt).toBe(T0 + MIN + 30 * MIN);
     expect(inc.ackAt).toBeNull();
-    expect(inc.esc).toBeNull();
+    expect(inc.esc).toEqual({ level: 0, dueAt: T0 + MIN + 300_000, acked: false });
     expect(inc.pages).toEqual([]);
     expect(Object.keys(inc.sites).sort()).toEqual(["site-a", "site-b"]);
     expect(inc.sites["site-b"]).toEqual({ ticketId: "NJD-1402", at: T0 + MIN });
@@ -453,5 +453,288 @@ describe("RegionState", () => {
       expect(result).toHaveProperty("trace_id");
       expect(result).toHaveProperty("actor_ms");
     }
+  });
+});
+
+const T1 = Date.UTC(2026, 8, 26, 7, 0, 0);
+const P2_WINDOW_MS = 300_000;
+const P1_WINDOW_MS = 120_000;
+
+async function declareIncident(
+  h: RegionStateHarness,
+  opts: { at: number; p1?: boolean },
+): Promise<Incident> {
+  await h.actor.reportSite({
+    siteId: "site-a",
+    ticketId: "NJD-1401",
+    regionCode: "1",
+    trace_id: "t-a",
+    at: opts.at,
+  });
+  await h.actor.reportSite({
+    siteId: "site-b",
+    ticketId: "NJD-1402",
+    regionCode: "1",
+    trace_id: "t-b",
+    at: opts.at,
+  });
+  if (opts.p1 === true) {
+    await h.actor.reportSite({
+      siteId: "site-c",
+      ticketId: "NJD-1403",
+      regionCode: "1",
+      trace_id: "t-c",
+      at: opts.at,
+    });
+  }
+  const { incident } = await h.actor.getIncident({ trace_id: "t-g" });
+  return incident as Incident;
+}
+
+function failFirstGet(h: RegionStateHarness, message: string, count = 2): void {
+  const inner = h.storage;
+  const orig = inner.get.bind(inner);
+  let called = 0;
+  inner.get = (async <T,>(key: string) => {
+    called += 1;
+    if (called <= count) throw new Error(message);
+    return orig<T>(key);
+  }) as typeof inner.get;
+}
+
+describe("RegionState escalation ladder", () => {
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it("declaring a P2 incident arms the alarm five minutes out with a level-0 esc", async () => {
+    const h = makeRegionState("riyadh-north");
+    const inc = await declareIncident(h, { at: T1 });
+    expect(inc.esc).toEqual({ level: 0, dueAt: T1 + P2_WINDOW_MS, acked: false });
+    expect(await h.storage.getAlarm()).toBe(T1 + P2_WINDOW_MS);
+  });
+
+  it("declaring a P1 incident arms the alarm two minutes out", async () => {
+    const h = makeRegionState("riyadh-north");
+    const inc = await declareIncident(h, { at: T1, p1: true });
+    expect(inc.priority).toBe("P1");
+    expect(inc.esc).toEqual({ level: 0, dueAt: T1 + P1_WINDOW_MS, acked: false });
+    expect(await h.storage.getAlarm()).toBe(T1 + P1_WINDOW_MS);
+  });
+
+  it("an alarm before the due time escalates nothing", async () => {
+    const h = makeRegionState("riyadh-north");
+    const inc = await declareIncident(h, { at: T1 });
+    const due = inc.esc?.dueAt ?? 0;
+    const out = await h.actor.tick({ now: due - 1001 });
+    expect(out).toEqual({ escalated: false, level: null });
+    expect(await h.actor.getPages({ trace_id: "t-1" })).toEqual({
+      pages: [],
+      trace_id: "t-1",
+      actor_ms: expect.any(Number),
+    });
+    expect(await h.storage.getAlarm()).toBe(due);
+  });
+
+  it("an alarm at due escalates once, pages once and re-arms to the next window", async () => {
+    const h = makeRegionState("riyadh-north");
+    const inc = await declareIncident(h, { at: T1 });
+    const due = inc.esc?.dueAt ?? 0;
+    const at = due + 1;
+    const out = await h.actor.tick({ now: at });
+    expect(out).toEqual({ escalated: true, level: 1 });
+    const pages = (await h.actor.getPages()).pages;
+    expect(pages).toHaveLength(1);
+    expect(pages[0]).toEqual({
+      id: "INC-1001:1",
+      level: 1,
+      region: "riyadh-north",
+      created_at: at,
+      claimedBy: null,
+      claimedAt: null,
+      sentAt: null,
+    });
+    expect(await h.storage.getAlarm()).toBe(at + P2_WINDOW_MS);
+    const live = await h.actor.getIncident({ trace_id: "t-2" });
+    expect(live.incident?.esc).toEqual({ level: 1, dueAt: at + P2_WINDOW_MS, acked: false });
+  });
+
+  it("duplicate deliveries at the same moment produce one page", async () => {
+    const h = makeRegionState("riyadh-north");
+    const inc = await declareIncident(h, { at: T1 });
+    const at = (inc.esc?.dueAt ?? 0) + 1;
+    expect(await h.actor.tick({ now: at })).toEqual({ escalated: true, level: 1 });
+    expect(await h.actor.tick({ now: at })).toEqual({ escalated: false, level: null });
+    expect((await h.actor.getPages()).pages).toHaveLength(1);
+  });
+
+  it("a P2-to-P1 upgrade mid-ladder resets the ladder to the P1 window", async () => {
+    const h = makeRegionState("riyadh-north");
+    const inc = await declareIncident(h, { at: T1 });
+    const firstDue = inc.esc?.dueAt ?? 0;
+    const escalated = await h.actor.tick({ now: firstDue + 1 });
+    expect(escalated).toEqual({ escalated: true, level: 1 });
+    const at = firstDue + 2 * MIN;
+    const up = await h.actor.reportSite({
+      siteId: "site-c",
+      ticketId: "NJD-1403",
+      regionCode: "1",
+      trace_id: "t-c",
+      at,
+    });
+    expect(up.upgraded).toBe(true);
+    expect(up.incident?.esc).toEqual({ level: 0, dueAt: at + P1_WINDOW_MS, acked: false });
+    expect(await h.storage.getAlarm()).toBe(at + P1_WINDOW_MS);
+    const second = await h.actor.tick({ now: at + P1_WINDOW_MS + 1 });
+    expect(second).toEqual({ escalated: true, level: 1 });
+    const pages = (await h.actor.getPages()).pages;
+    expect(pages.map((p: Page) => p.level)).toEqual([1, 1]);
+    expect(pages[1].id).toBe("INC-1001:1");
+  });
+
+  it("an alarm after resolve appends no page", async () => {
+    const h = makeRegionState("riyadh-north");
+    const inc = await declareIncident(h, { at: T1 });
+    const due = inc.esc?.dueAt ?? 0;
+    await h.actor.resolve({ trace_id: "t-2", at: due - 1 });
+    expect(await h.storage.getAlarm()).toBeNull();
+    const out = await h.actor.tick({ now: due + 1 });
+    expect(out).toEqual({ escalated: false, level: null });
+    expect((await h.actor.getPages()).pages).toHaveLength(0);
+  });
+
+  it("ack marks the esc acked, deletes the alarm and stops the ladder", async () => {
+    const h = makeRegionState("riyadh-north");
+    const inc = await declareIncident(h, { at: T1 });
+    const due = inc.esc?.dueAt ?? 0;
+    const acked = await h.actor.ack({ by: "ops-1", trace_id: "t-2", at: due - 1 });
+    expect(acked.incident?.esc).toEqual({ level: 0, dueAt: due, acked: true });
+    expect(await h.storage.getAlarm()).toBeNull();
+    expect(h.storage.calls).toContain("deleteAlarm");
+    const out = await h.actor.tick({ now: due + 1 });
+    expect(out).toEqual({ escalated: false, level: null });
+    expect((await h.actor.getPages()).pages).toHaveLength(0);
+  });
+
+  it("the ladder caps at three pages and then deletes the alarm", async () => {
+    const h = makeRegionState("riyadh-north");
+    const inc = await declareIncident(h, { at: T1 });
+    let at = (inc.esc?.dueAt ?? 0) + 1;
+    for (let level = 1; level <= 3; level++) {
+      expect(await h.actor.tick({ now: at })).toEqual({ escalated: true, level });
+      at += P2_WINDOW_MS;
+    }
+    const pages = (await h.actor.getPages()).pages;
+    expect(pages.map((p: Page) => p.id)).toEqual(["INC-1001:1", "INC-1001:2", "INC-1001:3"]);
+    expect(await h.storage.getAlarm()).toBeNull();
+    expect(await h.actor.tick({ now: at })).toEqual({ escalated: false, level: null });
+    expect((await h.actor.getPages()).pages).toHaveLength(3);
+  });
+
+  it("two claims of the same page: exactly one wins", async () => {
+    const h = makeRegionState("riyadh-north");
+    const inc = await declareIncident(h, { at: T1 });
+    const at = (inc.esc?.dueAt ?? 0) + 1;
+    await h.actor.tick({ now: at });
+    const first = await h.actor.claimPage({
+      pageId: "INC-1001:1",
+      claimer: "probe-a",
+      now: at + 1,
+    });
+    expect(first.claimed).toBe(true);
+    expect(first.page?.claimedBy).toBe("probe-a");
+    expect(first.page?.claimedAt).toBe(at + 1);
+    const second = await h.actor.claimPage({
+      pageId: "INC-1001:1",
+      claimer: "probe-b",
+      now: at + 2,
+    });
+    expect(second.claimed).toBe(false);
+  });
+
+  it("a claim of an unknown page loses", async () => {
+    const h = makeRegionState("riyadh-north");
+    await declareIncident(h, { at: T1 });
+    const none = await h.actor.claimPage({
+      pageId: "INC-1001:9",
+      claimer: "probe-a",
+      now: T1 + 1,
+    });
+    expect(none.claimed).toBe(false);
+    expect(none.page).toBeNull();
+  });
+
+  it("a stale claim older than 60 s can be re-claimed, but only while unsent", async () => {
+    const h = makeRegionState("riyadh-north");
+    const inc = await declareIncident(h, { at: T1 });
+    const at = (inc.esc?.dueAt ?? 0) + 1;
+    await h.actor.tick({ now: at });
+    expect(
+      (await h.actor.claimPage({ pageId: "INC-1001:1", claimer: "probe-a", now: at + 1 }))
+        .claimed,
+    ).toBe(true);
+    expect(
+      (await h.actor.claimPage({ pageId: "INC-1001:1", claimer: "probe-b", now: at + 61_000 }))
+        .claimed,
+    ).toBe(true);
+    expect(
+      (await h.actor.markPageSent({ pageId: "INC-1001:1", now: at + 61_001 })).ok,
+    ).toBe(true);
+    expect(
+      (await h.actor.claimPage({ pageId: "INC-1001:1", claimer: "probe-a", now: at + 130_000 }))
+        .claimed,
+    ).toBe(false);
+  });
+
+  it("markPageSent removes the page from pending", async () => {
+    const h = makeRegionState("riyadh-north");
+    const inc = await declareIncident(h, { at: T1 });
+    const at = (inc.esc?.dueAt ?? 0) + 1;
+    await h.actor.tick({ now: at });
+    await h.actor.claimPage({ pageId: "INC-1001:1", claimer: "probe-a", now: at + 1 });
+    expect((await h.actor.getPages()).pages).toHaveLength(1);
+    const sent = await h.actor.markPageSent({ pageId: "INC-1001:1", now: at + 2 });
+    expect(sent).toEqual({ ok: true, pageId: "INC-1001:1" });
+    expect((await h.actor.getPages()).pages).toHaveLength(0);
+    const repeat = await h.actor.markPageSent({ pageId: "INC-1001:1", now: at + 3 });
+    expect(repeat).toEqual({ ok: true, pageId: "INC-1001:1" });
+    const missing = await h.actor.markPageSent({ pageId: "INC-9999:1", now: at + 3 });
+    expect(missing).toEqual({ ok: false, pageId: "INC-9999:1" });
+  });
+
+  it("getPages echoes the trace_id", async () => {
+    const h = makeRegionState("riyadh-north");
+    await declareIncident(h, { at: T1 });
+    expect((await h.actor.getPages({ trace_id: "t-9" })).trace_id).toBe("t-9");
+  });
+
+  it("alarm() at due escalates with the real clock and duplicate delivery is harmless", async () => {
+    const h = makeRegionState("riyadh-north");
+    const inc = await declareIncident(h, { at: T1 });
+    const due = inc.esc?.dueAt ?? 0;
+    const clock = vi.spyOn(Date, "now").mockReturnValue(due + 1);
+    await expect(h.actor.alarm()).resolves.toBeUndefined();
+    clock.mockReturnValue(due + 2);
+    await expect(h.actor.alarm()).resolves.toBeUndefined();
+    expect((await h.actor.getPages()).pages).toHaveLength(1);
+  });
+
+  it("alarm() and tick() never throw when storage fails", async () => {
+    const errSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+    const h = makeRegionState("riyadh-north");
+    await declareIncident(h, { at: T1 });
+    failFirstGet(h, "storage_down");
+    await expect(h.actor.alarm()).resolves.toBeUndefined();
+    const out = await h.actor.tick({ now: T1 + P2_WINDOW_MS + 1 });
+    expect(out).toEqual({ escalated: false, level: null });
+    expect(errSpy).toHaveBeenCalledTimes(2);
+    const line = JSON.parse(String(errSpy.mock.calls[0][0])) as Record<string, unknown>;
+    expect(line).toMatchObject({
+      lvl: "error",
+      svc: "noc-actors",
+      hop: "region/alarm",
+      evt: "region.alarm_failed",
+      error: "storage_down",
+    });
   });
 });

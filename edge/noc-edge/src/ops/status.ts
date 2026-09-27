@@ -24,10 +24,18 @@ export interface StatusRegionIncident {
   declared_local: string;
 }
 
+export interface StatusEsc {
+  level: number;
+  due_local: string;
+  acked: boolean;
+}
+
 export interface StatusRegion {
   region: string;
   label: string;
   incident: StatusRegionIncident | null;
+  esc: StatusEsc | null;
+  pages_pending: number | null;
 }
 
 export interface StatusOpenTicket {
@@ -163,21 +171,63 @@ async function faultFlags(kv: KvPort, failed: { failed: boolean }): Promise<stri
 
 const PUBLIC_REGIONS = REGIONS.filter((r) => r.region !== "lab");
 
+interface EscRead {
+  esc: StatusEsc | null;
+  pages_pending: number | null;
+}
+
+async function readEsc(
+  actors: ActorPort,
+  region: string,
+  failed: { failed: boolean },
+): Promise<EscRead> {
+  const [incidentOut, pagesOut] = await Promise.all([
+    readBounded(
+      actors.region(region).getIncident({ trace_id: "none" }),
+      `status.esc.${region}`,
+      failed,
+    ),
+    readBounded(
+      actors.region(region).getPages({ trace_id: "none" }),
+      `status.pages.${region}`,
+      failed,
+    ),
+  ]);
+  const esc = incidentOut?.incident?.esc ?? null;
+  return {
+    esc:
+      esc === null
+        ? null
+        : {
+            level: esc.level,
+            due_local: formatRiyadhTime(esc.dueAt),
+            acked: esc.acked,
+          },
+    pages_pending: pagesOut === null ? null : pagesOut.pages.length,
+  };
+}
+
 async function regionIncidents(
   kv: KvPort,
+  actors: ActorPort,
   failed: { failed: boolean },
 ): Promise<StatusRegion[]> {
   const regions = await Promise.all(
     PUBLIC_REGIONS.map(async (seed) => {
-      const raw = await readBounded(
-        kv.get(kvKey("incident", "active", seed.region)),
-        `status.incident.${seed.region}`,
-        failed,
-      );
+      const [raw, escRead] = await Promise.all([
+        readBounded(
+          kv.get(kvKey("incident", "active", seed.region)),
+          `status.incident.${seed.region}`,
+          failed,
+        ),
+        readEsc(actors, seed.region, failed),
+      ]);
       return {
         region: seed.region,
         label: seed.label,
         incident: projectionOf(raw),
+        esc: escRead.esc,
+        pages_pending: escRead.pages_pending,
       };
     }),
   );
@@ -231,7 +281,7 @@ export async function buildStatus(deps: {
   const [heartbeat, fault_flags, regions, sites] = await Promise.all([
     heartbeatRead(deps.kv, deps.now, failed),
     faultFlags(deps.kv, failed),
-    regionIncidents(deps.kv, failed),
+    regionIncidents(deps.kv, deps.actors, failed),
     Promise.all(
       SITES.filter((s) => !s.hidden).map((s) =>
         readSite(s.site_id, s.label, deps.actors, failed),

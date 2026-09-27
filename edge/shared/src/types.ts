@@ -35,6 +35,12 @@ export interface Ticket {
   notes: { at: number; text: string; k: string }[];
 }
 
+export interface EscState {
+  level: number;
+  dueAt: number;
+  acked: boolean;
+}
+
 export interface Incident {
   id: string;
   version: number;
@@ -43,7 +49,7 @@ export interface Incident {
   sites: Record<string, { ticketId: string; at: number }>;
   nextUpdateAt: number;
   ackAt: number | null;
-  esc: { level: number; dueAt: number } | null;
+  esc: EscState | null;
   pages: { id: string; claimedBy: string | null; sentAt: number | null }[];
 }
 

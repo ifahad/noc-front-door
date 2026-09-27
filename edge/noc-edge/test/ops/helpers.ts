@@ -59,6 +59,18 @@ export interface RouterEnvBundle {
   env: NocEdgeEnv;
   kv: FakeKv;
   actors: FakeActorPort;
+  regions: Map<string, ReturnType<typeof makeRegionActor>>;
+  sites: Map<string, ReturnType<typeof makeSiteActor>>;
+}
+
+export function regionActorOf(
+  bundle: RouterEnvBundle,
+  region: string,
+): ReturnType<typeof makeRegionActor> {
+  const actor = bundle.env.REGIONS.idFromName(region) as unknown as ReturnType<
+    typeof makeRegionActor
+  >;
+  return actor;
 }
 
 export function makeRouterEnv(opsToken: string | null): RouterEnvBundle {
@@ -97,6 +109,12 @@ export function makeRouterEnv(opsToken: string | null): RouterEnvBundle {
         return actor;
       },
     },
+    MUX: {
+      idFromName: (name: string) => {
+        if (name !== "demo") throw new Error(`unexpected_mux_id:${name}`);
+        return muxStub;
+      },
+    },
     SECRETS: {
       get: async (name: string) => {
         if (name === "OPS_TOKEN") return opsToken;
@@ -106,7 +124,10 @@ export function makeRouterEnv(opsToken: string | null): RouterEnvBundle {
       },
     },
   } as unknown as NocEdgeEnv;
-  return { env, kv, actors };
+  const muxStub = {
+    tick: async () => ({ fired: ["region/riyadh-north"], failed: [], next: null }),
+  };
+  return { env, kv, actors, regions, sites };
 }
 
 export async function openSiteTicket(

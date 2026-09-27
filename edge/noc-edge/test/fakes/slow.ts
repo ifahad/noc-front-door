@@ -90,6 +90,10 @@ const REGION_METHODS: RegionMethod[] = [
   "resolve",
   "ack",
   "reset",
+  "tick",
+  "claimPage",
+  "markPageSent",
+  "getPages",
 ];
 
 function slowWrap<T extends object>(api: T, methodNames: readonly string[], delayMs: number): T {

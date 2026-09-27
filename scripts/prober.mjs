@@ -1,10 +1,13 @@
 #!/usr/bin/env node
 import { execFile } from 'node:child_process';
+import os from 'node:os';
 import { loadDotEnv } from './lib/telnyx.mjs';
-import { createProber } from './lib/prober-core.mjs';
+import { createProber, planPaging } from './lib/prober-core.mjs';
 
 const DEFAULT_EDGE_URL = 'https://noc-edge-41d2a334-7.telnyxcompute.com';
 const PROBE_TIMEOUT_MS = 8000;
+const PAGING_TIMEOUT_MS = 8000;
+const PAGING_INTERVAL_MS = 30_000;
 const SUMMARY_MS = 60_000;
 
 function parseArgs(argv) {
@@ -80,6 +83,89 @@ async function probe(edgeUrl, opsToken) {
 
 function notify(title, body) {
   execFile('notify-send', [title, body], () => {});
+}
+
+// /ops/* helper. The OPS_TOKEN only ever goes into the Authorization header;
+// it is never printed or logged.
+async function apiCall(edgeUrl, opsToken, method, path, body) {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), PAGING_TIMEOUT_MS);
+  try {
+    const res = await fetch(`${edgeUrl}${path}`, {
+      method,
+      headers: {
+        authorization: `Bearer ${opsToken}`,
+        ...(body !== undefined ? { 'content-type': 'application/json' } : {}),
+      },
+      body: body === undefined ? undefined : JSON.stringify(body),
+      signal: controller.signal,
+    });
+    try {
+      return await res.json();
+    } catch {
+      return null;
+    }
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+function pageBanner(pageId, region, level) {
+  const rule = '='.repeat(66);
+  console.log(rule);
+  console.log(` PAGE ${new Date().toISOString()} — ${pageId} (${region}) level ${level}`);
+  console.log(rule);
+}
+
+// "Sending" a page = a loud banner + a desktop notification + one JSON log
+// line, then marking it sent. A failure at any step must not crash the
+// prober loop, and the page is never sent twice: only one claimer wins.
+async function pagingCycle(edgeUrl, opsToken, claimer, claimedIds) {
+  const started = Date.now();
+  try {
+    await apiCall(edgeUrl, opsToken, 'POST', '/ops/tick');
+  } catch {
+    return;
+  }
+  let pending;
+  try {
+    const body = await apiCall(edgeUrl, opsToken, 'GET', '/ops/pages/pending');
+    pending = Array.isArray(body?.pages) ? body.pages : [];
+  } catch {
+    return;
+  }
+  for (const item of planPaging(pending, claimedIds)) {
+    try {
+      const claim = await apiCall(edgeUrl, opsToken, 'POST', '/ops/pages/claim', {
+        region: item.region,
+        pageId: item.pageId,
+        claimer,
+      });
+      if (claim?.claimed !== true) continue;
+      claimedIds.add(item.pageId);
+      pageBanner(item.pageId, item.region, claim.page?.level ?? '?');
+      notify('NOC Front Door: page', `${item.pageId} level ${claim.page?.level ?? '?'} (${item.region})`);
+      console.log(
+        JSON.stringify({
+          ts: new Date().toISOString(),
+          lvl: 'info',
+          svc: 'prober',
+          hop: 'paging',
+          evt: 'page.sent',
+          region: item.region,
+          page_id: item.pageId,
+          total_ms: Date.now() - started,
+          outcome: 'ok',
+        }),
+      );
+      await apiCall(edgeUrl, opsToken, 'POST', '/ops/pages/sent', {
+        region: item.region,
+        pageId: item.pageId,
+      });
+    } catch {
+      // one failed page must not stop the others
+    }
+  }
 }
 
 function banner(edgeUrl, threshold, result) {
@@ -160,6 +246,27 @@ async function loop(edgeUrl, opsToken, intervalSec) {
 
   await guardedTick();
   setInterval(guardedTick, intervalMs);
+
+  const claimedIds = new Set();
+  const claimer = `${os.hostname()}:${process.pid}`;
+  let pagingRunning = false;
+  const guardedPaging = async () => {
+    if (pagingRunning) return;
+    pagingRunning = true;
+    try {
+      await pagingCycle(edgeUrl, opsToken, claimer, claimedIds);
+    } catch {
+      // the paging cycle must never take the prober down
+    } finally {
+      pagingRunning = false;
+    }
+  };
+  console.log(
+    `prober: paging cycle (POST /ops/tick, claim/send pages) every ${PAGING_INTERVAL_MS / 1000}s as ${claimer}`,
+  );
+  await guardedPaging();
+  const pagingTimer = setInterval(guardedPaging, PAGING_INTERVAL_MS);
+  pagingTimer.unref?.();
 }
 
 const args = parseArgs(process.argv.slice(2));

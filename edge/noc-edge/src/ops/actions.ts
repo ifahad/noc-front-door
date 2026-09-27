@@ -1,11 +1,16 @@
 import { sha256Hex } from "../../../shared/src/ids";
 import type { SeedAdapter } from "../../../shared/src/itsm";
 import { kvKey } from "../../../shared/src/kvkeys";
+import { mask } from "../../../shared/src/mask";
 import { REGIONS, SITES } from "../../../shared/src/seed";
+import { formatRiyadhTime } from "../../../shared/src/readback";
 import type { Session } from "../../../shared/src/types";
 import { logEvent } from "../log";
+import type { MuxBinding } from "../actors";
 import type { ActorPort } from "../services/actorPort";
+import type { ActorMode } from "../services/flags";
 import { projectionOf, syncProjection, type IncidentProjection } from "../services/incidents";
+import { MUX_ACTOR_NAME } from "../services/muxActorPort";
 import type { KvPort } from "../services/kvPort";
 import { open as openTicket } from "../services/tickets";
 
@@ -57,6 +62,190 @@ export class OpsActionError extends Error {
     this.name = "OpsActionError";
     this.status = 422;
   }
+}
+
+export class OpsBadRequestError extends Error {
+  status: 400;
+
+  constructor(message: string) {
+    super(message);
+    this.name = "OpsBadRequestError";
+    this.status = 400;
+  }
+}
+
+export interface MuxTickSummary {
+  fired: string[];
+  failed: string[];
+  next: number | null;
+}
+
+export interface RegionTickResult {
+  region: string;
+  escalated: boolean;
+  level: number | null;
+  error?: string;
+}
+
+export interface OpsTickResult {
+  mode: ActorMode;
+  mux?: MuxTickSummary;
+  regions?: RegionTickResult[];
+}
+
+export interface PendingPage {
+  id: string;
+  region: string;
+  level: number;
+  created_local: string;
+}
+
+export interface PageClaimResult {
+  region: string;
+  pageId: string;
+  claimed: boolean;
+}
+
+export interface PageSentResult {
+  region: string;
+  pageId: string;
+  ok: boolean;
+}
+
+type PagingDeps = Pick<ActionDeps, "actors" | "now" | "trace_id">;
+
+// One entity's failure must not lose the others' ticks (review focus 3).
+export async function tickRegions(
+  deps: PagingDeps,
+  mux: MuxBinding | null,
+): Promise<OpsTickResult> {
+  if (mux !== null) {
+    const summary = (await mux
+      .idFromName(MUX_ACTOR_NAME)
+      .tick(deps.now)) as MuxTickSummary;
+    logEvent("ops.tick", {
+      hop: "ops/tick",
+      trace_id: deps.trace_id,
+      outcome: "ok",
+      mode: "mux",
+      fired: summary.fired?.length ?? 0,
+      failed: summary.failed?.length ?? 0,
+    });
+    return { mode: "mux", mux: summary };
+  }
+  const regions: RegionTickResult[] = [];
+  for (const seed of REGIONS) {
+    try {
+      const out = await deps.actors.region(seed.region).tick({ now: deps.now });
+      regions.push({
+        region: seed.region,
+        escalated: out.escalated,
+        level: out.level,
+      });
+    } catch (err) {
+      regions.push({
+        region: seed.region,
+        escalated: false,
+        level: null,
+        error: err instanceof Error ? err.message : String(err),
+      });
+    }
+  }
+  logEvent("ops.tick", {
+    hop: "ops/tick",
+    trace_id: deps.trace_id,
+    outcome: "ok",
+    mode: "per-entity",
+    regions: regions.length,
+    escalated: regions.filter((r) => r.escalated).length,
+  });
+  return { mode: "per-entity", regions };
+}
+
+export async function pendingPages(deps: PagingDeps): Promise<PendingPage[]> {
+  const pages: PendingPage[] = [];
+  for (const seed of REGIONS) {
+    const out = await deps.actors.region(seed.region).getPages({ trace_id: deps.trace_id });
+    for (const page of out.pages) {
+      pages.push({
+        id: mask(page.id),
+        region: seed.region,
+        level: page.level,
+        created_local: formatRiyadhTime(page.created_at),
+      });
+    }
+  }
+  logEvent("ops.pages_pending", {
+    hop: "ops/pages-pending",
+    trace_id: deps.trace_id,
+    outcome: "ok",
+    pages: pages.length,
+  });
+  return pages;
+}
+
+export async function claimRegionPage(
+  deps: PagingDeps,
+  input: { region: string; pageId: string; claimer: string },
+): Promise<PageClaimResult> {
+  const out = await deps.actors
+    .region(input.region)
+    .claimPage({ pageId: input.pageId, claimer: input.claimer, now: deps.now });
+  logEvent("ops.page_claim", {
+    hop: "ops/pages-claim",
+    trace_id: deps.trace_id,
+    outcome: "ok",
+    region: input.region,
+    page_id: input.pageId,
+    claimed: out.claimed,
+  });
+  return { region: input.region, pageId: input.pageId, claimed: out.claimed };
+}
+
+export async function markRegionPageSent(
+  deps: PagingDeps,
+  input: { region: string; pageId: string },
+): Promise<PageSentResult> {
+  const out = await deps.actors
+    .region(input.region)
+    .markPageSent({ pageId: input.pageId, now: deps.now });
+  logEvent("ops.page_sent", {
+    hop: "ops/pages-sent",
+    trace_id: deps.trace_id,
+    outcome: "ok",
+    region: input.region,
+    page_id: input.pageId,
+    ok: out.ok,
+  });
+  return { region: input.region, pageId: input.pageId, ok: out.ok };
+}
+
+export function pageClaimInput(body: unknown): {
+  region: string;
+  pageId: string;
+  claimer: string;
+} {
+  const fields = (body ?? null) as Record<string, unknown> | null;
+  const region = typeof fields?.region === "string" ? fields.region : "";
+  const pageId = typeof fields?.pageId === "string" ? fields.pageId : "";
+  const claimer = typeof fields?.claimer === "string" ? fields.claimer : "";
+  if (!REGIONS.some((r) => r.region === region)) {
+    throw new OpsBadRequestError("unknown_region");
+  }
+  if (pageId.length === 0) throw new OpsBadRequestError("missing_pageId");
+  if (claimer.length === 0) throw new OpsBadRequestError("missing_claimer");
+  return { region, pageId, claimer };
+}
+
+export function pageSentInput(body: unknown): { region: string; pageId: string } {
+  const fields = (body ?? null) as Record<string, unknown> | null;
+  const region = typeof fields?.region === "string" ? fields.region : "";
+  const pageId = typeof fields?.pageId === "string" ? fields.pageId : "";
+  if (!REGIONS.some((r) => r.region === region)) {
+    throw new OpsBadRequestError("unknown_region");
+  }
+  if (pageId.length === 0) throw new OpsBadRequestError("missing_pageId");
+  return { region, pageId };
 }
 
 const FAULT_PREFIX = kvKey("flag", "fault") + "/";

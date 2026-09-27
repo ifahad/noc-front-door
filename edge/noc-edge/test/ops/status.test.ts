@@ -71,6 +71,8 @@ describe("ops status", () => {
       region: "riyadh-north",
       label: "Riyadh North",
       incident: { id: "INC-101", priority: "P1", site_count: 2, declared_local: "9:52 AM" },
+      esc: null,
+      pages_pending: 0,
     });
     expect(payload.regions.map((r) => r.region)).toEqual(
       REGIONS.filter((r) => r.region !== "lab").map((r) => r.region),
@@ -88,6 +90,45 @@ describe("ops status", () => {
       SITES.filter((s) => !s.hidden).map((s) => s.site_id),
     );
     expect(payload.degraded).toBeUndefined();
+  });
+
+  it("reports the escalation level and pending pages from the actors", async () => {
+    const kv = new FakeKv();
+    const actors = new FakeActorPort();
+    const region = actors.region("riyadh-north");
+    await region.reportSite({
+      siteId: "RUH-114",
+      ticketId: "NJD-1401",
+      regionCode: "1",
+      trace_id: "t-1",
+      at: T0,
+    });
+    await region.reportSite({
+      siteId: "RUH-121",
+      ticketId: "NJD-1402",
+      regionCode: "1",
+      trace_id: "t-2",
+      at: T0,
+    });
+    const payload = await runStatus(kv, actors);
+    const riyadh = payload.regions.find((r) => r.region === "riyadh-north");
+    expect(riyadh?.esc).toEqual({
+      level: 0,
+      due_local: expect.any(String),
+      acked: false,
+    });
+    expect(riyadh?.pages_pending).toBe(0);
+  });
+
+  it("marks regions degraded and nulls esc when an escalation read fails", async () => {
+    const kv = new FakeKv();
+    const actors = new FakeActorPort();
+    actors.failNextGetIncident("riyadh-north", 1);
+    const payload = await runStatus(kv, actors);
+    const riyadh = payload.regions.find((r) => r.region === "riyadh-north");
+    expect(riyadh?.esc).toBeNull();
+    expect(riyadh?.pages_pending).toBe(0);
+    expect(payload.degraded).toBe(true);
   });
 
   it("excludes the internal lab region from the public status", async () => {

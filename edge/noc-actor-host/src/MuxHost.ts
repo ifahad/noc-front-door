@@ -35,6 +35,10 @@ const REGION_METHODS = [
   "resolve",
   "ack",
   "reset",
+  "tick",
+  "claimPage",
+  "markPageSent",
+  "getPages",
 ];
 
 // The exported class name MUST stay "Counter": this host is the pre-existing

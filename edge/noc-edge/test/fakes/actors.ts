@@ -87,6 +87,10 @@ const REGION_METHODS = [
   "resolve",
   "ack",
   "reset",
+  "tick",
+  "claimPage",
+  "markPageSent",
+  "getPages",
 ] as const;
 
 function serialise<T extends object>(api: T, methodNames: readonly string[]): T {
@@ -193,6 +197,6 @@ export class FakeActorPort implements ActorPort {
   }
 }
 
-function storageOf(actor: SiteState | RegionState): FakeStorage {
+export function storageOf(actor: SiteState | RegionState): FakeStorage {
   return (actor as unknown as { ctx: { storage: FakeStorage } }).ctx.storage;
 }
