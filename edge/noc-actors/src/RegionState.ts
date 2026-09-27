@@ -218,6 +218,7 @@ export class RegionState extends StatefulActor {
         sites: this.snapshot(members),
         nextUpdateAt: input.at + UPDATE_WINDOW_MS,
         ackAt: null,
+        pageSeq: 0,
         esc,
         pages: [],
       };
@@ -491,9 +492,14 @@ export class RegionState extends StatefulActor {
       return { escalated: false, level: null };
     }
     const level = esc.level + 1;
+    // pageSeq is a monotonic per-incident counter that upgrades never reset,
+    // so a page id minted after a mid-ladder ladder reset can never collide
+    // with an earlier (possibly already-sent) page.
+    const pageSeq = (incident.pageSeq ?? 0) + 1;
+    incident.pageSeq = pageSeq;
     const pages = (await this.ctx.storage.get<Page[]>(PAGES_KEY)) ?? [];
     pages.push({
-      id: incident.id + ":" + level,
+      id: incident.id + ":p" + pageSeq,
       level,
       region: String(this.ctx.id),
       created_at: now,

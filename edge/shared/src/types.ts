@@ -49,6 +49,7 @@ export interface Incident {
   sites: Record<string, { ticketId: string; at: number }>;
   nextUpdateAt: number;
   ackAt: number | null;
+  pageSeq: number;
   esc: EscState | null;
   pages: { id: string; claimedBy: string | null; sentAt: number | null }[];
 }

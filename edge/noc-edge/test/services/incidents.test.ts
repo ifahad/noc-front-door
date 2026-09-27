@@ -115,6 +115,7 @@ describe("incidentSummaryOf", () => {
     sites: {},
     nextUpdateAt: T0 + 30 * 60_000,
     ackAt: null,
+    pageSeq: 0,
     esc: null,
     pages: [],
   };

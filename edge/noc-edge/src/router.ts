@@ -33,7 +33,6 @@ import {
   unlockSite,
   type ActionDeps,
 } from "./ops/actions";
-import { MUX_ACTOR_NAME } from "./services/muxActorPort";
 import { RaceError, runRace, type RaceDeps } from "./ops/race";
 import type { ToolDeps } from "./tools/common";
 import { deadline } from "../../shared/src/timing";

@@ -156,7 +156,7 @@ describe("GET /ops/pages/pending", () => {
     expect(body.mode).toBe("per-entity");
     expect(body.pages).toHaveLength(1);
     expect(body.pages[0]).toMatchObject({
-      id: "INC-1001:1",
+      id: "INC-1001:p1",
       region: "riyadh-north",
       level: 1,
       created_local: expect.any(String),
@@ -169,6 +169,28 @@ describe("GET /ops/pages/pending", () => {
     expect(res.status).toBe(200);
     expect(((await res.json()) as { pages: unknown[] }).pages).toEqual([]);
   });
+
+  it("still serves the healthy regions' pending pages when one region read fails", async () => {
+    const bundle = makeRouterEnv(TOKEN);
+    await openIncidentDueInThePast(bundle);
+    await opsRequest("POST", "/ops/tick", bundle);
+    const inner = bundle.env.REGIONS.idFromName.bind(bundle.env.REGIONS);
+    bundle.env.REGIONS.idFromName = ((name: string) => {
+      if (name === "jeddah") {
+        return {
+          getPages: async () => {
+            throw new Error("actor_down");
+          },
+        } as unknown as ReturnType<typeof makeRegionActor>;
+      }
+      return inner(name) as unknown as ReturnType<typeof makeRegionActor>;
+    }) as unknown as typeof bundle.env.REGIONS.idFromName;
+    const res = await opsRequest("GET", "/ops/pages/pending", bundle);
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as { pages: { id: string }[] };
+    expect(body.pages).toHaveLength(1);
+    expect(body.pages[0].id).toBe("INC-1001:p1");
+  });
 });
 
 describe("POST /ops/pages/claim", () => {
@@ -179,7 +201,7 @@ describe("POST /ops/pages/claim", () => {
 
     const first = await opsRequest("POST", "/ops/pages/claim", bundle, {
       region: "riyadh-north",
-      pageId: "INC-1001:1",
+      pageId: "INC-1001:p1",
       claimer: "host-a:11",
     });
     expect(first.status).toBe(200);
@@ -187,7 +209,7 @@ describe("POST /ops/pages/claim", () => {
 
     const second = await opsRequest("POST", "/ops/pages/claim", bundle, {
       region: "riyadh-north",
-      pageId: "INC-1001:1",
+      pageId: "INC-1001:p1",
       claimer: "host-b:22",
     });
     expect(second.status).toBe(200);
@@ -199,8 +221,8 @@ describe("POST /ops/pages/claim", () => {
     for (const body of [
       { region: "riyadh-north", pageId: "", claimer: "host-a" },
       { region: "riyadh-north", claimer: "host-a" },
-      { pageId: "INC-1001:1", claimer: "host-a" },
-      { region: "atlantis", pageId: "INC-1001:1", claimer: "host-a" },
+      { pageId: "INC-1001:p1", claimer: "host-a" },
+      { region: "atlantis", pageId: "INC-1001:p1", claimer: "host-a" },
     ]) {
       const res = await opsRequest("POST", "/ops/pages/claim", bundle, body);
       expect(res.status).toBe(400);
@@ -224,13 +246,13 @@ describe("POST /ops/pages/sent", () => {
     await opsRequest("POST", "/ops/tick", bundle);
     await opsRequest("POST", "/ops/pages/claim", bundle, {
       region: "riyadh-north",
-      pageId: "INC-1001:1",
+      pageId: "INC-1001:p1",
       claimer: "host-a:11",
     });
 
     const sent = await opsRequest("POST", "/ops/pages/sent", bundle, {
       region: "riyadh-north",
-      pageId: "INC-1001:1",
+      pageId: "INC-1001:p1",
     });
     expect(sent.status).toBe(200);
     expect(((await sent.json()) as { ok: boolean }).ok).toBe(true);
@@ -247,7 +269,7 @@ describe("POST /ops/pages/sent", () => {
     expect(missing.status).toBe(400);
     const unknownRegion = await opsRequest("POST", "/ops/pages/sent", bundle, {
       region: "nowhere",
-      pageId: "INC-1001:1",
+      pageId: "INC-1001:p1",
     });
     expect(unknownRegion.status).toBe(400);
   });

@@ -165,7 +165,20 @@ export async function tickRegions(
 export async function pendingPages(deps: PagingDeps): Promise<PendingPage[]> {
   const pages: PendingPage[] = [];
   for (const seed of REGIONS) {
-    const out = await deps.actors.region(seed.region).getPages({ trace_id: deps.trace_id });
+    let out;
+    try {
+      out = await deps.actors.region(seed.region).getPages({ trace_id: deps.trace_id });
+    } catch (err) {
+      logEvent("ops.pages_region_failed", {
+        lvl: "warn",
+        hop: "ops/pages-pending",
+        trace_id: deps.trace_id,
+        outcome: "fallback",
+        region: seed.region,
+        error: err instanceof Error ? err.message : String(err),
+      });
+      continue;
+    }
     for (const page of out.pages) {
       pages.push({
         id: mask(page.id),

@@ -546,7 +546,7 @@ describe("RegionState escalation ladder", () => {
     const pages = (await h.actor.getPages()).pages;
     expect(pages).toHaveLength(1);
     expect(pages[0]).toEqual({
-      id: "INC-1001:1",
+      id: "INC-1001:p1",
       level: 1,
       region: "riyadh-north",
       created_at: at,
@@ -589,7 +589,43 @@ describe("RegionState escalation ladder", () => {
     expect(second).toEqual({ escalated: true, level: 1 });
     const pages = (await h.actor.getPages()).pages;
     expect(pages.map((p: Page) => p.level)).toEqual([1, 1]);
-    expect(pages[1].id).toBe("INC-1001:1");
+    expect(pages[1].id).toBe("INC-1001:p2");
+  });
+
+  it("a page minted after a mid-ladder upgrade gets a fresh id even when the earlier one was sent", async () => {
+    const h = makeRegionState("riyadh-north");
+    const inc = await declareIncident(h, { at: T1 });
+    const at = (inc.esc?.dueAt ?? 0) + 1;
+    await h.actor.tick({ now: at });
+    expect(
+      (await h.actor.claimPage({ pageId: "INC-1001:p1", claimer: "probe-a", now: at + 1 }))
+        .claimed,
+    ).toBe(true);
+    expect((await h.actor.markPageSent({ pageId: "INC-1001:p1", now: at + 2 })).ok).toBe(true);
+    const at2 = at + MIN;
+    const up = await h.actor.reportSite({
+      siteId: "site-c",
+      ticketId: "NJD-1403",
+      regionCode: "1",
+      trace_id: "t-c",
+      at: at2,
+    });
+    expect(up.upgraded).toBe(true);
+    const at3 = (up.incident?.esc?.dueAt ?? 0) + 1;
+    const escalated = await h.actor.tick({ now: at3 });
+    expect(escalated).toEqual({ escalated: true, level: 1 });
+    const pending = (await h.actor.getPages()).pages;
+    expect(pending).toHaveLength(1);
+    expect(pending[0].id).toBe("INC-1001:p2");
+    expect(pending[0].id).not.toBe("INC-1001:p1");
+    const claim = await h.actor.claimPage({
+      pageId: "INC-1001:p2",
+      claimer: "probe-b",
+      now: at3 + 1,
+    });
+    expect(claim.claimed).toBe(true);
+    expect((await h.actor.markPageSent({ pageId: "INC-1001:p2", now: at3 + 2 })).ok).toBe(true);
+    expect((await h.actor.getPages()).pages).toHaveLength(0);
   });
 
   it("an alarm after resolve appends no page", async () => {
@@ -625,7 +661,7 @@ describe("RegionState escalation ladder", () => {
       at += P2_WINDOW_MS;
     }
     const pages = (await h.actor.getPages()).pages;
-    expect(pages.map((p: Page) => p.id)).toEqual(["INC-1001:1", "INC-1001:2", "INC-1001:3"]);
+    expect(pages.map((p: Page) => p.id)).toEqual(["INC-1001:p1", "INC-1001:p2", "INC-1001:p3"]);
     expect(await h.storage.getAlarm()).toBeNull();
     expect(await h.actor.tick({ now: at })).toEqual({ escalated: false, level: null });
     expect((await h.actor.getPages()).pages).toHaveLength(3);
@@ -637,7 +673,7 @@ describe("RegionState escalation ladder", () => {
     const at = (inc.esc?.dueAt ?? 0) + 1;
     await h.actor.tick({ now: at });
     const first = await h.actor.claimPage({
-      pageId: "INC-1001:1",
+      pageId: "INC-1001:p1",
       claimer: "probe-a",
       now: at + 1,
     });
@@ -645,7 +681,7 @@ describe("RegionState escalation ladder", () => {
     expect(first.page?.claimedBy).toBe("probe-a");
     expect(first.page?.claimedAt).toBe(at + 1);
     const second = await h.actor.claimPage({
-      pageId: "INC-1001:1",
+      pageId: "INC-1001:p1",
       claimer: "probe-b",
       now: at + 2,
     });
@@ -656,7 +692,7 @@ describe("RegionState escalation ladder", () => {
     const h = makeRegionState("riyadh-north");
     await declareIncident(h, { at: T1 });
     const none = await h.actor.claimPage({
-      pageId: "INC-1001:9",
+      pageId: "INC-1001:p9",
       claimer: "probe-a",
       now: T1 + 1,
     });
@@ -670,18 +706,18 @@ describe("RegionState escalation ladder", () => {
     const at = (inc.esc?.dueAt ?? 0) + 1;
     await h.actor.tick({ now: at });
     expect(
-      (await h.actor.claimPage({ pageId: "INC-1001:1", claimer: "probe-a", now: at + 1 }))
+      (await h.actor.claimPage({ pageId: "INC-1001:p1", claimer: "probe-a", now: at + 1 }))
         .claimed,
     ).toBe(true);
     expect(
-      (await h.actor.claimPage({ pageId: "INC-1001:1", claimer: "probe-b", now: at + 61_000 }))
+      (await h.actor.claimPage({ pageId: "INC-1001:p1", claimer: "probe-b", now: at + 61_000 }))
         .claimed,
     ).toBe(true);
     expect(
-      (await h.actor.markPageSent({ pageId: "INC-1001:1", now: at + 61_001 })).ok,
+      (await h.actor.markPageSent({ pageId: "INC-1001:p1", now: at + 61_001 })).ok,
     ).toBe(true);
     expect(
-      (await h.actor.claimPage({ pageId: "INC-1001:1", claimer: "probe-a", now: at + 130_000 }))
+      (await h.actor.claimPage({ pageId: "INC-1001:p1", claimer: "probe-a", now: at + 130_000 }))
         .claimed,
     ).toBe(false);
   });
@@ -691,15 +727,15 @@ describe("RegionState escalation ladder", () => {
     const inc = await declareIncident(h, { at: T1 });
     const at = (inc.esc?.dueAt ?? 0) + 1;
     await h.actor.tick({ now: at });
-    await h.actor.claimPage({ pageId: "INC-1001:1", claimer: "probe-a", now: at + 1 });
+    await h.actor.claimPage({ pageId: "INC-1001:p1", claimer: "probe-a", now: at + 1 });
     expect((await h.actor.getPages()).pages).toHaveLength(1);
-    const sent = await h.actor.markPageSent({ pageId: "INC-1001:1", now: at + 2 });
-    expect(sent).toEqual({ ok: true, pageId: "INC-1001:1" });
+    const sent = await h.actor.markPageSent({ pageId: "INC-1001:p1", now: at + 2 });
+    expect(sent).toEqual({ ok: true, pageId: "INC-1001:p1" });
     expect((await h.actor.getPages()).pages).toHaveLength(0);
-    const repeat = await h.actor.markPageSent({ pageId: "INC-1001:1", now: at + 3 });
-    expect(repeat).toEqual({ ok: true, pageId: "INC-1001:1" });
-    const missing = await h.actor.markPageSent({ pageId: "INC-9999:1", now: at + 3 });
-    expect(missing).toEqual({ ok: false, pageId: "INC-9999:1" });
+    const repeat = await h.actor.markPageSent({ pageId: "INC-1001:p1", now: at + 3 });
+    expect(repeat).toEqual({ ok: true, pageId: "INC-1001:p1" });
+    const missing = await h.actor.markPageSent({ pageId: "INC-9999:p1", now: at + 3 });
+    expect(missing).toEqual({ ok: false, pageId: "INC-9999:p1" });
   });
 
   it("getPages echoes the trace_id", async () => {

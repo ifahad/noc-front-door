@@ -85,6 +85,23 @@ function notify(title, body) {
   execFile('notify-send', [title, body], () => {});
 }
 
+function logLine(evt, fields = {}) {
+  console.log(
+    JSON.stringify({
+      ts: new Date().toISOString(),
+      lvl: 'info',
+      svc: 'prober',
+      hop: 'paging',
+      evt,
+      ...fields,
+    }),
+  );
+}
+
+function errorText(err) {
+  return String(err?.cause?.message ?? err?.message ?? err);
+}
+
 // /ops/* helper. The OPS_TOKEN only ever goes into the Authorization header;
 // it is never printed or logged.
 async function apiCall(edgeUrl, opsToken, method, path, body) {
@@ -124,46 +141,59 @@ async function pagingCycle(edgeUrl, opsToken, claimer, claimedIds) {
   const started = Date.now();
   try {
     await apiCall(edgeUrl, opsToken, 'POST', '/ops/tick');
-  } catch {
+  } catch (err) {
+    logLine('paging.tick_failed', { lvl: 'warn', outcome: 'error', error: errorText(err) });
     return;
   }
   let pending;
   try {
     const body = await apiCall(edgeUrl, opsToken, 'GET', '/ops/pages/pending');
     pending = Array.isArray(body?.pages) ? body.pages : [];
-  } catch {
+  } catch (err) {
+    logLine('paging.pending_failed', { lvl: 'warn', outcome: 'error', error: errorText(err) });
     return;
   }
   for (const item of planPaging(pending, claimedIds)) {
+    let claim;
     try {
-      const claim = await apiCall(edgeUrl, opsToken, 'POST', '/ops/pages/claim', {
+      claim = await apiCall(edgeUrl, opsToken, 'POST', '/ops/pages/claim', {
         region: item.region,
         pageId: item.pageId,
         claimer,
       });
-      if (claim?.claimed !== true) continue;
-      claimedIds.add(item.pageId);
-      pageBanner(item.pageId, item.region, claim.page?.level ?? '?');
-      notify('NOC Front Door: page', `${item.pageId} level ${claim.page?.level ?? '?'} (${item.region})`);
-      console.log(
-        JSON.stringify({
-          ts: new Date().toISOString(),
-          lvl: 'info',
-          svc: 'prober',
-          hop: 'paging',
-          evt: 'page.sent',
-          region: item.region,
-          page_id: item.pageId,
-          total_ms: Date.now() - started,
-          outcome: 'ok',
-        }),
-      );
+    } catch (err) {
+      logLine('paging.claim_failed', {
+        lvl: 'warn',
+        outcome: 'error',
+        region: item.region,
+        page_id: item.pageId,
+        error: errorText(err),
+      });
+      continue;
+    }
+    if (claim?.claimed !== true) continue;
+    claimedIds.add(item.pageId);
+    pageBanner(item.pageId, item.region, claim.page?.level ?? '?');
+    notify('NOC Front Door: page', `${item.pageId} level ${claim.page?.level ?? '?'} (${item.region})`);
+    logLine('page.sent', {
+      region: item.region,
+      page_id: item.pageId,
+      total_ms: Date.now() - started,
+      outcome: 'ok',
+    });
+    try {
       await apiCall(edgeUrl, opsToken, 'POST', '/ops/pages/sent', {
         region: item.region,
         pageId: item.pageId,
       });
-    } catch {
-      // one failed page must not stop the others
+    } catch (err) {
+      logLine('paging.sent_failed', {
+        lvl: 'warn',
+        outcome: 'error',
+        region: item.region,
+        page_id: item.pageId,
+        error: errorText(err),
+      });
     }
   }
 }
