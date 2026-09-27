@@ -2,6 +2,16 @@
 
 Najd Networks is a fictional managed-services provider in Saudi Arabia; its customers are **Al-Waha Pharmacies** and **Rawda Cafés**. When a branch network fails, the customer calls one 24/7 AI line — **Sanad** — the NOC's fault line. Sanad verifies the site by PIN, recognises an ongoing regional incident, opens or joins tickets, escalates a regional incident P2→P1 when a third branch is hit, and hands over to the on-call engineer. It runs on Telnyx Voice AI (Conversation Workflows) + Telnyx Edge Compute (Functions, KV, Stateful Actors) + a custom MCP server. Binding design: [`docs/superpowers/specs/2026-09-26-noc-front-door-design.md`](docs/superpowers/specs/2026-09-26-noc-front-door-design.md).
 
+## Use case & users
+
+**The problem.** A KSA managed-services provider's NOC gets outage calls 24/7 from branch staff of enterprise customers — the **Al-Waha Pharmacies** and **Rawda Café** chains. During a regional outage (an ISP or Telnyx event hitting a whole area) every affected branch calls separately, so the NOC queue fills with **duplicate reports** of the same incident, each one a fresh interruption to the engineer on the line.
+
+**The callers.** Branch managers and branch staff at customer sites, phoning in outages and asking for status.
+
+**The receivers.** NOC on-call engineers: they receive **verified** (site + PIN), **de-duplicated** (one ticket per site, reports attached to the regional incident), **prioritised** tickets — P2 for a region, **P1 once a third branch is hit** — and **pages** when a P1 is not acknowledged inside its SLA window.
+
+**What Sanad does.** Verifies the caller by site + PIN, recognises the ongoing regional incident, opens or joins tickets, escalates P2→P1 when a third branch joins, pages the on-call engineer if a P1 is not acknowledged, and hands over to a human on request.
+
 ## Try it
 
 Open the **NOC wall**: **https://noc-edge-41d2a334-7.telnyxcompute.com/demo**
@@ -40,7 +50,7 @@ Reviewer credentials (fictional demo sites, published intentionally for reviewer
 Three scripted scenarios:
 
 1. **Join the Riyadh North incident** — call as RUH-114/5944 during a staged 2-site incident: a deterministic spoken advisory, then join, and the incident is upgraded to P1 when a third branch is hit (watch it live on `/ops/status`).
-2. **Lockout — use the reserved site DMM-011**: say **site D M M zero one one**, then give a wrong PIN three times → the call is locked for phone verification → escalation to an engineer. Never run this on RUH-114/JED-007: six failures from two calls lock a site's PIN verification **site-wide for 15 minutes**, which would block scenario 1 for everyone. (On `/demo` scenario 3 the widget's copy says "give any site ID" — give DMM-011 there too.)
+2. **Lockout — use the reserved site DMM-011**: say **site D M M zero one one**, then give a wrong PIN three times → the call is locked for phone verification → escalation to an engineer. Never run this on RUH-114/JED-007: six failures from two calls lock a site's PIN verification **site-wide for 15 minutes**, which would block scenario 1 for everyone.
 3. **Ask for a human** → transfer to the on-call engineer; if unreachable, leave a callback message (logged, page raised).
 
 One-shot note: scenario 1 is **one-shot per staging** — once RUH-114 has joined and the incident is P1, later callers only attach to the existing incident. Re-stage with the operator drawer (or `/ops/reset` + `/ops/stage-incident`) before each fresh run-through; `RegionState` also ignores reports older than 6 h, so stage right before the demo.
@@ -51,20 +61,27 @@ Note: calls are recorded and handled by an AI assistant. The operator resets and
 
 ```mermaid
 flowchart LR
-  caller["Caller<br/>(browser web call)"]
-  wf["Telnyx AI Assistant sanad-noc<br/>37-node Conversation Workflow<br/>speak / prompt / tool nodes<br/>LLM / expression / default edges"]
-  edge["noc-edge — Edge Function<br/>/dv (dynamic variables, Ed25519-signed, fail-open)<br/>/tools/* (4 webhook tools, signed-body identity)<br/>/mcp (5 MCP tools, stateless, two bearer scopes)<br/>/ops/* + /demo"]
-  kv[("KV noc-kv<br/>flags · sessions · incident projections")]
-  actors["Stateful Actors<br/>SiteState (per site)<br/>RegionState (per region)"]
+  caller["Caller<br/>(branch staff, browser web call)"]
+  asst["Telnyx AI Assistant sanad-noc<br/>model moonshotai/Kimi-K2.6<br/>voice Telnyx.KokoroTTS.af_heart · STT deepgram/nova-3<br/>DV webhook · MCP integration"]
+  wf["Conversation Workflow<br/>37 nodes: 10 speak · 16 prompt · 11 tool<br/>93 edges: 33 expression · 40 llm · 20 default"]
+  edge["Edge Function noc-edge<br/>/dv · /tools/* · /mcp · /ops/* · /demo"]
+  mcp["MCP server noc-mcp<br/>5 tools, stateless<br/>(runs in-process in noc-edge)"]
+  kv[("KV noc-kv<br/>flags · sessions · projections")]
+  actors["Stateful Actors<br/>SiteState per site · RegionState per region<br/>mux mode: both inside Counter/demo on noc-actor-canary"]
+  tcs[("Telnyx Cloud Storage<br/>bucket noc-reports-fb8131, us-central-1<br/>incident report JSON on resolve")]
+  prober["External prober<br/>(dev box, outside the failure domain)"]
 
-  caller --> wf
-  wf -->|"① POST /dv at call start"| edge
+  caller --> asst
+  asst --> wf
+  wf -->|"① POST /dv at call start (signed, fail-open ≤ 2500 ms)"| edge
   wf -->|"② POST /tools/* from tool nodes"| edge
-  wf -->|"③ POST /mcp from prompt nodes"| edge
+  wf -->|"③ POST /mcp from prompt nodes"| mcp
+  mcp -.->|"in-process"| edge
   edge -->|"read / write"| kv
   edge -->|"read-modify-write"| actors
   actors -.->|"best-effort projections"| kv
-  prober["External prober"] -.->|"health 10 s (heals projections)<br/>paging 30 s (tick, claim, send)"| edge
+  edge -.->|"incident report on resolve"| tcs
+  prober -.->|"health every 10 s (heals projections)<br/>paging every 30 s (tick, claim, send)"| edge
 ```
 
 - **Actors own the invariants.** One ticket per site (`SiteState`) and incident declaration / P1 escalation at 3 sites (`RegionState`) are read-modify-write over shared state. Actor turns are single-threaded and commit atomically (C6), so 10 concurrent opens for one site produce **exactly 1 ticket** — [`docs/evidence/race-test.txt`](docs/evidence/race-test.txt): actor mode created 1 (`NJD-9902`), KV mode created 10 duplicates (an earlier inconclusive run under the old 1500 ms race deadline is in DEBUGLOG #6).
@@ -72,6 +89,53 @@ flowchart LR
 - **Per-entity topology.** `edge/noc-actors` declares the actor classes with no bindings (the owner); `noc-edge` binds them by reference and holds every secret — least privilege (probe P0-2e).
 - **Mux-mode contingency.** New actor instances cannot activate on this Trial account (DEBUGLOG #4), so the KV flag `flag/actor_mode=mux` runs the **same** `SiteState`/`RegionState` classes inside the one working instance (`Counter/demo` on noc-actor-canary, shipped as `edge/noc-actor-host`), switched through one `ActorPort` interface with zero business-logic change.
 - **Fail-open by design.** `/dv` answers within a hard budget (2500 ms platform timeout); if KV or actors are slow it falls back to safe defaults (`route_hint=unverified` → PIN verification) — the call still works (proven live in DEBUGLOG #8).
+
+## Setup from scratch
+
+Prerequisites: a Telnyx account + API key (a Trial is fine), the [`telnyx-edge` CLI](https://telnyx.com/products/edge-infra), **Node 22**, and — for authoring — [OpenCode](https://opencode.ai) with the `@telnyx/opencode` plugin (see `opencode.jsonc`).
+
+1. **Install dependencies** — one `npm ci` per package:
+   ```sh
+   npm ci && npm --prefix edge/shared ci && npm --prefix edge/noc-actors ci && npm --prefix edge/noc-edge ci && npm --prefix edge/noc-actor-host ci
+   ```
+2. **`.env`** — `cp .env.example .env`, then fill in every key:
+   - `TELNYX_API_KEY` — the API key for the Voice AI and Edge Compute APIs (required).
+   - `MCP_TOKEN` — the bearer the assistant's MCP calls send (generated by setup-edge.sh if empty).
+   - `OPS_TOKEN` — the bearer for the operator `/ops/*` routes (generated if empty).
+   - `PIN_PEPPER` — pepper for PIN fingerprints; never logged or committed (generated if empty).
+   - `NOC_OPS_TOKEN` — same value as `OPS_TOKEN`, used by OpenCode's `noc-mcp` entry.
+   - `TELNYX_PUBLIC_KEY` — the account public key used to verify Ed25519 webhook signatures (fetched by setup-edge.sh if empty).
+   - `EDGE_URL` — the deployed `noc-edge` origin; every script (prober, ops.mjs, apply, race-test) reads it.
+   - `ONCALL_NUMBER` — the on-call engineer's E.164 transfer destination; required by `scripts/apply.mjs` (empty is fine for `--dry-run`).
+3. **`bash scripts/setup-edge.sh`** — idempotent: creates/verifies the **KV namespace `noc-kv`** (polls readiness, prints `KV_NAMESPACE_ID`), generates `MCP_TOKEN`/`OPS_TOKEN`/`PIN_PEPPER` if missing, fetches `TELNYX_PUBLIC_KEY`, writes the generated values back to `.env`, and pushes the four Edge secrets.
+4. **Per-function secrets** — `edge/noc-edge/telnyx.toml` declares seven `[[secrets]]` bindings; setup-edge.sh pushes `TELNYX_PUBLIC_KEY`, `MCP_TOKEN`, `OPS_TOKEN`, `PIN_PEPPER` (account-scoped; `OPS_TOKEN` is also bound in `edge/noc-actor-host/telnyx.toml`). Add the remaining three with `telnyx-edge secrets add <NAME> <value>`:
+   - `ONCALL_NUMBER` — the verified on-call number Sanad transfers to.
+   - `SEED_LOCAL` — JSON with the demo PINs and contact phone numbers; the committed seed carries no secrets, PINs live only here.
+   - `DEMO_GUIDE` — the scenario copy + PIN chips served on `/demo`, so no PIN literal exists in code.
+5. **Telnyx Cloud Storage** — create an S3-compatible **bucket in `us-central-1`** (this deployment: `noc-reports-fb8131`) and set `bucket_name` + `region` under `[storage.cloudstorage.REPORTS]` in `edge/noc-edge/telnyx.toml`.
+6. **Ship the functions** in order owner → mux host → edge: run `telnyx-edge ship` inside `edge/noc-actors`, then `edge/noc-actor-host`, then `edge/noc-edge`. Each deploy builds client-side and takes **15–35 min**.
+7. **Set the mux flag** on accounts affected by DEBUGLOG #4 (new actor instances cannot activate): `telnyx-edge storage kv key put "$KV_ID" flag/actor_mode mux` (`$KV_ID` is the namespace id from step 3; verify with `node scripts/ops.mjs GET '/ops/actor-ping?site=TST-001'` → `mode`).
+8. **Apply the assistant** (config-as-code; `sanad-noc` is PATCHed in place, never deleted): dry-run first, then apply —
+   ```sh
+   EDGE_URL=<origin> node scripts/apply.mjs --dry-run
+   EDGE_URL=<origin> node scripts/apply.mjs
+   ```
+   It creates the `noc_mcp_token` integration secret, the `noc-mcp` MCP server and the 5 tools, then PATCHes the assistant and prints read-back `DRIFT` lines (empty output = clean).
+9. **Start the prober** — it is the heal loop and the paging driver, so keep it running: `node scripts/prober.mjs` (or `nohup node scripts/prober.mjs > prober.log 2>&1 &`).
+10. **Pre-flight**: `node scripts/ops.mjs POST /ops/reset`, then `node scripts/ops.mjs POST '/ops/stage-incident?region=riyadh-north'` — the board shows the staged P2 with escalation due in 5 min.
+
+## Code walkthrough
+
+Eight ordered stops, each `file:lines — what to show — why it matters`:
+
+1. **Config-as-code** — `assistant/assistant.json` (the 37-node flow: 10 speak · 16 prompt · 11 tool, 93 edges: 33 expression · 40 llm · 20 default) + `scripts/apply.mjs:61-296` — validates with `scripts/lib/flow-validate.mjs:34-275` before any API call, creates the integration secret → MCP server → tools, then PATCHes `sanad-noc` in place and prints read-back `DRIFT`. The assistant is code; every node sets `instructions_mode`/`tools_mode` explicitly (C7).
+2. **`/dv` — signed, fail-open, concurrent** — `edge/noc-edge/src/dv/handler.ts:145-412`: Ed25519 verify + freshness at `:159-168` (unsigned → 403), safe-default flags `SAFE_FLAGS` `:24-30`, fail-open response `:105-143`, flags + directory read concurrently with unioned KV spans `:246-306`, projection read `:414-432`. The webhook that blocks the greeting must never be the reason a call fails (C3).
+3. **Tool webhooks — identity from the signed body** — `edge/noc-edge/src/tools/verifySite.ts:62-203` + `tools/common.ts:173-268`: `prelude` verifies the signature (403 fail closed) and takes the call identity from the signed body — `call_control_id` / `call_key` (`common.ts:226-235`), never a header alone and never LLM-supplied arguments (C13); `verifySite` then runs the PIN check + actor attempt and the post-verify KV reads concurrently.
+4. **`SiteState` — one ticket per site, PIN lock** — `edge/noc-actors/src/SiteState.ts:229-310`: `recordPinAttempt` — once a call hits 3 failures it stays locked for the rest of the call even with the correct PIN (`:259-274`), and 6 failures from 2 distinct calls lock the whole site for 15 min (`:284-297`); `:330-416`: `openOrAttach` — dedupe cache, creates the ticket once, attaches/note on repeats. Invariants live in single-threaded actor turns (C6).
+5. **`RegionState` — regional incident + escalation** — `edge/noc-actors/src/RegionState.ts:169-281`: `reportSite` declares a P2 at the second distinct branch and upgrades to P1 at the third, re-arming the alarm; `:507-545`: `escalateIfDue` walks the SLA ladder L1→L3, mints `INC-<id>:p<seq>` pages and re-arms until max level. This is what the board and the pages come from.
+6. **Mux host — the DEBUGLOG #4 contingency** — `edge/noc-actor-host/src/MuxHost.ts:52-103,105-156`: the same `SiteState`/`RegionState` classes multiplexed inside the one working `Counter` instance (method allow-lists `:17-42`, `dispatch` `:164-179`), the single real platform alarm fanned out to entities (`alarm`/`tick` → `fanOut`, delete-first `:105-142`) and re-armed (`reconcileAlarm`, `:147-156`). Zero business-logic change between per-entity and mux.
+7. **MCP — stateless, two bearer scopes** — `edge/noc-edge/src/mcp/server.ts:129-209`: the scope comes from the bearer (`mcp/shim.ts:7-18`), `session`-scope tools resolve the session from the conversation, `ops` scope cannot touch conversation sessions; a fresh `McpServer` + transport per request (`:187-201`, C4). The 5 tools are registered with zod schemas in `mcp/tools.ts:56-92`.
+8. **Observability** — `edge/noc-edge/src/ops/health.ts:224-282`: `runDeepHealth` runs the kv/actor/mcp/sync checks concurrently, each with a 4 s deadline; a `configCheck` fails on a missing/invalid call-path secret; a timed-out check is `slow`, not down. Plus `scripts/prober.mjs:53-83,254-343`: the 10 s probe loop (alert after 2 consecutive failures) and the 30 s paging cycle (tick → pending → claim → banner → sent). "Know within a minute" in code, not claims.
 
 ## Requirements map
 
@@ -125,7 +189,7 @@ Proof: call #2 (18:05 UTC, `t-128d0766…`) verified in **3579 ms** and joined t
 
 Every shipped artifact — code, config, tests, scripts, README, demo — is authored through **OpenCode on Telnyx Inference** (`telnyx/zai-org/GLM-5.3-Flash` default; other models per task). Claude acts as architect and reviewer: it writes the spec, the plans and the task prompts, and every implementer task is independently reviewed before merge. [`DOGFOODING.md`](DOGFOODING.md) records the per-task cost, the review findings the process caught, and what worked vs. what didn't.
 
-**Exceptions (all `git log --grep "Co-Authored-By: Claude"`):** besides the docs (spec, plans, AGENTS.md), four code-bearing groups are Claude-co-authored: (1) the CLI-generated scaffolds committed by the architect — `1465810` (noc-actors/noc-edge/shared: `package.json`, lockfiles, `telnyx.toml`, `tsconfig`, the scaffold READMEs), `aaec5bf`/`3eab224`/`37df71d` (the noc-probe scaffold, its dep pins and the KV id); (2) the `/demo` page's visual layer (`edge/noc-edge/src/demo/page.ts` + its tests), designed and written by **Claude** at the product owner's request, after two OpenCode-built versions (GLM-5.3, then Kimi-K3) were rejected as looking generic (P2-R5/P2-R8). The board endpoint behind it (`/ops/board`, `services/board.ts`, `demo/guide.ts`, the router) is OpenCode-authored. This split is disclosed in the commits, the page's source comment and DOGFOODING.md.
+**Exceptions (all `git log --grep "Co-Authored-By: Claude"`):** besides the docs (spec, plans, AGENTS.md), two code-bearing groups are Claude-co-authored: (1) the CLI-generated scaffolds committed by the architect — `1465810` (noc-actors/noc-edge/shared: `package.json`, lockfiles, `telnyx.toml`, `tsconfig`, the scaffold READMEs), `aaec5bf`/`3eab224`/`37df71d` (the noc-probe scaffold, its dep pins and the KV id); (2) the `/demo` page's visual layer (`edge/noc-edge/src/demo/page.ts` + its tests): the Langfuse-style wall (`bf53117`) and its three follow-up fixes (`05159c6`, `ae2feac`, `277f439` — announcement bar, shortcuts, SRI + the DMM-011 lockout scenario + Unlock drawer action), designed and written by **Claude** at the product owner's request, after two OpenCode-built versions (GLM-5.3, then Kimi-K3) were rejected as looking generic (P2-R5/P2-R8). The board endpoint behind it (`/ops/board`, `services/board.ts`, `demo/guide.ts`, the router) is OpenCode-authored. This split is disclosed in the commits, the page's source comment and DOGFOODING.md.
 
 ## Repo layout
 
@@ -143,10 +207,10 @@ docs/                 Spec, plans, runbook, evidence (probe results, voice calls
 ### Run the tests
 
 ```sh
-npm test                              # root: apply/flow-validate/prober/ops/secret-scan (137 tests)
+npm test                              # root: apply/flow-validate/prober/ops/secret-scan (139 tests)
 npm --prefix edge/shared test         # 161
-npm --prefix edge/noc-actors test     # 61
-npm --prefix edge/noc-edge test       # 371
+npm --prefix edge/noc-actors test     # 65
+npm --prefix edge/noc-edge test       # 406
 npm --prefix edge/noc-actor-host test # 28
 ```
 
