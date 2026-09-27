@@ -11,6 +11,7 @@ export type SiteStateApi = Pick<
   | "openOrAttach"
   | "markRegionReported"
   | "getTicket"
+  | "getRecents"
   | "addNote"
   | "resolveTicket"
   | "reset"

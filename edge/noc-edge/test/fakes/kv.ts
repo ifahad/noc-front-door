@@ -1,7 +1,7 @@
 import type { KvPort } from "../../src/services/kvPort";
 
 export interface KvCall {
-  op: "get" | "put" | "delete";
+  op: "get" | "put" | "delete" | "list";
   key: string;
 }
 
@@ -60,6 +60,19 @@ export class FakeKv implements KvPort {
   async delete(key: string): Promise<void> {
     this.check("delete", key);
     this.map.delete(key);
+  }
+
+  async list(prefixOrOpts: string | { prefix?: string }): Promise<string[]> {
+    const prefix =
+      typeof prefixOrOpts === "string" ? prefixOrOpts : prefixOrOpts.prefix ?? "";
+    this.check("list", prefix);
+    const keys = [...this.map.keys()].sort();
+    return keys.filter(
+      (key) =>
+        key.startsWith(prefix) &&
+        (this.map.get(key)!.expiresAt === null ||
+          this.nowMs < this.map.get(key)!.expiresAt!),
+    );
   }
 
   has(key: string): boolean {

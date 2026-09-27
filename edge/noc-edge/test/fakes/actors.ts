@@ -8,6 +8,30 @@ import type {
   SiteStateApi,
 } from "../../src/services/actorPort";
 
+class FaultySiteState extends SiteState {
+  private failures: Error[] = [];
+
+  failNextGetTicket(count: number, message = "injected_actor_error"): void {
+    for (let i = 0; i < count; i++) this.failures.push(new Error(message));
+  }
+
+  failNextGetRecents(count: number, message = "injected_actor_error"): void {
+    for (let i = 0; i < count; i++) this.failures.push(new Error(message));
+  }
+
+  async getTicket(input: Parameters<SiteState["getTicket"]>[0] = {}) {
+    const failure = this.failures.shift();
+    if (failure !== undefined) throw failure;
+    return super.getTicket(input);
+  }
+
+  async getRecents(input: Parameters<SiteState["getRecents"]>[0] = {}) {
+    const failure = this.failures.shift();
+    if (failure !== undefined) throw failure;
+    return super.getRecents(input);
+  }
+}
+
 class FaultyRegionState extends RegionState {
   private failures: Error[] = [];
 
@@ -44,6 +68,51 @@ function ctxFor(storage: FakeStorage, name: string): ActorContext {
   };
 }
 
+const SITE_METHODS = [
+  "recordCall",
+  "recordPinAttempt",
+  "openOrAttach",
+  "markRegionReported",
+  "getTicket",
+  "getRecents",
+  "addNote",
+  "resolveTicket",
+  "reset",
+] as const;
+
+const REGION_METHODS = [
+  "reportSite",
+  "withdrawSite",
+  "getIncident",
+  "resolve",
+  "ack",
+  "reset",
+] as const;
+
+function serialise<T extends object>(api: T, methodNames: readonly string[]): T {
+  const out: Record<string, unknown> = {};
+  let tail: Promise<unknown> = Promise.resolve();
+  for (const name of methodNames) {
+    const fn = (api as Record<string, unknown>)[name];
+    if (typeof fn !== "function") {
+      throw new Error(`serialise_missing_method:${name}`);
+    }
+    const bound = (fn as (...a: unknown[]) => Promise<unknown>).bind(api);
+    out[name] = (...args: unknown[]) => {
+      const run = (tail as Promise<unknown>).then(
+        () => bound(...args),
+        () => bound(...args),
+      );
+      tail = run.then(
+        () => undefined,
+        () => undefined,
+      );
+      return run;
+    };
+  }
+  return out as T;
+}
+
 export function makeSiteActor(name: string): SiteState {
   return new SiteState(ctxFor(new FakeStorage(), name), {} as Env);
 }
@@ -52,17 +121,27 @@ export function makeRegionActor(name: string): RegionState {
   return new RegionState(ctxFor(new FakeStorage(), name), {} as Env);
 }
 
+export interface FakeActorPortOpts {
+  serialise?: boolean;
+}
+
 export class FakeActorPort implements ActorPort {
-  private sites = new Map<string, SiteState>();
+  private sites = new Map<string, FaultySiteState>();
   private regions = new Map<string, FaultyRegionState>();
+  private opts: FakeActorPortOpts;
+
+  constructor(opts: FakeActorPortOpts = {}) {
+    this.opts = opts;
+  }
 
   site(siteId: string): SiteStateApi {
     let actor = this.sites.get(siteId);
     if (actor === undefined) {
-      actor = new SiteState(ctxFor(new FakeStorage(), siteId), {} as Env);
+      actor = new FaultySiteState(ctxFor(new FakeStorage(), siteId), {} as Env);
       this.sites.set(siteId, actor);
     }
-    return actor;
+    const api = actor as unknown as SiteStateApi;
+    return this.opts.serialise === true ? serialise(api, SITE_METHODS) : api;
   }
 
   region(region: string): RegionStateApi {
@@ -71,7 +150,8 @@ export class FakeActorPort implements ActorPort {
       actor = new FaultyRegionState(ctxFor(new FakeStorage(), region), {} as Env);
       this.regions.set(region, actor);
     }
-    return actor;
+    const api = actor as unknown as RegionStateApi;
+    return this.opts.serialise === true ? serialise(api, REGION_METHODS) : api;
   }
 
   failNextReport(region: string, count: number): void {
@@ -80,6 +160,14 @@ export class FakeActorPort implements ActorPort {
 
   failNextGetIncident(region: string, count: number): void {
     this.regionActor(region).failNextGetIncident(count);
+  }
+
+  failNextGetTicket(site: string, count: number): void {
+    this.siteActor(site).failNextGetTicket(count);
+  }
+
+  failNextGetRecents(site: string, count: number): void {
+    this.siteActor(site).failNextGetRecents(count);
   }
 
   siteTicket(siteId: string) {
@@ -94,9 +182,9 @@ export class FakeActorPort implements ActorPort {
       | undefined;
   }
 
-  private siteActor(siteId: string): SiteState {
+  private siteActor(siteId: string): FaultySiteState {
     this.site(siteId);
-    return this.sites.get(siteId) as SiteState;
+    return this.sites.get(siteId) as FaultySiteState;
   }
 
   private regionActor(region: string): FaultyRegionState {

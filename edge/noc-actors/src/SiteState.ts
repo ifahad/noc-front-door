@@ -165,6 +165,22 @@ export interface ResetResult {
   actor_ms: number;
 }
 
+export interface RecentCall {
+  k: string;
+  trace_id: string;
+  at: number;
+}
+
+export interface GetRecentsInput {
+  trace_id?: string;
+}
+
+export interface GetRecentsResult {
+  calls: RecentCall[];
+  trace_id: string;
+  actor_ms: number;
+}
+
 export class SiteState extends StatefulActor {
   async ping(): Promise<{ pong: true; name: string }> {
     return { pong: true, name: String(this.ctx.id) };
@@ -406,6 +422,26 @@ export class SiteState extends StatefulActor {
     const ticket = (await this.ctx.storage.get<Ticket | null>("ticket")) ?? null;
     return {
       ticket,
+      trace_id: input.trace_id ?? "none",
+      actor_ms: Date.now() - started,
+    };
+  }
+
+  async getRecents(input: GetRecentsInput = {}): Promise<GetRecentsResult> {
+    const started = Date.now();
+    const calls =
+      (await this.ctx.storage.get<CallState>("calls"))?.recent ?? [];
+    const safe = Array.isArray(calls)
+      ? calls.filter(
+          (c) =>
+            c !== null &&
+            typeof c === "object" &&
+            typeof c.trace_id === "string" &&
+            typeof c.at === "number",
+        )
+      : [];
+    return {
+      calls: safe.map((c) => ({ k: c.k, trace_id: c.trace_id, at: c.at })),
       trace_id: input.trace_id ?? "none",
       actor_ms: Date.now() - started,
     };

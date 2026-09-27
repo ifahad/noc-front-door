@@ -150,6 +150,7 @@ function kvFailPutWhere(inner: KvPort, pred: (key: string) => boolean): KvPort {
       await inner.put(key, value, opts);
     },
     delete: (key) => inner.delete(key),
+    list: (prefix) => inner.list(prefix),
   };
 }
 
