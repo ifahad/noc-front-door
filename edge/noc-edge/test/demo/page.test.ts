@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { DEMO_AGENT_ID, WIDGET_SCRIPT_URL, renderDemoPage } from "../../src/demo/page";
+import { DEMO_AGENT_ID, WIDGET_SCRIPT_SRI, WIDGET_SCRIPT_URL, renderDemoPage } from "../../src/demo/page";
 import type { DemoGuide } from "../../src/demo/guide";
 
 // PINs are secrets: assemble them at runtime so no literal PIN-shaped
@@ -25,8 +25,11 @@ describe("renderDemoPage", () => {
   it("embeds the widget element and the exact pinned script", () => {
     const html = renderDemoPage(null);
     expect(html).toContain(`<telnyx-ai-agent agent-id="${DEMO_AGENT_ID}"></telnyx-ai-agent>`);
-    expect(html).toContain(`<script async src="${WIDGET_SCRIPT_URL}"></script>`);
-    expect(WIDGET_SCRIPT_URL).toBe("https://unpkg.com/@telnyx/ai-agent-widget@0.36.0");
+    expect(html).toContain(
+      `<script async src="${WIDGET_SCRIPT_URL}" integrity="${WIDGET_SCRIPT_SRI}" crossorigin="anonymous"></script>`,
+    );
+    expect(WIDGET_SCRIPT_URL).toBe("https://unpkg.com/@telnyx/ai-agent-widget@0.36.0/dist/bundle.min.js");
+    expect(WIDGET_SCRIPT_SRI).toMatch(/^sha384-[A-Za-z0-9+/]{64}$/);
   });
 
   it("loads only the widget and Google Fonts from other origins", () => {
@@ -47,6 +50,8 @@ describe("renderDemoPage", () => {
     expect(html).toContain("Open a new ticket");
     expect(html).toContain("Lockout &amp; human");
     for (const n of [1, 2, 3]) expect(html).toContain(`id="scenario-${n}"`);
+    // the lockout scenario must never lock the published demo sites
+    expect(html).toContain("D M M zero one one");
   });
 
   it("marks the headline phrase with the highlighter and shows shortcut badges", () => {
@@ -107,6 +112,8 @@ describe("renderDemoPage", () => {
     expect(html).toContain("'/ops/stage-incident?region=riyadh-north'");
     expect(html).toContain("'/ops/ack?region=riyadh-north'");
     expect(html).toContain("'/ops/resolve?region=riyadh-north'");
+    expect(html).toContain("'/ops/unlock?site=RUH-114'");
+    expect(html).toContain("'/ops/unlock?site=JED-007'");
     expect(html).toContain("sessionStorage");
     expect(html).toContain("Live from Stateful Actors via /ops/board");
     expect(html).toContain("backend code authored by OpenCode on Telnyx Inference");

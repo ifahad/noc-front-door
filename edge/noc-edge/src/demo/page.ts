@@ -13,7 +13,10 @@ import type { DemoGuide, GuideScenario } from "./guide";
 //   source; without the secret the page points at the README instead.
 
 export const DEMO_AGENT_ID = "assistant-a2d301b3-f112-48f6-84c8-9e4d052cf3b7";
-export const WIDGET_SCRIPT_URL = "https://unpkg.com/@telnyx/ai-agent-widget@0.36.0";
+export const WIDGET_SCRIPT_URL = "https://unpkg.com/@telnyx/ai-agent-widget@0.36.0/dist/bundle.min.js";
+// Subresource Integrity for the pinned bundle: the browser refuses to run the
+// widget if unpkg ever serves different bytes for this version.
+export const WIDGET_SCRIPT_SRI = "sha384-HpQCPH/+U7KWqJp+MLUc/a2uw01ta4Mytbb0NxHShFezMnrsao9SpxjPm7H+7Se6";
 const FONTS_URL =
   "https://fonts.googleapis.com/css2?family=Geist:wght@400;500;600&family=Geist+Mono:wght@400;500&family=Inter:wght@400;500;600&display=swap";
 
@@ -505,7 +508,8 @@ const JS = `
     reset: '/ops/reset',
     stage: '/ops/stage-incident?region=riyadh-north',
     ack: '/ops/ack?region=riyadh-north',
-    resolve: '/ops/resolve?region=riyadh-north'
+    resolve: '/ops/resolve?region=riyadh-north',
+    unlock: ['/ops/unlock?site=RUH-114', '/ops/unlock?site=JED-007']
   };
   var opButtons = document.querySelectorAll('[data-op]');
   for (var o = 0; o < opButtons.length; o++) (function (b) {
@@ -514,9 +518,16 @@ const JS = `
       var token = tokenInput.value.trim();
       if (!path) return;
       if (!token) { out.textContent = 'Enter the ops token first.'; return; }
+      var paths = Array.isArray(path) ? path : [path];
+      var lines = [];
       out.textContent = b.textContent + ' …';
-      fetch(path, { method: 'POST', headers: { Authorization: 'Bearer ' + token } })
-        .then(function (r) { return r.text().then(function (t) { out.textContent = b.textContent + ' → HTTP ' + r.status + (t ? '\\n' + t.slice(0, 400) : ''); }); })
+      paths.reduce(function (chain, one) {
+        return chain.then(function () {
+          return fetch(one, { method: 'POST', headers: { Authorization: 'Bearer ' + token } })
+            .then(function (r) { return r.text().then(function (t) { lines.push(one + ' → HTTP ' + r.status + (t ? ' ' + t.slice(0, 300) : '')); }); });
+        });
+      }, Promise.resolve())
+        .then(function () { out.textContent = b.textContent + '\\n' + lines.join('\\n'); })
         .catch(function (err) { out.textContent = b.textContent + ' failed: ' + String(err && err.message || err); });
     });
   })(opButtons[o]);
@@ -555,8 +566,8 @@ export function renderDemoPage(guide: DemoGuide | null): string {
       n: 3,
       title: "Lockout &amp; human",
       steps: [
-        "Give any site ID, then a wrong PIN three times.",
-        "Ask: <q>Can I speak to an engineer?</q>",
+        "Say: <q>Our site is D M M zero one one.</q> — a spare site, so the demo sites stay unlocked.",
+        "Give a wrong PIN three times, then ask: <q>Can I speak to an engineer?</q>",
       ],
       watch: "verification lock for the call, then the handover to the on-call engineer (or a callback message).",
       chip: "",
@@ -698,6 +709,7 @@ export function renderDemoPage(guide: DemoGuide | null): string {
             <button type="button" class="btn" data-op="stage">Stage Riyadh North incident</button>
             <button type="button" class="btn" data-op="ack">Acknowledge</button>
             <button type="button" class="btn" data-op="resolve">Resolve</button>
+            <button type="button" class="btn" data-op="unlock">Unlock demo sites</button>
           </div>
           <p class="op-out" id="opOut" aria-live="polite"></p>
         </div>
@@ -724,7 +736,7 @@ export function renderDemoPage(guide: DemoGuide | null): string {
 </div>
 
 <telnyx-ai-agent agent-id="${DEMO_AGENT_ID}"></telnyx-ai-agent>
-<script async src="${WIDGET_SCRIPT_URL}"></script>
+<script async src="${WIDGET_SCRIPT_URL}" integrity="${WIDGET_SCRIPT_SRI}" crossorigin="anonymous"></script>
 <script>${JS}</script>
 </body>
 </html>`;
