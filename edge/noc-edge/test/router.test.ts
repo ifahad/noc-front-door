@@ -646,3 +646,60 @@ describe("router tool webhooks", () => {
     expect(lines[0].outcome).toBe("error");
   });
 });
+
+describe("router /demo page", () => {
+  const AGENT_ID = [
+    "assistant-a2d301b3", "f112", "48f6", "84c8", "9e4d052cf3b7",
+  ].join("-");
+  const WIDGET_URL = [
+    "https://unpkg.com/@telnyx/", "ai-agent-widget@0.36.0",
+  ].join("");
+
+  function demoUrl(): string {
+    return "https://noc-edge.telnyxcompute.com/demo";
+  }
+
+  it("serves the demo page with the widget, the scenarios and the status link", async () => {
+    const { env } = await makeEnv();
+    const res = await route(new Request(demoUrl()), env);
+    expect(res.status).toBe(200);
+    expect(res.headers.get("content-type")).toBe("text/html; charset=utf-8");
+    expect(res.headers.get("cache-control")).toBe("no-store");
+    expect(res.headers.get("x-content-type-options")).toBe("nosniff");
+    expect(res.headers.get("referrer-policy")).toBe("no-referrer");
+    const html = await res.text();
+    expect(html).toContain("<title>NOC Front Door — talk to Sanad</title>");
+    expect(html).toContain(`agent-id="${AGENT_ID}"`);
+    expect(html).toContain(WIDGET_URL);
+    expect(html).toContain("Al Yasmin");
+    expect(html).toContain("wrong PIN three times");
+    expect(html).toContain("human engineer");
+    expect(html).toContain("reviewer guide of the README");
+    expect(html).toContain('href="/ops/status"');
+    expect(html).toContain("recorded");
+  });
+
+  it("answers HEAD /demo with the same headers and an empty body", async () => {
+    const { env } = await makeEnv();
+    const res = await route(new Request(demoUrl(), { method: "HEAD" }), env);
+    expect(res.status).toBe(200);
+    expect(res.headers.get("content-type")).toBe("text/html; charset=utf-8");
+    expect(await res.text()).toBe("");
+  });
+
+  it("rejects other methods with 405", async () => {
+    const { env } = await makeEnv();
+    const post = await route(new Request(demoUrl(), { method: "POST" }), env);
+    expect(post.status).toBe(405);
+    const del = await route(new Request(demoUrl(), { method: "DELETE" }), env);
+    expect(del.status).toBe(405);
+  });
+
+  it("never prints a PIN-shaped token or a phone number", async () => {
+    const { env } = await makeEnv();
+    const res = await route(new Request(demoUrl()), env);
+    const html = await res.text();
+    expect(html).not.toMatch(/[0-9]{4}/);
+    expect(html).not.toMatch(/\+[0-9]{8,15}/);
+  });
+});

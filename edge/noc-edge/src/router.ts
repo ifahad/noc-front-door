@@ -12,6 +12,7 @@ import { handleOpenTicket } from "./tools/openTicket";
 import { handleJoinIncident } from "./tools/joinIncident";
 import { handleCallback } from "./tools/callback";
 import { handleMcp } from "./mcp/server";
+import { renderDemoPage } from "./demo/page";
 import { buildStatus, renderStatusHtml } from "./ops/status";
 import { runDeepHealth } from "./ops/health";
 import {
@@ -346,6 +347,21 @@ export async function route(
   }
   if (request.method === "GET" && url.pathname === "/ops/status") {
     return withErrorHandling("ops/status", () => routeOpsStatus(request, env));
+  }
+  if (url.pathname === "/demo") {
+    if (request.method !== "GET" && request.method !== "HEAD") {
+      return Response.json({ error: "method_not_allowed" }, { status: 405 });
+    }
+    return withErrorHandling("demo", async () => {
+      const headers = {
+        "content-type": "text/html; charset=utf-8",
+        "cache-control": "no-store",
+        "x-content-type-options": "nosniff",
+        "referrer-policy": "no-referrer",
+      };
+      if (request.method === "HEAD") return new Response(null, { status: 200, headers });
+      return new Response(renderDemoPage(), { status: 200, headers });
+    });
   }
   if (request.method === "GET" && url.pathname === "/ops/health/deep") {
     return routeOps(request, env, "ops/health", async () => {

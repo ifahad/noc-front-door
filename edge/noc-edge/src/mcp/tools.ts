@@ -25,7 +25,10 @@ const OPS_WRITE_REJECTED = "add_ticket_note is not available in ops scope.";
 const OPS_ARG_REQUIRED = "This tool needs a site or ticket id in ops scope.";
 
 export const MCP_HOP = "mcp";
-const INCIDENT_DEADLINE_MS = 1500;
+// DEBUGLOG #6: one KV op takes ≈1–2 s on the trial project, and a warm actor
+// call ≈220 ms, so the region-incident lookup needs a deadline well above one
+// KV round trip.
+const INCIDENT_DEADLINE_MS = 4000;
 
 export type McpToolOutcome = "ok" | "fallback" | "denied" | "error";
 

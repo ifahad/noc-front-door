@@ -7,7 +7,9 @@ import { logEvent } from "../log";
 import type { ActorPort } from "../services/actorPort";
 import type { KvPort } from "../services/kvPort";
 
-const READ_DEADLINE_MS = 1500;
+// DEBUGLOG #6: one KV op takes ≈1–2 s, so a bounded read must survive a full
+// slow round trip before it is treated as failed.
+const READ_DEADLINE_MS = 4000;
 const HEARTBEAT_MAX_AGE_S = 30;
 
 export interface StatusHeartbeat {
@@ -165,19 +167,20 @@ async function regionIncidents(
   kv: KvPort,
   failed: { failed: boolean },
 ): Promise<StatusRegion[]> {
-  const regions: StatusRegion[] = [];
-  for (const seed of PUBLIC_REGIONS) {
-    const raw = await readBounded(
-      kv.get(kvKey("incident", "active", seed.region)),
-      `status.incident.${seed.region}`,
-      failed,
-    );
-    regions.push({
-      region: seed.region,
-      label: seed.label,
-      incident: projectionOf(raw),
-    });
-  }
+  const regions = await Promise.all(
+    PUBLIC_REGIONS.map(async (seed) => {
+      const raw = await readBounded(
+        kv.get(kvKey("incident", "active", seed.region)),
+        `status.incident.${seed.region}`,
+        failed,
+      );
+      return {
+        region: seed.region,
+        label: seed.label,
+        incident: projectionOf(raw),
+      };
+    }),
+  );
   return regions;
 }
 
@@ -225,14 +228,16 @@ export async function buildStatus(deps: {
 }): Promise<StatusPayload> {
   const started = Date.now();
   const failed = { failed: false };
-  const heartbeat = await heartbeatRead(deps.kv, deps.now, failed);
-  const fault_flags = await faultFlags(deps.kv, failed);
-  const regions = await regionIncidents(deps.kv, failed);
-  const sites: StatusSite[] = await Promise.all(
-    SITES.filter((s) => !s.hidden).map((s) =>
-      readSite(s.site_id, s.label, deps.actors, failed),
-    ),
-  );
+  const [heartbeat, fault_flags, regions, sites] = await Promise.all([
+    heartbeatRead(deps.kv, deps.now, failed),
+    faultFlags(deps.kv, failed),
+    regionIncidents(deps.kv, failed),
+    Promise.all(
+      SITES.filter((s) => !s.hidden).map((s) =>
+        readSite(s.site_id, s.label, deps.actors, failed),
+      ),
+    ) as Promise<StatusSite[]>,
+  ]);
   const payload: StatusPayload = {
     at: new Date(deps.now).toISOString(),
     heartbeat,

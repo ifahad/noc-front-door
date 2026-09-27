@@ -4,6 +4,7 @@ import { REGIONS, SITES } from "../../../shared/src/seed";
 import { buildStatus, renderStatusHtml, type StatusPayload } from "../../src/ops/status";
 import { FakeActorPort } from "../fakes/actors";
 import { FakeKv } from "../fakes/kv";
+import { SlowActorPort, SlowKv } from "../fakes/slow";
 import { openSiteTicket, recordSiteCall, T0 } from "./helpers";
 
 interface LogLine extends Record<string, unknown> {
@@ -179,5 +180,36 @@ describe("ops status", () => {
     expect(lines[0].hop).toBe("ops/status");
     expect(lines[0].outcome).toBe("ok");
     expect(typeof lines[0].total_ms).toBe("number");
+  });
+});
+
+describe("ops status latency", () => {
+  it("issues its reads concurrently and survives a 1000 ms KV with 200 ms actors inside 3 s", { timeout: 15000 }, async () => {
+    const inner = new FakeKv();
+    await inner.put(kvKey("ops", "heartbeat"), JSON.stringify({ at: T0 - 5_000, ok: true, checks: {} }));
+    await inner.put(
+      kvKey("incident", "active", "riyadh-north"),
+      JSON.stringify({
+        id: "INC-101",
+        version: 2,
+        region_label: "Riyadh North",
+        started_local: "9:52 AM",
+        summary: "s",
+        eta_local: "10:22 AM",
+        priority: "P1",
+        site_count: 2,
+      }),
+    );
+    const kv = new SlowKv(inner, 1000);
+    const actors = new SlowActorPort(new FakeActorPort(), 200);
+    const started = Date.now();
+    const payload = await buildStatus({ kv, actors, now: T0 });
+    const elapsed = Date.now() - started;
+    expect(elapsed).toBeLessThan(3000);
+    expect(payload.heartbeat).toEqual({ age_s: 5, ok: true });
+    const riyadh = payload.regions.find((r) => r.region === "riyadh-north");
+    expect(riyadh?.incident?.id).toBe("INC-101");
+    expect(payload.sites).toHaveLength(SITES.filter((s) => !s.hidden).length);
+    expect(payload.degraded).toBeUndefined();
   });
 });
