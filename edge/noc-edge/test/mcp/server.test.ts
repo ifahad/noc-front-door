@@ -2,6 +2,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import { CallToolResultSchema } from "@modelcontextprotocol/sdk/types.js";
 import type { CallToolResult } from "@modelcontextprotocol/sdk/types.js";
 import type { Client } from "@modelcontextprotocol/sdk/client/index.js";
+import { kvKey } from "../../../shared/src/kvkeys";
 import {
   connectClient,
   callTool,
@@ -20,7 +21,8 @@ import {
   T0,
 } from "./helpers";
 import { FakeActorPort } from "../fakes/actors";
-import { SlowKv } from "../fakes/slow";
+import { FakeKv } from "../fakes/kv";
+import { SlowActorPort, SlowKv } from "../fakes/slow";
 import type { KvPort } from "../../src/services/kvPort";
 import { handleMcp } from "../../src/mcp/server";
 import { normalizeParsedBody } from "../../src/mcp/shim";
@@ -539,6 +541,21 @@ describe("MCP session scope", () => {
     expect(typeof lines[0].trace_id).toBe("string");
     expect(String(lines[0].trace_id)).toMatch(/^t-/);
   });
+
+  it("carries kv_ms and actor_ms on mcp.tool lines", { timeout: 30000 }, async () => {
+    deps = makeDeps({
+      actors: new SlowActorPort(new FakeActorPort(), 20),
+      now: () => Date.now(),
+    });
+    startLogs();
+    client = await sessionClient();
+    await callTool(client, "check_known_incidents", {});
+    const lines = eventsWith("mcp.tool");
+    expect(lines).toHaveLength(1);
+    expect(typeof lines[0].kv_ms).toBe("number");
+    expect(lines[0].actor_ms).toBeGreaterThan(0);
+    expect(lines[0].outcome).toBe("ok");
+  });
 });
 
 describe("MCP session lookup observability", () => {
@@ -596,6 +613,7 @@ describe("MCP session lookup observability", () => {
     expect(lines[0].conv).toBe("conv-mcp");
     expect(String(lines[0].conv).length).toBeLessThanOrEqual(8);
     expect(typeof lines[0].kv_ms).toBe("number");
+    expect(lines[0].trace_id).toMatch(/^t-/);
   });
 
   it("falls back with reason timeout when the lookup exceeds the deadline", { timeout: 30000 }, async () => {
@@ -608,6 +626,7 @@ describe("MCP session lookup observability", () => {
     expect(lines).toHaveLength(1);
     expect(lines[0].outcome).toBe("fallback");
     expect(lines[0].reason).toBe("timeout");
+    expect(lines[0].trace_id).toMatch(/^t-/);
   });
 
   it("falls back with reason error when the KV read fails", async () => {
@@ -643,6 +662,33 @@ describe("MCP session lookup observability", () => {
     );
     await response.text();
     expect(eventsWith("mcp.session")).toHaveLength(0);
+  });
+
+  it("serves the second call from the memo with no conv-link KV read", async () => {
+    deps = makeDeps();
+    await seedSession(deps.kv, {});
+    startLogs();
+    await mcpSessionCall(deps, CONV);
+    await mcpSessionCall(deps, CONV);
+    const convGets = (deps.kv as FakeKv).calls.filter(
+      (c) => c.op === "get" && c.key === kvKey("conv", CONV),
+    );
+    expect(convGets).toHaveLength(1);
+    const lines = eventsWith("mcp.session");
+    expect(lines).toHaveLength(2);
+    expect(lines[1].outcome).toBe("ok");
+  });
+
+  it("resolves a session whose two KV rounds take about 4 s", { timeout: 30000 }, async () => {
+    const inner = newKv();
+    await seedSession(inner, {});
+    deps = makeDeps({ kv: new SlowKv(inner, 2000), now: () => Date.now() });
+    startLogs();
+    await mcpSessionCall(deps, CONV);
+    const lines = eventsWith("mcp.session");
+    expect(lines).toHaveLength(1);
+    expect(lines[0].outcome).toBe("ok");
+    expect(lines[0].kv_ms).toBeGreaterThan(3000);
   });
 });
 

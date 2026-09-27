@@ -1,6 +1,7 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { WebStandardStreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/webStandardStreamableHttp.js";
 import type { SeedAdapter } from "../../../shared/src/itsm";
+import { traceId } from "../../../shared/src/ids";
 import { deadline } from "../../../shared/src/timing";
 import { logEvent } from "../log";
 import type { ActorPort } from "../services/actorPort";
@@ -28,6 +29,7 @@ export interface McpDeps {
 
 const MCP_NAME = "noc-mcp";
 const MCP_VERSION = "1.0.0";
+const SESSION_DEADLINE_MS = 4500;
 
 interface CallBody {
   method?: unknown;
@@ -67,29 +69,36 @@ async function resolveSession(deps: McpDeps, parsedBody: unknown): Promise<Sessi
       hop: MCP_HOP,
       outcome: "fallback",
       reason: "no_conv_id",
+      trace_id: "none",
       kv_ms: 0,
+      actor_ms: 0,
     });
     return null;
   }
   let failed = false;
+  let knownK: string | null = null;
   const MISS = Symbol("miss");
   const lookup = (async () => {
     const k = await byConversation(deps.kv, convId);
     if (k === null) return null;
+    knownK = k;
     return await getSession(deps.kv, k);
   })().catch((err: unknown) => {
     failed = true;
     return MISS;
   });
-  const result = await deadline(lookup, 3000, "mcp.session");
+  const result = await deadline(lookup, SESSION_DEADLINE_MS, "mcp.session");
   const kvMs = Math.max(0, deps.now() - startedAt);
+  const trace = knownK !== null ? traceId(knownK) : "none";
   const conv = convId.slice(0, 8);
   if (!result.ok || typeof result.value === "symbol") {
     logEvent("mcp.session", {
       hop: MCP_HOP,
       outcome: "fallback",
       reason: failed ? "error" : "timeout",
+      trace_id: trace,
       kv_ms: kvMs,
+      actor_ms: 0,
       conv,
     });
     return null;
@@ -99,12 +108,21 @@ async function resolveSession(deps: McpDeps, parsedBody: unknown): Promise<Sessi
       hop: MCP_HOP,
       outcome: "fallback",
       reason: "no_conv_link",
+      trace_id: trace,
       kv_ms: kvMs,
+      actor_ms: 0,
       conv,
     });
     return null;
   }
-  logEvent("mcp.session", { hop: MCP_HOP, outcome: "ok", kv_ms: kvMs, conv });
+  logEvent("mcp.session", {
+    hop: MCP_HOP,
+    outcome: "ok",
+    trace_id: result.value.trace_id,
+    kv_ms: kvMs,
+    actor_ms: 0,
+    conv,
+  });
   return result.value;
 }
 
@@ -116,8 +134,11 @@ export async function handleMcp(request: Request, deps: McpDeps): Promise<Respon
   );
   logEvent("mcp.auth", {
     hop: MCP_HOP,
+    trace_id: "none",
     scope: scope ?? "none",
     outcome: scope === null ? "denied" : "ok",
+    kv_ms: 0,
+    actor_ms: 0,
   });
   if (scope === null) {
     return Response.json({ error: "unauthorized" }, { status: 401 });

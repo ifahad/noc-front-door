@@ -20,7 +20,7 @@ export async function handleCallback(
       return fail("tool.callback", deps, pre, 422, "no_identity");
     }
     const [session] = await Promise.all([
-      get(deps.kv, pre.k),
+      get(pre.deps.kv, pre.k),
       pre.convPending ?? Promise.resolve(false),
     ]);
     const siteId = session.sites[0] ?? null;
@@ -28,16 +28,16 @@ export async function handleCallback(
     let noted = false;
     if (siteId !== null) {
       try {
-        const got = await deps.actors.site(siteId).getTicket({ trace_id });
+        const got = await pre.deps.actors.site(siteId).getTicket({ trace_id });
         const note = usable(pre.body.callback_note)
           ? `Callback requested: ${pre.body.callback_note as string}`
           : null;
         if (got.ticket !== null && note !== null) {
-          await deps.actors.site(siteId).addNote({
+          await pre.deps.actors.site(siteId).addNote({
             k: pre.k,
             ticketId: got.ticket.id,
             note,
-            at: deps.now(),
+            at: pre.deps.now(),
             trace_id,
           });
           noted = true;
@@ -48,18 +48,22 @@ export async function handleCallback(
     }
     logEvent("page.raised", {
       hop: "tool",
-      trace_id,
+      trace_id: pre.trace_id,
       k: pre.k,
       site: siteId ?? undefined,
       outcome: noted ? "ok" : "fallback",
+      kv_ms: pre.kvMs(),
+      actor_ms: pre.actorMs(),
     });
     logEvent("tool.callback", {
       hop: "tool",
-      trace_id,
+      trace_id: pre.trace_id,
       k: pre.k,
       site: siteId ?? undefined,
       outcome: noted ? "ok" : "fallback",
-      total_ms: deps.now() - pre.started,
+      kv_ms: pre.kvMs(),
+      actor_ms: pre.actorMs(),
+      total_ms: pre.deps.now() - pre.started,
     });
     return Response.json({ escalated: "true", callback_note: "none" }, { status: 200 });
   } catch (err) {

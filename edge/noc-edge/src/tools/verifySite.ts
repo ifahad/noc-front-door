@@ -77,14 +77,14 @@ export async function handleVerifySite(
       minted = crypto.randomUUID();
       k = (await sessionKey({ call_key: minted })) as string;
     }
-    const site = await deps.adapter.resolveSiteGlobal(siteInput);
+    const site = await pre.deps.adapter.resolveSiteGlobal(siteInput);
     if (site === null) {
       return fail("tool.verify_site", deps, pre, 422, "site_unresolvable");
     }
-    const valid = await deps.adapter.checkPin(pin, site.site_id);
-    const fp = await fpOf(deps.pinPepper, k, pin);
+    const valid = await pre.deps.adapter.checkPin(pin, site.site_id);
+    const fp = await fpOf(pre.deps.pinPepper, k, pin);
     const trace_id = traceId(k);
-    const attemptP = deps.actors.site(site.site_id).recordPinAttempt({
+    const attemptP = pre.deps.actors.site(site.site_id).recordPinAttempt({
       k,
       valid,
       fp,
@@ -109,20 +109,20 @@ export async function handleVerifySite(
         ? pre.body.conversation_id
         : null;
       const results = await Promise.allSettled([
-        putAuth(deps.kv, k, {
+        putAuth(pre.deps.kv, k, {
           verified: true,
           site_id: site.site_id,
           customer_id: site.customer_id,
           at: deps.now(),
         }),
         minted !== null && convId !== null
-          ? linkConversation(deps.kv, convId, k)
+          ? linkConversation(pre.deps.kv, convId, k)
           : Promise.resolve(),
         (async () => {
-          const session = await get(deps.kv, k);
+          const session = await get(pre.deps.kv, k);
           const contact =
             session.contact_id !== null
-              ? await deps.adapter.findContactById(session.contact_id)
+              ? await pre.deps.adapter.findContactById(session.contact_id)
               : null;
           return {
             caller: str(contact?.name, DEFAULTS.caller_name),
@@ -132,9 +132,9 @@ export async function handleVerifySite(
             ),
           };
         })(),
-        flagsOf(deps),
-        readProjection(deps.kv, site.region),
-        deps.actors.site(site.site_id).getTicket({ trace_id }),
+        flagsOf(pre.deps),
+        readProjection(pre.deps.kv, site.region),
+        pre.deps.actors.site(site.site_id).getTicket({ trace_id }),
       ]);
       const [authR, linkR, contactR, flagsR, projR, ticketR] = results;
       if (authR.status === "rejected") degraded = true;
@@ -192,6 +192,8 @@ export async function handleVerifySite(
       site: verified ? site.site_id : undefined,
       verify_result: attempt.result,
       outcome: verified ? (degraded ? "fallback" : "ok") : "denied",
+      kv_ms: pre.kvMs(),
+      actor_ms: pre.actorMs(),
       total_ms: deps.now() - pre.started,
     });
     return Response.json(body, { status: 200 });

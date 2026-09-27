@@ -79,12 +79,45 @@ export async function linkConversation(
   });
 }
 
+export const CONV_MEMO_TTL_MS = 15 * 60_000;
+export const CONV_MEMO_LIMIT = 256;
+
+interface ConvMemoEntry {
+  k: string;
+  at: number;
+}
+
+const convMemoByKv = new WeakMap<KvPort, Map<string, ConvMemoEntry>>();
+
+function convMemo(kv: KvPort): Map<string, ConvMemoEntry> {
+  let memo = convMemoByKv.get(kv);
+  if (memo === undefined) {
+    memo = new Map();
+    convMemoByKv.set(kv, memo);
+  }
+  return memo;
+}
+
 export async function byConversation(
   kv: KvPort,
   convId: string,
 ): Promise<string | null> {
+  const memo = convMemo(kv);
+  const at = Date.now();
+  const hit = memo.get(convId);
+  if (hit !== undefined) {
+    if (at - hit.at < CONV_MEMO_TTL_MS) return hit.k;
+    memo.delete(convId);
+  }
   const k = await kv.get(kvKey("conv", convId));
-  return typeof k === "string" && k.length > 0 ? k : null;
+  if (typeof k !== "string" || k.length === 0) return null;
+  memo.set(convId, { k, at });
+  while (memo.size > CONV_MEMO_LIMIT) {
+    const oldest = memo.keys().next();
+    if (oldest.done === true) break;
+    memo.delete(oldest.value);
+  }
+  return k;
 }
 
 function parseDv(raw: string | null): DvSession | null {

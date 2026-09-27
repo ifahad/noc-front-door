@@ -1,8 +1,10 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { kvKey } from "../../../shared/src/kvkeys";
 import type { Session } from "../../../shared/src/types";
 import {
   byConversation,
+  CONV_MEMO_LIMIT,
+  CONV_MEMO_TTL_MS,
   get,
   linkConversation,
   putAuth,
@@ -118,5 +120,60 @@ describe("sessions.linkConversation / byConversation", () => {
   it("returns null for an unknown conversation", async () => {
     const kv = new FakeKv();
     expect(await byConversation(kv, CONV_ID)).toBeNull();
+  });
+});
+
+describe("byConversation in-isolate memo", () => {
+  function convGets(kv: FakeKv): number {
+    return kv.calls.filter((c) => c.op === "get" && c.key === kvKey("conv", CONV_ID)).length;
+  }
+
+  it("serves a second call from the memo with no conv-link KV read", async () => {
+    const kv = new FakeKv();
+    kv.setNow(0);
+    await linkConversation(kv, CONV_ID, K);
+    expect(await byConversation(kv, CONV_ID)).toBe(K);
+    expect(convGets(kv)).toBe(1);
+    expect(await byConversation(kv, CONV_ID)).toBe(K);
+    expect(convGets(kv)).toBe(1);
+  });
+
+  it("does not memoise a miss, so a later link is still seen", async () => {
+    const kv = new FakeKv();
+    expect(await byConversation(kv, CONV_ID)).toBeNull();
+    expect(await byConversation(kv, CONV_ID)).toBeNull();
+    expect(convGets(kv)).toBe(2);
+    await linkConversation(kv, CONV_ID, K);
+    expect(await byConversation(kv, CONV_ID)).toBe(K);
+  });
+
+  it("re-reads the KV link after the memo ttl expires", { timeout: 15000 }, async () => {
+    vi.useFakeTimers();
+    try {
+      const kv = new FakeKv();
+      kv.setNow(0);
+      await linkConversation(kv, CONV_ID, K);
+      expect(await byConversation(kv, CONV_ID)).toBe(K);
+      vi.advanceTimersByTime(CONV_MEMO_TTL_MS + 1);
+      expect(await byConversation(kv, CONV_ID)).toBe(K);
+      expect(convGets(kv)).toBe(2);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("keeps the memo bounded by evicting the oldest entry", async () => {
+    const kv = new FakeKv();
+    kv.setNow(0);
+    await linkConversation(kv, CONV_ID, K);
+    expect(await byConversation(kv, CONV_ID)).toBe(K);
+    expect(convGets(kv)).toBe(1);
+    for (let i = 0; i < CONV_MEMO_LIMIT; i++) {
+      const convId = `${CONV_ID}-${i}`;
+      await linkConversation(kv, convId, K);
+      await byConversation(kv, convId);
+    }
+    expect(await byConversation(kv, CONV_ID)).toBe(K);
+    expect(convGets(kv)).toBe(2);
   });
 });

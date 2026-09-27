@@ -42,6 +42,19 @@ test('extractTrace carries hop, outcome, total_ms and key extras', () => {
   assert.equal(late.outcome, 'fallback');
 });
 
+test('extractTrace surfaces kv_ms and actor_ms where the lines carry them', () => {
+  const entries = extractTrace(records, 't-fix-1');
+  const kv = entries.find((e) => e.evt === 'kv.op');
+  assert.equal(kv.kv_ms, 1400);
+  assert.equal(kv.actor_ms, null);
+  const actor = entries.find((e) => e.evt === 'actor.call');
+  assert.equal(actor.kv_ms, null);
+  assert.equal(actor.actor_ms, 210);
+  const tool = entries.find((e) => e.evt === 'tool.open_ticket');
+  assert.equal(tool.kv_ms, null);
+  assert.equal(tool.actor_ms, null);
+});
+
 test('extractTrace misses for an unknown trace id', () => {
   assert.deepEqual(extractTrace(records, 't-absent'), []);
 });
@@ -59,12 +72,15 @@ test('parseLogInput accepts JSONL as well as a JSON array', () => {
 test('formatTrace prints aligned columns, the hop chain and the span', () => {
   const out = formatTrace(extractTrace(records, 't-fix-1'));
   const lines = out.split('\n');
-  assert.match(lines[0], /^ts\s+hop\s+evt\s+outcome\s+total_ms\s+extras\s*$/);
+  assert.match(
+    lines[0],
+    /^ts\s+hop\s+evt\s+outcome\s+total_ms\s+kv_ms\s+actor_ms\s+extras\s*$/,
+  );
   const rows = lines.slice(1, -2);
   assert.equal(rows.length, 6);
   for (const row of rows) {
     const cols = row.trim().split(/\s{2,}/);
-    assert.ok(cols.length >= 5, `row not aligned: ${row}`);
+    assert.ok(cols.length >= 7, `row not aligned: ${row}`);
   }
   assert.ok(rows[0].includes('kv.op'));
   assert.ok(rows[0].includes('1400'));
@@ -73,6 +89,21 @@ test('formatTrace prints aligned columns, the hop chain and the span', () => {
   assert.ok(last.includes('fallback'));
   assert.match(lines.at(-2), /^hops: kv → dv → mcp → tool → actor$/);
   assert.match(lines.at(-1), /^span: 895 ms/);
+});
+
+test('formatTrace shows kv and actor ms in their own columns, dash when absent', () => {
+  const out = formatTrace(extractTrace(records, 't-fix-1'));
+  const lines = out.split('\n');
+  const kvRow = lines.find((l) => l.includes('kv.op'));
+  const actorRow = lines.find((l) => l.includes('actor.call'));
+  const toolRow = lines.find((l) => l.includes('tool.open_ticket'));
+  const colsOf = (row) => row.trim().split(/\s{2,}/);
+  assert.equal(colsOf(kvRow)[5], '1400');
+  assert.equal(colsOf(kvRow)[6], '-');
+  assert.equal(colsOf(actorRow)[5], '-');
+  assert.equal(colsOf(actorRow)[6], '210');
+  assert.equal(colsOf(toolRow)[5], '-');
+  assert.equal(colsOf(toolRow)[6], '-');
 });
 
 test('CLI pipes stdin into the same output', () => {

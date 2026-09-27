@@ -42,6 +42,10 @@ function tsValue(ts) {
   return Number.isFinite(parsed) ? parsed : Number.NaN;
 }
 
+function msColumn(value) {
+  return Number.isFinite(value) ? value : null;
+}
+
 export function extractTrace(records, traceId) {
   const entries = [];
   for (const record of records) {
@@ -59,6 +63,8 @@ export function extractTrace(records, traceId) {
       evt: typeof message.evt === 'string' ? message.evt : DASH,
       outcome: typeof message.outcome === 'string' ? message.outcome : DASH,
       total_ms: Number.isFinite(message.total_ms) ? message.total_ms : null,
+      kv_ms: msColumn(message.kv_ms),
+      actor_ms: msColumn(message.actor_ms),
       extras,
     });
   }
@@ -86,6 +92,8 @@ export function formatTrace(entries) {
       evt: e.evt,
       outcome: e.outcome,
       total_ms: e.total_ms === null ? DASH : String(e.total_ms),
+      kv_ms: e.kv_ms === null || e.kv_ms === undefined ? DASH : String(e.kv_ms),
+      actor_ms: e.actor_ms === null || e.actor_ms === undefined ? DASH : String(e.actor_ms),
       extras,
     };
   });
@@ -95,6 +103,8 @@ export function formatTrace(entries) {
     evt: 'evt',
     outcome: 'outcome',
     total_ms: 'total_ms',
+    kv_ms: 'kv_ms',
+    actor_ms: 'actor_ms',
     extras: 'extras',
   };
   const widths = {};

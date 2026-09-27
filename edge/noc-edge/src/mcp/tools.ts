@@ -10,6 +10,7 @@ import type { SeedAdapter, NmsStatus } from "../../../shared/src/itsm";
 import type { Session } from "../../../shared/src/types";
 import { deadline } from "../../../shared/src/timing";
 import { logEvent } from "../log";
+import { newTimers, timingActors, timingKv, type Timers } from "../tools/common";
 import type { ActorPort } from "../services/actorPort";
 import type { KvPort } from "../services/kvPort";
 
@@ -107,6 +108,7 @@ function traceIdOf(ctx: ToolCtx): string {
 
 function denyLog(
   ctx: ToolCtx,
+  timers: Timers,
   tool: string,
   reason: string,
   target: string | null,
@@ -117,6 +119,8 @@ function denyLog(
     trace_id: traceIdOf(ctx),
     outcome: "denied",
     reason,
+    kv_ms: timers.kv,
+    actor_ms: timers.actor,
     ...(target !== null ? { target } : {}),
   });
 }
@@ -245,10 +249,10 @@ async function resolveTicketArg(
   return { kind: "ticket", ticketId: null, site };
 }
 
-function refusalOf(ctx: ToolCtx, tool: string, resolved: NotResolvable): ToolResult {
+function refusalOf(ctx: ToolCtx, timers: Timers, tool: string, resolved: NotResolvable): ToolResult {
   switch (resolved.kind) {
     case "not_yours":
-      denyLog(ctx, tool, resolved.reason, resolved.target);
+      denyLog(ctx, timers, tool, resolved.reason, resolved.target);
       return spoken({ speech: NOT_YOUR_SITE, outcome: "denied" });
     case "no_site":
       return spoken({ speech: NOT_YOUR_SITE, outcome: "fallback" });
@@ -263,7 +267,13 @@ function refusalOf(ctx: ToolCtx, tool: string, resolved: NotResolvable): ToolRes
   }
 }
 
-export function registerMcpTools(server: McpServer, ctx: ToolCtx): void {
+export function registerMcpTools(server: McpServer, base: ToolCtx): void {
+  const timers = newTimers();
+  const ctx: ToolCtx = {
+    ...base,
+    kv: timingKv(base.kv, base.now, timers),
+    actors: timingActors(base.actors, base.now, timers),
+  };
   const wrap = (name: string, handler: ToolHandler): ToolHandler => {
     return async (args) => {
       const started = ctx.now();
@@ -275,6 +285,8 @@ export function registerMcpTools(server: McpServer, ctx: ToolCtx): void {
           trace_id: traceIdOf(ctx),
           outcome: result.outcome,
           ...(result.errorName !== undefined ? { error: result.errorName } : {}),
+          kv_ms: timers.kv,
+          actor_ms: timers.actor,
           total_ms: ctx.now() - started,
         });
         return result;
@@ -285,6 +297,8 @@ export function registerMcpTools(server: McpServer, ctx: ToolCtx): void {
           trace_id: traceIdOf(ctx),
           outcome: "error",
           error: err instanceof Error ? err.name : "Error",
+          kv_ms: timers.kv,
+          actor_ms: timers.actor,
           total_ms: ctx.now() - started,
         });
         throw err;
@@ -341,7 +355,7 @@ export function registerMcpTools(server: McpServer, ctx: ToolCtx): void {
         return spoken({ speech: SESSION_FALLBACK, outcome: "fallback" });
       }
       const resolved = await resolveSiteArg(ctx, args.site_id);
-      if (resolved.kind !== "site") return refusalOf(ctx, "get_site_status", resolved);
+      if (resolved.kind !== "site") return refusalOf(ctx, timers, "get_site_status", resolved);
       const status = await ctx.adapter.getNmsStatus(resolved.site.site_id);
       return spoken({
         speech: nmsSpeech(resolved.site, status),
@@ -372,7 +386,7 @@ export function registerMcpTools(server: McpServer, ctx: ToolCtx): void {
       }
       const resolved = await resolveSiteArg(ctx, args.site_id);
       if (resolved.kind !== "site") {
-        return refusalOf(ctx, "check_known_incidents", resolved);
+        return refusalOf(ctx, timers, "check_known_incidents", resolved);
       }
       const outcome = await deadline(
         ctx.actors.region(resolved.site.region).getIncident({
@@ -422,7 +436,7 @@ export function registerMcpTools(server: McpServer, ctx: ToolCtx): void {
       }
       const resolved = await resolveTicketArg(ctx, args.ticket_id);
       if (resolved.kind !== "ticket") {
-        return refusalOf(ctx, "get_ticket_status", resolved);
+        return refusalOf(ctx, timers, "get_ticket_status", resolved);
       }
       const result = await ctx.actors.site(resolved.site.site_id).getTicket({
         trace_id: traceIdOf(ctx),
@@ -464,7 +478,7 @@ export function registerMcpTools(server: McpServer, ctx: ToolCtx): void {
     wrap("add_ticket_note", async (raw) => {
       const args = raw as { ticket_id?: string; note: string };
       if (ctx.scope === "ops") {
-        denyLog(ctx, "add_ticket_note", "ops_write", null);
+        denyLog(ctx, timers, "add_ticket_note", "ops_write", null);
         return spoken({
           speech: OPS_WRITE_REJECTED,
           isError: true,
@@ -477,18 +491,19 @@ export function registerMcpTools(server: McpServer, ctx: ToolCtx): void {
       const session = sessionOf(ctx) as Session;
       const resolved = await resolveTicketArg(ctx, args.ticket_id);
       if (resolved.kind === "not_yours") {
-        denyLog(ctx, "add_ticket_note", "site_not_writable", resolved.target);
+        denyLog(ctx, timers, "add_ticket_note", "site_not_writable", resolved.target);
         return spoken({ speech: WRITE_NOT_ALLOWED, outcome: "denied" });
       }
       if (resolved.kind === "no_site") {
         return spoken({ speech: WRITE_NOT_ALLOWED, outcome: "fallback" });
       }
       if (resolved.kind !== "ticket") {
-        return refusalOf(ctx, "add_ticket_note", resolved);
+        return refusalOf(ctx, timers, "add_ticket_note", resolved);
       }
       if (!canWrite(session, resolved.site.site_id)) {
         denyLog(
           ctx,
+          timers,
           "add_ticket_note",
           "site_not_writable",
           args.ticket_id ?? resolved.site.site_id,

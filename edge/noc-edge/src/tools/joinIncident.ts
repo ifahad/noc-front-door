@@ -41,16 +41,16 @@ export async function handleJoinIncident(
       return fail("tool.join_incident", deps, pre, 422, "no_identity");
     }
     const [session, flags] = await Promise.all([
-      get(deps.kv, pre.k),
-      flagsOf(deps),
+      get(pre.deps.kv, pre.k),
+      flagsOf(pre.deps),
       pre.convPending ?? Promise.resolve(false),
     ]);
     const ctx: TicketCtx = {
-      actors: deps.actors,
-      kv: deps.kv,
-      adapter: deps.adapter,
+      actors: pre.deps.actors,
+      kv: pre.deps.kv,
+      adapter: pre.deps.adapter,
       flags,
-      now: deps.now(),
+      now: pre.deps.now(),
       trace_id: session.trace_id,
       deferSync: true,
     };
@@ -74,11 +74,13 @@ export async function handleJoinIncident(
     }
     logEvent("tool.join_incident", {
       hop: "tool",
-      trace_id: session.trace_id,
+      trace_id: pre.trace_id,
       k: pre.k,
       ticket_id: result.ticket_id,
       outcome: "ok",
-      total_ms: deps.now() - pre.started,
+      kv_ms: pre.kvMs(),
+      actor_ms: pre.actorMs(),
+      total_ms: pre.deps.now() - pre.started,
     });
     return Response.json(result, { status: 200 });
   } catch (err) {
