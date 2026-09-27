@@ -6,6 +6,7 @@ export type { ReportSiteInput, ReportSiteResult } from "../../../noc-actors/src/
 
 export type SiteStateApi = Pick<
   SiteState,
+  | "ping"
   | "recordCall"
   | "recordPinAttempt"
   | "openOrAttach"
@@ -19,7 +20,7 @@ export type SiteStateApi = Pick<
 
 export type RegionStateApi = Pick<
   RegionState,
-  "reportSite" | "withdrawSite" | "getIncident" | "resolve" | "ack" | "reset"
+  "ping" | "reportSite" | "withdrawSite" | "getIncident" | "resolve" | "ack" | "reset"
 >;
 
 export interface ActorPort {

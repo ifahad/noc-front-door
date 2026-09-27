@@ -17,6 +17,7 @@ export const FLAGS_CLEAR: Flags = {
   demo_caller: null,
   fault_open_ticket: null,
   fault_dv_delay_ms: null,
+  actor_mode: "per-entity",
 };
 
 export function syntheticSession(siteId: string, kSeed: string): Session {

@@ -10,6 +10,13 @@ type = "SiteState"
 binding = "REGIONS"
 type = "RegionState"
 
+# Reference binder: mux contingency for DEBUGLOG #4 — routes actor calls
+# through the one working Counter instance (noc-actor-canary) when the
+# flag/actor_mode KV flag is "mux".
+[[actors]]
+binding = "MUX"
+type = "Counter"
+
 [storage.kv.CACHE]
 id = "f08b8bc7-4208-4c63-9e8f-0f851d02cd0f"
 

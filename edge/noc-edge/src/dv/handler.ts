@@ -27,6 +27,7 @@ const SAFE_FLAGS: Flags = {
   demo_caller: null,
   fault_open_ticket: null,
   fault_dv_delay_ms: null,
+  actor_mode: "per-entity",
 };
 
 const ORDINALS: Record<number, string> = {

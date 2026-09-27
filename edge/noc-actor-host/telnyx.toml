@@ -1,0 +1,24 @@
+# noc-actor-canary is repurposed as the "mux" contingency host (DEBUGLOG #4):
+# on this trial account no NEW actor instance can be created (503 actor
+# directory unavailable), so every site/region runs its real SiteState/
+# RegionState logic inside the one working Counter instance. Bindings are kept
+# byte-identical to the currently-working canary — this exact configuration is
+# proven to work and changing it is an uncontrolled variable.
+name = "noc-actor-canary"
+main = "src/index.ts"
+compatibility_date = "2026-05-01"
+
+[[actors]]
+binding = "COUNTER"
+type = "Counter"
+
+[storage.kv.CACHE]
+id = "f08b8bc7-4208-4c63-9e8f-0f851d02cd0f"
+
+[[secrets]]
+binding = "OPS_TOKEN"
+name = "OPS_TOKEN"
+
+[edge_compute]
+func_id = "8130045c-5cd7-4169-b854-a2a05feb89ea"
+func_name = "noc-actor-canary"

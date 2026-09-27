@@ -21,6 +21,7 @@ describe("flags.read", () => {
       demo_caller: null,
       fault_open_ticket: null,
       fault_dv_delay_ms: null,
+      actor_mode: "per-entity",
     });
   });
 
@@ -37,7 +38,21 @@ describe("flags.read", () => {
       demo_caller: DEMO_CONTACT,
       fault_open_ticket: 503,
       fault_dv_delay_ms: 4000,
+      actor_mode: "per-entity",
     });
+  });
+
+  it("parses actor_mode: mux only for the exact value, anything else per-entity", async () => {
+    const kv = kvFor();
+    await kv.put(kvKey("flag", "actor_mode"), "mux");
+    expect((await read(kv, T0 + 1000)).actor_mode).toBe("mux");
+    await kv.put(kvKey("flag", "actor_mode"), "per-entity");
+    expect((await read(kv, T0 + 6000)).actor_mode).toBe("per-entity");
+    for (const [i, bad] of ["MUX", "mux ", "", "0", "weird"].entries()) {
+      await kv.put(kvKey("flag", "actor_mode"), bad);
+      const flags = await read(kv, T0 + 6000 * (i + 2));
+      expect(flags.actor_mode).toBe("per-entity");
+    }
   });
 
   it("rejects an open_ticket fault outside {500,503,504}", async () => {

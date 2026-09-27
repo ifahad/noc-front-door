@@ -18,9 +18,22 @@ export interface RegionsBinding extends ActorNamespace {
   idFromName(name: string, options?: IdFromNameOptions): RegionStateStub;
 }
 
+// The MUX binding is a reference to the one working actor type on this trial
+// account (Counter on noc-actor-canary, DEBUGLOG #4). The mux port multiplexes
+// real SiteState/RegionState logic through that single instance.
+export interface MuxStub extends ActorStub {
+  site(name: string, method: string, input?: unknown): Promise<unknown>;
+  region(name: string, method: string, input?: unknown): Promise<unknown>;
+}
+
+export interface MuxBinding extends ActorNamespace {
+  idFromName(name: string, options?: IdFromNameOptions): MuxStub;
+}
+
 export interface NocEdgeEnv extends Env {
   SITES: SitesBinding;
   REGIONS: RegionsBinding;
+  MUX: MuxBinding;
 }
 
 export function siteStub(env: NocEdgeEnv, name: string): SiteStateStub {

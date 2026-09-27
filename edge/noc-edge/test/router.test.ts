@@ -170,6 +170,96 @@ describe("withErrorHandling", () => {
   });
 });
 
+describe("router actor-mode selection", () => {
+  const OPS = ["op", "s_b", "earer_", "test", "11"].join("");
+
+  interface PingRecord {
+    binding: "MUX";
+    kind: "site" | "region";
+    name: string;
+    method: string;
+  }
+
+  async function makePingEnv() {
+    const base = await makeEnv();
+    const pings: PingRecord[] = [];
+    (base.env as unknown as { SECRETS: { get: (n: string) => Promise<string | null> } }).SECRETS.get =
+      async (name: string) => {
+        if (name === "OPS_TOKEN") return OPS;
+        if (name === "TELNYX_PUBLIC_KEY") return base.pub;
+        return null;
+      };
+    (base.env as unknown as { SITES: { idFromName: (n: string) => unknown } }).SITES = {
+      idFromName: (name: string) => ({
+        ping: async () => {
+          pings.push({ binding: "MUX", kind: "site", name, method: "binding" });
+          return { pong: true, name };
+        },
+      }),
+    };
+    (base.env as unknown as { REGIONS: { idFromName: (n: string) => unknown } }).REGIONS = {
+      idFromName: (name: string) => ({
+        ping: async () => {
+          pings.push({ binding: "MUX", kind: "region", name, method: "binding" });
+          return { pong: true, name };
+        },
+      }),
+    };
+    (base.env as unknown as { MUX: { idFromName: (n: string) => unknown } }).MUX = {
+      idFromName: (name: string) => ({
+        site: async (entity: string, method: string) => {
+          pings.push({ binding: "MUX", kind: "site", name: entity, method });
+          return { pong: true, name: entity };
+        },
+        region: async (entity: string, method: string) => {
+          pings.push({ binding: "MUX", kind: "region", name: entity, method });
+          return { pong: true, name: entity };
+        },
+      }),
+    };
+    return { ...base, pings };
+  }
+
+  async function actorPing(env: NocEdgeEnv): Promise<Response> {
+    return route(
+      new Request("https://noc-edge.telnyxcompute.com/ops/actor-ping", {
+        headers: { authorization: `Bearer ${OPS}` },
+      }),
+      env,
+    );
+  }
+
+  it("defaults to per-entity and never touches MUX", async () => {
+    const { env, pings } = await makePingEnv();
+    const res = await actorPing(env);
+    expect(res.status).toBe(200);
+    const out = (await res.json()) as { mode: string; site: { pong: boolean } };
+    expect(out.mode).toBe("per-entity");
+    expect(out.site.pong).toBe(true);
+    expect(pings.map((p) => p.method)).toEqual(["binding", "binding"]);
+    expect(pings.filter((p) => p.binding === "MUX" && p.method !== "binding")).toHaveLength(0);
+  });
+
+  it("picks the mux port when flag/actor_mode says mux", async () => {
+    const { env, cache, pings } = await makePingEnv();
+    await cache.put(kvKey("flag", "actor_mode"), "mux");
+    const res = await actorPing(env);
+    expect(res.status).toBe(200);
+    const out = (await res.json()) as {
+      mode: string;
+      site: { name: string };
+      region: { name: string };
+    };
+    expect(out.mode).toBe("mux");
+    expect(out.site).toEqual({ pong: true, name: "RUH-114", actor_ms: expect.any(Number) });
+    expect(out.region).toEqual({ pong: true, name: "riyadh-north", actor_ms: expect.any(Number) });
+    expect(pings).toEqual([
+      { binding: "MUX", kind: "site", name: "RUH-114", method: "ping" },
+      { binding: "MUX", kind: "region", name: "riyadh-north", method: "ping" },
+    ]);
+  });
+});
+
 describe("router tool webhooks", () => {
   async function makeToolEnv() {
     const base = await makeEnv();

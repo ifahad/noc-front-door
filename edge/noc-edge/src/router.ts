@@ -1,8 +1,10 @@
 import { bearerOk, makeTokenCache, type SecretGetter } from "./auth";
 import { logEvent } from "./log";
-import { siteStub, regionStub, type NocEdgeEnv } from "./actors";
+import { type NocEdgeEnv } from "./actors";
 import { bindingKvPort } from "./services/kvPort";
-import { bindingActorPort } from "./services/actorPort";
+import { bindingActorPort, type ActorPort } from "./services/actorPort";
+import { muxActorPort } from "./services/muxActorPort";
+import { read as readFlags, type ActorMode } from "./services/flags";
 import { getSecret, makeAdapter } from "./env";
 import { handleDv } from "./dv/handler";
 import { handleVerifySite } from "./tools/verifySite";
@@ -28,6 +30,18 @@ export const DEFAULT_SITE = "RUH-114";
 export const DEFAULT_REGION = "riyadh-north";
 
 const opsTokenGetters = new WeakMap<NocEdgeEnv, SecretGetter>();
+
+// actor_mode is a KV flag (flag/actor_mode): "mux" routes every actor call
+// through the single working Counter instance on noc-actor-canary (the
+// DEBUGLOG #4 contingency); anything else uses the per-entity bindings.
+async function selectActorPort(
+  env: NocEdgeEnv,
+): Promise<{ port: ActorPort; mode: ActorMode }> {
+  const flags = await readFlags(bindingKvPort(env.CACHE), Date.now());
+  return flags.actor_mode === "mux"
+    ? { port: muxActorPort(env), mode: "mux" }
+    : { port: bindingActorPort(env), mode: "per-entity" };
+}
 
 export function makeOpsTokenGetter(env: NocEdgeEnv): SecretGetter {
   let getter = opsTokenGetters.get(env);
@@ -69,11 +83,10 @@ export async function routeOpsActorPing(
   }
 
   try {
-    const siteResult = await pingOne(site, () => siteStub(env, site).ping());
-    const regionResult = await pingOne(region, () =>
-      regionStub(env, region).ping(),
-    );
-    return Response.json({ site: siteResult, region: regionResult });
+    const { port, mode } = await selectActorPort(env);
+    const siteResult = await pingOne(site, () => port.site(site).ping());
+    const regionResult = await pingOne(region, () => port.region(region).ping());
+    return Response.json({ mode, site: siteResult, region: regionResult });
   } catch (err) {
     const detail = err instanceof Error ? err.message : String(err);
     logEvent("actor_ping_failed", {
@@ -105,7 +118,7 @@ async function routeDv(request: Request, env: NocEdgeEnv): Promise<Response> {
   ]);
   return handleDv(request, {
     kv: bindingKvPort(env.CACHE),
-    actors: bindingActorPort(env),
+    actors: (await selectActorPort(env)).port,
     adapter,
     publicKey: publicKey ?? "",
     now: () => Date.now(),
@@ -125,7 +138,7 @@ async function routeTool(
   ]);
   return handler(request, {
     kv: bindingKvPort(env.CACHE),
-    actors: bindingActorPort(env),
+    actors: (await selectActorPort(env)).port,
     adapter,
     publicKey: publicKey ?? "",
     pinPepper: pinPepper ?? "",
@@ -141,7 +154,7 @@ async function routeMcp(request: Request, env: NocEdgeEnv): Promise<Response> {
   ]);
   return handleMcp(request, {
     kv: bindingKvPort(env.CACHE),
-    actors: bindingActorPort(env),
+    actors: (await selectActorPort(env)).port,
     adapter,
     now: () => Date.now(),
     mcpToken: mcpToken ?? "",
@@ -155,28 +168,28 @@ function opsTraceId(): string {
 
 interface OpsCtx {
   kv: ReturnType<typeof bindingKvPort>;
-  actors: ReturnType<typeof bindingActorPort>;
+  actors: ActorPort;
   now: number;
   trace_id: string;
 }
 
-function opsCtx(env: NocEdgeEnv): OpsCtx {
+async function opsCtx(env: NocEdgeEnv): Promise<OpsCtx> {
   return {
     kv: bindingKvPort(env.CACHE),
-    actors: bindingActorPort(env),
+    actors: (await selectActorPort(env)).port,
     now: Date.now(),
     trace_id: opsTraceId(),
   };
 }
 
 async function actionCtx(env: NocEdgeEnv): Promise<ActionDeps> {
-  const ctx = opsCtx(env);
+  const ctx = await opsCtx(env);
   const adapter = await makeAdapter(env);
   return { kv: ctx.kv, actors: ctx.actors, adapter, now: ctx.now, trace_id: ctx.trace_id };
 }
 
 async function raceCtx(env: NocEdgeEnv): Promise<RaceDeps> {
-  const ctx = opsCtx(env);
+  const ctx = await opsCtx(env);
   const adapter = await makeAdapter(env);
   return { kv: ctx.kv, actors: ctx.actors, adapter, now: ctx.now, trace_id: ctx.trace_id };
 }
@@ -211,7 +224,7 @@ async function routeOps(
 
 async function routeOpsStatus(request: Request, env: NocEdgeEnv): Promise<Response> {
   const url = new URL(request.url);
-  const ctx = opsCtx(env);
+  const ctx = await opsCtx(env);
   const payload = await buildStatus(ctx);
   if (url.searchParams.get("format") === "html") {
     return new Response(renderStatusHtml(payload), {
@@ -223,7 +236,7 @@ async function routeOpsStatus(request: Request, env: NocEdgeEnv): Promise<Respon
 }
 
 async function routeOpsHealth(env: NocEdgeEnv, opsToken: string): Promise<Response> {
-  const ctx = opsCtx(env);
+  const ctx = await opsCtx(env);
   const adapter = await makeAdapter(env);
   const result = await runDeepHealth({
     kv: ctx.kv,

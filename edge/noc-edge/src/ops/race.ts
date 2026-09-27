@@ -178,6 +178,7 @@ function raceCtx(deps: RaceDeps) {
       demo_caller: null,
       fault_open_ticket: null,
       fault_dv_delay_ms: null,
+      actor_mode: "per-entity" as const,
     },
     now: deps.now,
     trace_id: deps.trace_id,

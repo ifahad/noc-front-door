@@ -30,6 +30,7 @@ const FLAGS: Flags = {
   demo_caller: null,
   fault_open_ticket: null,
   fault_dv_delay_ms: null,
+  actor_mode: "per-entity",
 };
 
 function adapter(seedLocal = SEED_LOCAL): SeedAdapter {
