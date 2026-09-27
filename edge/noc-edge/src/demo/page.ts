@@ -1,934 +1,734 @@
 import type { DemoGuide, GuideScenario } from "./guide";
 
+// Public demo page — the "NOC wall". Visual design and markup authored by
+// Claude (architect) at the product owner's request; the data it renders
+// comes from the OpenCode-authored /ops/board endpoint.
+//
+// Security contract (enforced by tests):
+// - the only external origins are the pinned Telnyx widget script and Google
+//   Fonts; everything else is inline;
+// - every dynamic value is written with createElement/textContent — the page
+//   never assigns HTML strings, and has no inline event-handler attributes;
+// - demo PINs come from the DEMO_GUIDE Edge secret at request time, never from
+//   source; without the secret the page points at the README instead.
+
 export const DEMO_AGENT_ID = "assistant-a2d301b3-f112-48f6-84c8-9e4d052cf3b7";
+export const WIDGET_SCRIPT_URL = "https://unpkg.com/@telnyx/ai-agent-widget@0.36.0";
+const FONTS_URL =
+  "https://fonts.googleapis.com/css2?family=Geist:wght@400;500;600&family=Geist+Mono:wght@400;500&family=Inter:wght@400;500;600&display=swap";
 
-const WIDGET_SCRIPT_URL = "https://unpkg.com/@telnyx/ai-agent-widget@0.36.0";
-const GUIDE_FALLBACK = "PIN: see the README reviewer guide";
-
-// Cinematic "Live NOC wall". All dynamic board values go through
-// createElement/textContent in the client script; the markup below is static.
-
-const CSS_TOKENS = [
-  ":root{color-scheme:dark;",
-  "--bg:rgb(5,8,13);--surface:rgba(13,19,28,.66);--line:rgba(148,163,184,.14);",
-  "--text:rgb(230,237,243);--muted:rgb(139,152,165);--dim:rgb(91,107,123);",
-  "--accent:rgb(34,211,238);--indigo:rgb(99,102,241);--ok:rgb(52,211,153);",
-  "--p2:rgb(245,158,11);--p1:rgb(244,63,94);--quiet:rgb(71,85,105);",
-  "--glow:rgb(159,216,230);--radius:16px}",
-  "*,*::before,*::after{box-sizing:border-box}",
-  "html{background:var(--bg)}",
-  "body{margin:0;min-height:100vh;background:var(--bg);color:var(--text);overflow-x:hidden;",
-  "font-family:system-ui,-apple-system,'Segoe UI',Roboto,sans-serif;line-height:1.55}",
-  ".fx,.fxGrid,.fxNoise{position:fixed;inset:0;pointer-events:none;z-index:0}",
-  ".fx .g{position:absolute;border-radius:50%;filter:blur(90px);opacity:.5}",
-  ".fx .g1{width:34rem;height:34rem;left:-8rem;top:-10rem;",
-  "background:radial-gradient(circle,rgba(34,211,238,.16),transparent 65%);",
-  "animation:driftA 26s ease-in-out infinite alternate}",
-  ".fx .g2{width:38rem;height:38rem;right:-10rem;bottom:-12rem;",
-  "background:radial-gradient(circle,rgba(99,102,241,.18),transparent 65%);",
-  "animation:driftB 32s ease-in-out infinite alternate}",
-  ".fx .g3{width:24rem;height:24rem;left:38%;top:55%;",
-  "background:radial-gradient(circle,rgba(52,211,153,.09),transparent 65%);",
-  "animation:driftC 38s ease-in-out infinite alternate}",
-  ".fxGrid{left:-25%;right:-25%;top:-5%;height:75%;",
-  "background-image:linear-gradient(rgba(148,163,184,.055) 1px,transparent 1px),",
-  "linear-gradient(90deg,rgba(148,163,184,.055) 1px,transparent 1px);",
-  "background-size:44px 44px;transform:perspective(50rem) rotateX(38deg);",
-  "transform-origin:top center;",
-  "-webkit-mask-image:linear-gradient(180deg,rgba(0,0,0,.8),transparent 88%);",
-  "mask-image:linear-gradient(180deg,rgba(0,0,0,.8),transparent 88%)}",
-  ".fxNoise{opacity:.05;mix-blend-mode:overlay;",
-  // The noise tile is an inline SVG filter; the xmlns digits are
-  // percent-encoded so no 4-digit run ever appears in this document.
-  "background-image:url(\"data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/20%30%30/svg' width='260' height='260'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='.85' numOctaves='2' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='260' height='260' filter='url(%23n)' opacity='.5'/%3E%3C/svg%3E\")}",
-  ".mono,.kNum,.kSub,.clock,.cardNum,.ftime,.mlab,.pin-chip{",
-  "font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;",
-  "font-variant-numeric:tabular-nums}",
-  "h1,h2,h3{margin:0;font-weight:650;letter-spacing:-.01em}",
-  "h2{font-size:1.02rem;color:var(--muted);text-transform:uppercase;letter-spacing:.14em}",
-  "h3{font-size:1rem}",
-  "p{margin:.5rem 0}",
-  "main{position:relative;z-index:1}",
-].join("\n");
-const CSS_HEADER = [
-  ".top{position:sticky;top:0;z-index:20;display:flex;align-items:center;",
-  "justify-content:space-between;gap:1rem;padding:.85rem 1.5rem;",
-  "border-bottom:1px solid var(--line);background:rgba(5,8,13,.72);",
-  "backdrop-filter:blur(14px);-webkit-backdrop-filter:blur(14px)}",
-  ".brand{display:flex;flex-direction:column;gap:.1rem}",
-  ".mark{font-size:1.02rem;font-weight:800;letter-spacing:.22em;",
-  "background:linear-gradient(92deg,var(--text) 25%,var(--glow) 55%,rgba(99,102,241,.95));",
-  "-webkit-background-clip:text;background-clip:text;color:transparent}",
-  ".sub{font-size:.72rem;color:var(--dim);letter-spacing:.06em}",
-  ".topRight{display:flex;align-items:center;gap:.7rem;flex-wrap:wrap}",
-  ".live{display:inline-flex;align-items:center;gap:.42rem;color:var(--ok)",
-  ";border:1px solid rgba(52,211,153,.35);background:rgba(52,211,153,.06);",
-  "border-radius:999px;padding:.18rem .68rem;font-size:.72rem;font-weight:700;",
-  "letter-spacing:.16em}",
-  ".liveDot{width:8px;height:8px;border-radius:50%;background:var(--ok);",
-  "box-shadow:0 0 8px rgba(52,211,153,.9);animation:breathe 2.2s ease-in-out infinite}",
-  ".clock{color:var(--muted);font-size:.86rem;letter-spacing:.04em}",
-  ".modeChip{border:1px solid var(--line);color:var(--muted);border-radius:999px;",
-  "padding:.18rem .6rem;font-size:.72rem}",
-  ".hair{position:absolute;left:0;bottom:-1px;height:2px;width:100%;opacity:0;",
-  "transform:scaleX(0);transform-origin:left;",
-  "background:linear-gradient(90deg,var(--accent),rgba(99,102,241,.85),transparent)}",
-  ".hair.run{animation:hairline .9s ease-out}",
-].join("\n");
-const CSS_LAYOUT = [
-  ".wrap{max-width:85rem;margin:0 auto;padding:1.5rem;display:grid;gap:1.25rem;",
-  "grid-template-columns:1fr}",
-  "@media (min-width:68.75em){.wrap{grid-template-columns:5fr 7fr;align-items:start}}",
-  ".panel{position:relative;background:var(--surface);",
-  "backdrop-filter:blur(14px);-webkit-backdrop-filter:blur(14px);",
-  "border-radius:var(--radius);padding:1.15rem 1.25rem 1.3rem;",
-  "box-shadow:0 18px 48px rgba(2,6,12,.55),inset 0 1px 0 rgba(255,255,255,.05)}",
-  // 1px luminous gradient border: the pseudo-element's gradient is masked
-  // down to its own padding ring, leaving exactly one pixel visible.
-  ".panel::before{content:'';position:absolute;inset:0;border-radius:inherit;",
-  "padding:1px;pointer-events:none;",
-  "background:linear-gradient(160deg,rgba(34,211,238,.32),rgba(99,102,241,.14) 38%,",
-  "rgba(148,163,184,.07) 70%);",
-  "-webkit-mask:linear-gradient(#fff 0 0) content-box,linear-gradient(#fff 0 0);",
-  "-webkit-mask-composite:xor;",
-  "mask:linear-gradient(#fff 0 0) content-box,linear-gradient(#fff 0 0);",
-  "mask-composite:exclude}",
-  ".panel>h2{display:flex;align-items:center;gap:.6rem;margin-bottom:.9rem}",
-].join("\n");
-const CSS_ORB = [
-  ".orbWrap{display:flex;justify-content:center;padding:1.2rem 0 .4rem}",
-  ".orb{position:relative;width:9.5rem;height:9.5rem;border-radius:50%;border:none;",
-  "cursor:pointer;display:flex;align-items:center;justify-content:center;gap:4px;",
-  "color:var(--accent);",
-  "background:radial-gradient(circle at 50% 38%,rgba(34,211,238,.3),",
-  "rgba(99,102,241,.12) 55%,transparent 72%);",
-  "transition:transform .25s ease,box-shadow .25s ease}",
-  ".orb:hover{transform:scale(1.05);box-shadow:0 0 46px rgba(34,211,238,.32)}",
-  ".orb:focus-visible{outline:2px solid var(--accent);outline-offset:5px}",
-  // Rotating conic sweep, masked into a thin ring.
-  ".orbConic{position:absolute;inset:-7px;border-radius:50%;pointer-events:none;",
-  "background:conic-gradient(from 0deg,rgba(34,211,238,0) 0deg,rgba(34,211,238,.9) 55deg,",
-  "rgba(99,102,241,.75) 120deg,rgba(34,211,238,0) 175deg,rgba(34,211,238,0) 360deg);",
-  "animation:spin 4.2s linear infinite;",
-  "-webkit-mask:radial-gradient(farthest-side,transparent calc(100% - 6px),#000 calc(100% - 5px));",
-  "mask:radial-gradient(farthest-side,transparent calc(100% - 6px),#000 calc(100% - 5px))}",
-  ".pulse{position:absolute;inset:0;border-radius:50%;border:1px solid rgba(34,211,238,.5);",
-  "animation:pulseOut 2.8s ease-out infinite;opacity:0;pointer-events:none}",
-  ".pulse.p2b{animation-delay:1.4s}",
-  ".bar{width:4px;border-radius:2px;transform-origin:center;",
-  "background:linear-gradient(180deg,var(--accent),rgba(99,102,241,.85));",
-  "box-shadow:0 0 8px rgba(34,211,238,.55);animation:wave 1.15s ease-in-out infinite}",
-  ".bar.b1,.bar.b7{height:12px}.bar.b2,.bar.b6{height:20px}",
-  ".bar.b3,.bar.b5{height:27px}.bar.b4{height:34px}",
-  ".bar.b2{animation-delay:.12s}.bar.b3{animation-delay:.24s}",
-  ".bar.b4{animation-delay:.36s}.bar.b5{animation-delay:.48s}",
-  ".bar.b6{animation-delay:.6s}.bar.b7{animation-delay:.72s}",
-  ".orbCap{text-align:center;color:var(--muted);font-size:.9rem;",
-  "margin:.95rem 0 0;min-height:1.5em}",
-  ".orbCap.connecting{color:var(--accent)}",
-  ".orbHint{text-align:center;color:var(--dim);font-size:.76rem;margin:.15rem 0 0}",
-  ".cards{display:flex;flex-direction:column;gap:.95rem;margin-top:1.15rem}",
-  ".card{position:relative;border:1px solid var(--line);border-radius:12px;",
-  "padding:.9rem 1rem;background:rgba(9,14,21,.6);",
-  "box-shadow:inset 0 1px 0 rgba(255,255,255,.04);",
-  "transition:border-color .25s ease,box-shadow .25s ease}",
-  ".card:hover{border-color:rgba(34,211,238,.35);",
-  "box-shadow:0 0 1.2rem rgba(34,211,238,.1),inset 0 1px 0 rgba(255,255,255,.05)}",
-  ".cardNum{position:absolute;top:-.6rem;left:.9rem;border-radius:8px;",
-  "padding:.06rem .5rem;font-size:.76rem;font-weight:800;color:rgb(3,18,24);",
-  "background:linear-gradient(120deg,var(--accent),rgb(125,211,252))}",
-  ".card h3{margin:.35rem 0 .3rem;font-size:.98rem}",
-  ".say{font-size:.88rem}",
-  ".say q{color:var(--glow)}",
-  ".watch{font-size:.8rem;color:var(--dim)}",
-  ".pin-chip{margin-top:.55rem;border:1px dashed rgba(34,211,238,.5);",
-  "color:var(--accent);background:rgba(34,211,238,.08);border-radius:999px;",
-  "padding:.3rem .75rem;cursor:pointer;font-size:.8rem;",
-  "transition:background .2s ease,box-shadow .2s ease}",
-  ".pin-chip:hover{background:rgba(34,211,238,.16);",
-  "box-shadow:0 0 12px rgba(34,211,238,.25)}",
-  ".pin-chip.copied{color:var(--ok);border-color:rgba(52,211,153,.6);",
-  "background:rgba(52,211,153,.1)}",
-  ".pin-miss{display:inline-block;margin-top:.55rem;color:var(--dim);",
-  "font-size:.8rem;border:1px dashed rgba(139,152,165,.35);",
-  "border-radius:999px;padding:.3rem .75rem}",
-].join("\n");
-const CSS_RIBBON = [
-  ".ribbon{margin-top:1.5rem;border-top:1px solid var(--line);padding-top:1.05rem}",
-  ".ribbonTitle{font-size:.72rem;color:var(--dim);text-transform:uppercase;",
-  "letter-spacing:.16em;margin:0 0 .85rem}",
-  ".flow{list-style:none;display:flex;gap:.4rem;margin:0;padding:0;flex-wrap:wrap;",
-  "align-items:stretch;justify-content:space-between}",
-  ".flow li{flex:1 1 0;min-width:6.6rem;position:relative;text-align:center;",
-  "font-size:.72rem;color:var(--muted);display:flex;flex-direction:column;",
-  "align-items:center;gap:.35rem;padding:.4rem .25rem .35rem;",
-  "border:1px solid rgba(148,163,184,.08);border-radius:10px;",
-  "background:rgba(9,14,21,.45)}",
-  ".flow li:not(:last-child)::before{content:'';position:absolute;top:1.28rem;",
-  "left:calc(50% + 1.55rem);right:calc(-50% + 1.55rem);height:1px;",
-  "background:linear-gradient(90deg,rgba(34,211,238,.5),rgba(99,102,241,.4))}",
-  // the travelling light pulse riding each connector line
-  ".flow li:not(:last-child)::after{content:'';position:absolute;top:1.21rem;",
-  "left:calc(50% + 1.55rem);width:5px;height:5px;border-radius:50%;",
-  "background:var(--accent);",
-  "box-shadow:0 0 8px rgba(34,211,238,.95),0 0 16px rgba(34,211,238,.5);",
-  "animation:flowDot 3s linear infinite}",
-  ".flow li:nth-child(2)::after{animation-delay:.75s}",
-  ".flow li:nth-child(3)::after{animation-delay:1.5s}",
-  ".flow li:nth-child(4)::after{animation-delay:2.25s}",
-  ".flow svg{width:1.45rem;height:1.45rem;color:var(--accent);",
-  "filter:drop-shadow(0 0 5px rgba(34,211,238,.5))}",
-  ".flow small{display:block;color:var(--dim);font-size:.64rem}",
-].join("\n");
-const CSS_MAP = [
-  ".mapPanel{margin:1.05rem 0 1rem;border:1px solid var(--line);border-radius:12px;",
-  "background:rgba(9,14,21,.55);padding:.7rem .8rem .55rem}",
-  ".mapHead{display:flex;justify-content:space-between;align-items:baseline;",
-  "margin-bottom:.4rem}",
-  ".mapTitle{font-size:.66rem;color:var(--dim);text-transform:uppercase;",
-  "letter-spacing:.16em}",
-  ".mapHint{font-size:.6rem;color:rgba(52,211,153,.8);letter-spacing:.14em;",
-  "text-transform:uppercase}",
-  ".map{display:block;width:100%;height:auto;border-radius:8px}",
-  ".mapDots{fill:url(#dots)}",
-  ".land{fill:rgba(30,41,59,.55);stroke:rgba(148,163,184,.28);stroke-width:1;",
-  "filter:drop-shadow(0 0 14px rgba(34,211,238,.07))}",
-  "#dots circle{fill:rgba(148,163,184,.16)}",
-  ".mdot{fill:var(--quiet);transition:fill .3s ease}",
-  ".mring{fill:none;stroke:rgba(34,211,238,.55);stroke-width:1;opacity:0;",
-  "transform-box:fill-box;transform-origin:center}",
-  ".mping{fill:none;stroke:var(--p1);stroke-width:1.6;opacity:0;",
-  "transform-box:fill-box;transform-origin:center}",
-  ".mlab{opacity:0;font-size:9px;fill:rgb(251,113,133);text-anchor:middle;",
-  "letter-spacing:.06em}",
-  ".state-tix .mdot{fill:var(--accent);",
-  "filter:drop-shadow(0 0 4px rgba(34,211,238,.8))}",
-  ".state-tix .mring{opacity:1;animation:ringBreathe 2.6s ease-in-out infinite}",
-  ".state-p2 .mdot{fill:var(--p2);",
-  "filter:drop-shadow(0 0 5px rgba(245,158,11,.85))}",
-  ".state-p2 .mring{stroke:rgba(245,158,11,.6);opacity:1;",
-  "animation:ringBreathe 2.1s ease-in-out infinite}",
-  ".state-p1 .mdot{fill:var(--p1);",
-  "filter:drop-shadow(0 0 6px rgba(244,63,94,.9))}",
-  ".state-p1 .mping{opacity:1;animation:radar 1.7s ease-out infinite}",
-  ".state-p1 .mlab{opacity:1}",
-].join("\n");
-const CSS_BOARD = [
-  ".boardHead{display:flex;align-items:center;gap:.6rem}",
-  ".stale{border:1px solid rgba(245,158,11,.55);color:var(--p2);",
-  "border-radius:999px;padding:.14rem .55rem;font-size:.68rem;font-weight:700;",
-  "letter-spacing:.1em;text-transform:uppercase}",
-  ".kpis{display:grid;grid-template-columns:repeat(4,1fr);gap:.7rem;margin:.4rem 0 0}",
-  "@media (max-width:40em){.kpis{grid-template-columns:repeat(2,1fr)}}",
-  ".kpi{border:1px solid var(--line);border-radius:12px;padding:.6rem .75rem .55rem;",
-  "background:rgba(9,14,21,.55);box-shadow:inset 0 1px 0 rgba(255,255,255,.04)}",
-  ".kLabel{display:block;font-size:.62rem;color:var(--dim);text-transform:uppercase;",
-  "letter-spacing:.12em;white-space:nowrap}",
-  ".kNum{display:block;font-size:1.5rem;line-height:1.2;color:var(--text);",
-  "margin-top:.15rem;white-space:nowrap}",
-  ".kSub{display:block;font-size:.62rem;color:var(--dim);letter-spacing:.06em;",
-  "white-space:nowrap}",
-  ".kpi.hot .kNum{color:var(--p1);text-shadow:0 0 12px rgba(244,63,94,.45)}",
-  ".regions{display:grid;grid-template-columns:repeat(2,1fr);gap:.8rem}",
-  "@media (max-width:40em){.regions{grid-template-columns:1fr}}",
-  ".regionCard{border:1px solid var(--line);border-radius:12px;padding:.75rem .85rem;",
-  "background:rgba(9,14,21,.55);box-shadow:inset 0 1px 0 rgba(255,255,255,.04);",
-  "transition:border-color .3s ease,box-shadow .3s ease}",
-  ".regionCard.quiet{border-color:rgba(71,85,105,.55);color:var(--dim)}",
-  ".regionCard.tix{border-color:rgba(34,211,238,.4)}",
-  ".regionCard.p2{border-color:rgba(245,158,11,.55);",
-  "box-shadow:0 0 1rem rgba(245,158,11,.08),inset 0 1px 0 rgba(255,255,255,.04)}",
-  ".regionCard.p1{border-color:rgba(244,63,94,.6);animation:p1Glow 3.2s ease-in-out infinite}",
-  ".regionCard.upgraded{animation:borderFlash 1.6s ease-out}",
-  ".regionCard.flash{animation:rowFlash 1.2s ease-out}",
-  ".regionHead{display:flex;justify-content:space-between;align-items:center;gap:.5rem}",
-  ".regionName{font-size:.9rem;font-weight:650}",
-  ".chip{font-size:.6rem;font-weight:800;letter-spacing:.14em;border-radius:6px;",
-  "padding:.16rem .5rem;border:1px solid var(--line);color:var(--dim);",
-  "text-transform:uppercase}",
-  ".regionCard.tix .chip{color:var(--accent);border-color:rgba(34,211,238,.55);",
-  "box-shadow:0 0 8px rgba(34,211,238,.2)}",
-  ".regionCard.p2 .chip{color:var(--p2);border-color:rgba(245,158,11,.6);",
-  "box-shadow:0 0 8px rgba(245,158,11,.22)}",
-  ".regionCard.p1 .chip{color:var(--p1);border-color:rgba(244,63,94,.65);",
-  "box-shadow:0 0 10px rgba(244,63,94,.3)}",
-  ".incLine{margin:.45rem 0 .1rem;font-size:.76rem;color:var(--muted)}",
-  ".incLine .mono{color:var(--text)}",
-  ".tixList{display:flex;flex-direction:column;gap:.35rem;margin-top:.5rem}",
-  ".tixRow{display:flex;align-items:center;gap:.45rem;flex-wrap:wrap;",
-  "border:1px solid rgba(148,163,184,.1);border-radius:9px;padding:.28rem .5rem;",
-  "background:rgba(15,22,31,.55);font-size:.72rem;color:var(--muted)}",
-  ".tixRow.flash{animation:rowFlash 1.2s ease-out}",
-  ".tixRow .tid{color:var(--text)}",
-  ".tixRow .tlabel{flex:1 1 auto;min-width:5rem}",
-  ".prio{display:inline-block;border-radius:5px;padding:.03rem .36rem;",
-  "font-size:.62rem;font-weight:800;letter-spacing:.08em}",
-  ".prio.P1{color:var(--p1);border:1px solid rgba(244,63,94,.55)}",
-  ".prio.P2{color:var(--p2);border:1px solid rgba(245,158,11,.55)}",
-  ".ttime{color:var(--dim);font-size:.64rem}",
-  ".panelFoot{margin:1.05rem 0 0;font-size:.7rem;color:var(--dim)}",
-].join("\n");
-const CSS_FEED = [
-  ".feedTitle{margin-top:1.1rem}",
-  ".feed{list-style:none;margin:.5rem 0 0;padding:0;position:relative}",
-  ".feed::before{content:'';position:absolute;left:5px;top:8px;bottom:8px;width:1px;",
-  "background:linear-gradient(180deg,rgba(34,211,238,.4),rgba(99,102,241,.18))}",
-  ".feed li{position:relative;padding:.3rem .4rem .3rem 1.25rem;font-size:.76rem;",
-  "color:var(--muted)}",
-  ".feed li::before{content:'';position:absolute;left:2px;top:.72em;width:7px;",
-  "height:7px;border-radius:50%;background:var(--quiet)}",
-  ".feed li.k-accent::before{background:var(--accent);",
-  "box-shadow:0 0 7px rgba(34,211,238,.85)}",
-  ".feed li.k-warn::before{background:var(--p2);box-shadow:0 0 7px rgba(245,158,11,.85)}",
-  ".feed li.k-crit::before{background:var(--p1);box-shadow:0 0 7px rgba(244,63,94,.9)}",
-  ".feed li.k-ok::before{background:var(--ok);box-shadow:0 0 7px rgba(52,211,153,.85)}",
-  ".feed li.fresh{animation:fadeIn .9s ease-out}",
-  ".feed .ftime{float:right;color:var(--dim);font-size:.64rem;padding-left:.6rem}",
-  ".feed .ftext{margin-right:.5rem}",
-  ".drawer{position:relative;z-index:10;max-width:85rem;margin:0 auto 2rem;",
-  "padding:0 1.5rem}",
-  ".drawer summary{cursor:pointer;color:var(--dim);font-size:.8rem;width:max-content}",
-  ".drawerBody{border:1px solid var(--line);border-radius:var(--radius);",
-  "margin-top:.6rem;padding:1rem 1.1rem;background:var(--surface);",
-  "backdrop-filter:blur(14px);-webkit-backdrop-filter:blur(14px);",
-  "display:flex;flex-direction:column;gap:.8rem}",
-  ".drawerBody label{font-size:.8rem;color:var(--muted);display:flex;",
-  "flex-direction:column;gap:.3rem}",
-  ".drawerBody input{background:rgba(5,8,13,.85);border:1px solid var(--line);",
-  "color:var(--text);border-radius:8px;padding:.45rem .6rem;font-size:.86rem;",
-  "width:min(22rem,100%)}",
-  ".opsBtns{display:flex;gap:.6rem;flex-wrap:wrap}",
-  ".opsBtns button{border:1px solid rgba(34,211,238,.4);color:var(--accent);",
-  "background:rgba(34,211,238,.07);border-radius:10px;padding:.42rem .8rem;",
-  "font-size:.8rem;cursor:pointer;transition:background .2s ease}",
-  ".opsBtns button:hover{background:rgba(34,211,238,.16)}",
-  ".opsOut{margin:0;font-size:.74rem;color:var(--muted);white-space:pre-wrap;",
-  "word-break:break-word;min-height:1.4em}",
-  ".foot{position:relative;z-index:1;max-width:85rem;margin:0 auto;",
-  "padding:0 1.5rem 2.2rem;color:var(--dim);font-size:.76rem;text-align:center}",
-].join("\n");
-const CSS_ANIMS = [
-  "@keyframes driftA{0%{transform:translate(0,0)}100%{transform:translate(6rem,3rem)}}",
-  "@keyframes driftB{0%{transform:translate(0,0)}100%{transform:translate(-5rem,-4rem)}}",
-  "@keyframes driftC{0%{transform:translate(0,0) scale(1)}",
-  "100%{transform:translate(-4rem,3rem) scale(1.15)}}",
-  "@keyframes breathe{0%,100%{transform:scale(1);opacity:1}",
-  "50%{transform:scale(1.4);opacity:.55}}",
-  "@keyframes hairline{0%{transform:scaleX(0);opacity:1}",
-  "100%{transform:scaleX(1);opacity:0}}",
-  "@keyframes spin{to{transform:rotate(1turn)}}",
-  "@keyframes pulseOut{0%{transform:scale(.82);opacity:.85}",
-  "100%{transform:scale(1.45);opacity:0}}",
-  "@keyframes wave{0%,100%{transform:scaleY(.4)}50%{transform:scaleY(1)}}",
-  "@keyframes flowDot{0%{left:calc(50% + 1.55rem);opacity:0}12%{opacity:1}",
-  "88%{opacity:1}100%{left:calc(100% - 1.55rem);opacity:0}}",
-  "@keyframes ringBreathe{0%,100%{transform:scale(1);opacity:.9}",
-  "50%{transform:scale(1.45);opacity:.3}}",
-  "@keyframes radar{0%{transform:scale(.55);opacity:.95}",
-  "100%{transform:scale(2.6);opacity:0}}",
-  "@keyframes p1Glow{0%,100%{box-shadow:0 0 .4rem 0 rgba(244,63,94,.05),",
-  "inset 0 1px 0 rgba(255,255,255,.04)}",
-  "50%{box-shadow:0 0 1.6rem .1rem rgba(244,63,94,.28),",
-  "inset 0 1px 0 rgba(255,255,255,.05)}}",
-  "@keyframes borderFlash{0%{box-shadow:0 0 0 .05rem rgba(244,63,94,.6);",
-  "border-color:rgb(244,63,94)}100%{box-shadow:0 0 0 0 rgba(244,63,94,0)}}",
-  "@keyframes rowFlash{0%{box-shadow:0 0 0 .15rem rgba(34,211,238,.5);",
-  "border-color:rgb(34,211,238)}100%{box-shadow:0 0 0 0 rgba(34,211,238,0)}}",
-  "@keyframes fadeIn{0%{opacity:0;transform:translateY(-.35rem)}",
-  "100%{opacity:1;transform:none}}",
-  "@media (prefers-reduced-motion: reduce){",
-  "*,*::before,*::after{animation:none !important;transition:none !important}}",
-].join("\n");
-
-const CSS = [
-  CSS_TOKENS,
-  CSS_HEADER,
-  CSS_LAYOUT,
-  CSS_ORB,
-  CSS_RIBBON,
-  CSS_MAP,
-  CSS_BOARD,
-  CSS_FEED,
-  CSS_ANIMS,
-].join("\n");
-
-const FLOW_SVGS = [
-  "<svg viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='1.7' aria-hidden='true'><circle cx='12' cy='8' r='3.4'/><path d='M5 20a7 7 0 0 1 14 0'/></svg>",
-  "<svg viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='1.7' stroke-linecap='round' aria-hidden='true'><path d='M3 12h3l2-6 3 12 3-9 2 3h4'/></svg>",
-  "<svg viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='1.7' stroke-linecap='round' aria-hidden='true'><rect x='4' y='4' width='16' height='16' rx='3'/><path d='M9 9h6M9 13h6M9 17h3'/></svg>",
-  "<svg viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='1.7' stroke-linecap='round' aria-hidden='true'><ellipse cx='12' cy='6' rx='7' ry='3'/><path d='M5 6v12c0 1.7 3.1 3 7 3s7-1.3 7-3V6'/><path d='M5 12c0 1.7 3.1 3 7 3s7-1.3 7-3'/></svg>",
-  "<svg viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='1.7' stroke-linecap='round' aria-hidden='true'><rect x='3' y='5' width='18' height='12' rx='2'/><path d='M8 21h8M12 17v4'/></svg>",
-];
-
-const FLOW_STEPS = [
-  "Caller",
-  "Telnyx Voice AI<small>Sanad · workflow</small>",
-  "Edge Function<small>dynamic variables · tools · MCP</small>",
-  "Stateful Actors + KV",
-  "NOC board",
-];
-
-function flowList(): string {
-  const items = FLOW_STEPS.map(
-    (step, i) => `<li>${FLOW_SVGS[i]}<span>${step}</span></li>`,
-  );
-  return `<ol class="flow">${items.join("")}</ol>`;
-}
-
-// Abstract KSA situation map: a soft rounded landmass on a dotted grid, no
-// attempt at a real coastline. Markers are labelled by region id so the
-// client script can restyle them per board state.
-const MAP_MARKERS: ReadonlyArray<readonly [string, number, number]> = [
-  ["jeddah", 86, 138],
-  ["riyadh-north", 196, 106],
-  ["riyadh-south", 205, 149],
-  ["dammam", 283, 90],
-];
-
-function mapSvg(): string {
-  const markers = MAP_MARKERS.map(
-    ([region, x, y]) =>
-      `<g class="mmark state-quiet" id="map-${region}" transform="translate(${x},${y})">` +
-      `<circle class="mping" r="7"></circle>` +
-      `<circle class="mring" r="11"></circle>` +
-      `<circle class="mdot" r="4.5"></circle>` +
-      `<text class="mlab" y="-14"></text></g>`,
-  ).join("");
-  return [
-    `<svg id="ksaMap" class="map" viewBox="0 0 360 250" role="img"`,
-    ` aria-label="Stylised situation map of Saudi Arabia">`,
-    `<defs><pattern id="dots" width="16" height="16" patternUnits="userSpaceOnUse">`,
-    `<circle cx="2" cy="2" r=".9"></circle></pattern></defs>`,
-    `<rect class="mapDots" width="360" height="250"></rect>`,
-    `<path class="land" d="M54,64 Q98,30 178,40 L290,56 Q324,62 320,104 `,
-    `L310,182 Q304,220 250,216 L98,208 Q46,203 48,156 Z"></path>`,
-    markers,
-    `</svg>`,
-  ].join("");
-}
-
-const JS_CORE = [
-  "(function () {",
-  "'use strict';",
-  "var POLL_MS = 5e3, FETCH_MS = 8e3, FLASH_MS = 12e2, CLOCK_MS = 1e3;",
-  "var board = null, prevByRegion = {}, prioByRegion = {}, tixBySite = {},",
-  "  generatedMs = 0;",
-  "var feedItems = [];",
-  "function el(tag, cls, text) {",
-  "  var node = document.createElement(tag);",
-  "  if (cls) node.className = cls;",
-  "  if (text !== undefined && text !== null) node.textContent = String(text);",
-  "  return node;",
-  "}",
-  "function byId(id) { return document.getElementById(id); }",
-  "function rel(at) {",
-  "  var s = Math.max(0, Math.round((Date.now() - at) / 1e3));",
-  "  if (s >= 60) return Math.floor(s / 60) + 'm ago';",
-  "  return s + 's ago';",
-  "}",
-  "/* header clock, board age tile and feed relative times tick every second */",
-  "var clockEl = byId('clock');",
-  "var riyadh = new Intl.DateTimeFormat('en-GB', { timeZone: 'Asia/Riyadh',",
-  "  hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false });",
-  "function updateAge() {",
-  "  if (board === null) return;",
-  "  var ageS = Math.max(0, Math.round((Date.now() - generatedMs) / 1e3));",
-  "  byId('kAge').textContent = ageS + ' s';",
-  "}",
-  "function updateFeedTimes() {",
-  "  var times = document.querySelectorAll('.ftime');",
-  "  for (var i = 0; i < times.length; i++) {",
-  "    var at = Number(times[i].getAttribute('data-at') || 0);",
-  "    if (at > 0) times[i].textContent = rel(at);",
-  "  }",
-  "}",
-  "setInterval(function () {",
-  "  if (clockEl) clockEl.textContent = riyadh.format(new Date());",
-  "  updateAge();",
-  "  updateFeedTimes();",
-  "}, CLOCK_MS);",
-  "if (clockEl) clockEl.textContent = riyadh.format(new Date());",
-  "/* pin chips: click to copy */",
-  "Array.prototype.forEach.call(document.querySelectorAll('.pin-chip'), function (chip) {",
-  "  var pin = chip.getAttribute('data-pin') || '';",
-  "  chip.addEventListener('click', function () {",
-  "    var restore = function () {",
-  "      chip.textContent = 'PIN ' + pin + ' · click to copy';",
-  "      chip.classList.remove('copied');",
-  "    };",
-  "    var write = function () {",
-  "      chip.textContent = 'copied ✓';",
-  "      chip.classList.add('copied');",
-  "      setTimeout(restore, FLASH_MS);",
-  "    };",
-  "    var fallback = function () {",
-  "      var area = el('textarea');",
-  "      area.value = pin;",
-  "      area.setAttribute('readonly', '');",
-  "      area.style.position = 'fixed';",
-  "      area.style.opacity = '0';",
-  "      document.body.appendChild(area);",
-  "      area.select();",
-  "      try { document.execCommand('copy'); } catch (err) { /* none */ }",
-  "      document.body.removeChild(area);",
-  "      write();",
-  "    };",
-  "    if (navigator.clipboard && navigator.clipboard.writeText) {",
-  "      navigator.clipboard.writeText(pin).then(write, fallback);",
-  "    } else { fallback(); }",
-  "  });",
-  "});",
-  "/* the hero orb clicks the widget's own launcher inside its shadow root */",
-  "var orb = byId('orb'), cap = byId('orbCap');",
-  "orb.addEventListener('click', function () {",
-  "  var host = document.querySelector('telnyx-ai-agent');",
-  "  var launcher = host && host.shadowRoot ? host.shadowRoot.querySelector('button') : null;",
-  "  if (launcher) launcher.click();",
-  "  cap.classList.add('connecting');",
-  "  cap.textContent = launcher",
-  "    ? 'Connecting… allow your microphone, then speak to Sanad.'",
-  "    : 'Connecting… the voice widget is still loading — one moment.';",
-  "});",
-].join("\n");
-const JS_RENDER = [
-  "/* board rendering: map markers, region cards, event feed */",
-  "function regionTicketCount(next, regionId) {",
-  "  var n = 0;",
-  "  for (var i = 0; i < next.sites.length; i++) {",
-  "    if (next.sites[i].region === regionId && next.sites[i].open_ticket !== null) n++;",
-  "  }",
-  "  return n;",
-  "}",
-  "function regionState(region, tix) {",
-  "  if (region.incident !== null) {",
-  "    return region.incident.priority === 'P1' ? 'p1' : 'p2';",
-  "  }",
-  "  return tix > 0 ? 'tix' : 'quiet';",
-  "}",
-  "function renderMap(next) {",
-  "  for (var r = 0; r < next.regions.length; r++) {",
-  "    var region = next.regions[r];",
-  "    var g = byId('map-' + region.region);",
-  "    if (!g) continue;",
-  "    g.setAttribute('class',",
-  "      'mmark state-' + regionState(region, regionTicketCount(next, region.region)));",
-  "    var lab = g.querySelector('.mlab');",
-  "    if (lab) lab.textContent = region.incident === null ? '' : region.incident.id;",
-  "  }",
-  "}",
-  "function chipText(state) {",
-  "  if (state === 'quiet') return 'QUIET';",
-  "  if (state === 'tix') return 'TICKETS';",
-  "  return state.toUpperCase();",
-  "}",
-  "function ticketRows(card, next, regionId, flashed) {",
-  "  var list = el('div', 'tixList');",
-  "  var used = false;",
-  "  for (var i = 0; i < next.sites.length; i++) {",
-  "    var site = next.sites[i];",
-  "    if (site.region !== regionId || site.open_ticket === null) continue;",
-  "    used = true;",
-  "    var row = el('div', 'tixRow');",
-  "    row.appendChild(el('span', 'mono tid', site.site_id));",
-  "    row.appendChild(el('span', 'tlabel', site.label.replace(/^the /, '')));",
-  "    row.appendChild(el('span', 'mono', site.open_ticket.id));",
-  "    row.appendChild(",
-  "      el('span', 'prio ' + site.open_ticket.priority, site.open_ticket.priority));",
-  "    row.appendChild(el('span', 'mono ttime', site.open_ticket.opened_local));",
-  "    var sig = site.open_ticket.id + ':' + site.open_ticket.priority;",
-  "    if (tixBySite[site.site_id] !== undefined && tixBySite[site.site_id] !== sig) {",
-  "      row.classList.add('flash');",
-  "      flashed.push(row);",
-  "    }",
-  "    tixBySite[site.site_id] = sig;",
-  "    list.appendChild(row);",
-  "  }",
-  "  if (used) card.appendChild(list);",
-  "}",
-  "function signature(region, sites) {",
-  "  var parts = [region.label];",
-  "  if (region.incident !== null) {",
-  "    parts.push(region.incident.id, region.incident.priority,",
-  "      String(region.incident.site_count), region.incident.declared_local);",
-  "  } else { parts.push('-'); }",
-  "  for (var i = 0; i < sites.length; i++) {",
-  "    var site = sites[i];",
-  "    if (site.region !== region.region || site.open_ticket === null) continue;",
-  "    parts.push(site.site_id + ':' + site.open_ticket.id + ':' + site.open_ticket.priority);",
-  "  }",
-  "  return parts.join('|');",
-  "}",
-  "function renderRegions(next, prev) {",
-  "  var host = byId('regions');",
-  "  while (host.firstChild) host.removeChild(host.firstChild);",
-  "  var flashed = [];",
-  "  for (var r = 0; r < next.regions.length; r++) {",
-  "    var region = next.regions[r];",
-  "    var inc = region.incident;",
-  "    var tix = regionTicketCount(next, region.region);",
-  "    var state = regionState(region, tix);",
-  "    var card = el('article', 'regionCard ' + state);",
-  "    var head = el('div', 'regionHead');",
-  "    head.appendChild(el('span', 'regionName', region.label));",
-  "    head.appendChild(el('span', 'chip', chipText(state)));",
-  "    card.appendChild(head);",
-  "    if (inc !== null) {",
-  "      var incLine = el('p', 'incLine');",
-  "      incLine.appendChild(el('span', 'mono', inc.id));",
-  "      incLine.appendChild(el('span', '', ' · ' + inc.site_count +",
-  "        (inc.site_count === 1 ? ' branch' : ' branches') +",
-  "        ' · declared ' + inc.declared_local));",
-  "      card.appendChild(incLine);",
-  "    } else {",
-  "      card.appendChild(el('p', 'incLine', state === 'tix'",
-  "        ? 'no incident · ' + tix + (tix === 1 ? ' ticket' : ' tickets') + ' open'",
-  "        : 'all sites nominal'));",
-  "    }",
-  "    ticketRows(card, next, region.region, flashed);",
-  "    var sig = signature(region, next.sites);",
-  "    if (prev !== null && prevByRegion[region.region] !== undefined &&",
-  "        prevByRegion[region.region] !== sig) {",
-  "      card.classList.add('flash');",
-  "      flashed.push(card);",
-  "    }",
-  "    var prevPrio = prioByRegion[region.region];",
-  "    if (prevPrio === 'P2' && inc !== null && inc.priority === 'P1') {",
-  "      card.classList.add('upgraded');",
-  "    }",
-  "    prioByRegion[region.region] = inc === null ? null : inc.priority;",
-  "    prevByRegion[region.region] = sig;",
-  "    host.appendChild(card);",
-  "  }",
-  "  setTimeout(function () {",
-  "    for (var i = 0; i < flashed.length; i++) flashed[i].classList.remove('flash');",
-  "  }, FLASH_MS);",
-  "}",
-  "/* event feed: client-side diff of consecutive board snapshots */",
-  "function diffLines(prev, next) {",
-  "  var lines = [];",
-  "  for (var r = 0; r < next.regions.length; r++) {",
-  "    var region = next.regions[r];",
-  "    var before = null;",
-  "    for (var q = 0; q < prev.regions.length; q++) {",
-  "      if (prev.regions[q].region === region.region) { before = prev.regions[q]; break; }",
-  "    }",
-  "    var prevInc = before === null ? null : before.incident;",
-  "    var inc = region.incident;",
-  "    if (prevInc === null && inc !== null) {",
-  "      lines.push(inc.id + ' declared ' + inc.priority + ' · ' + region.label);",
-  "    }",
-  "    if (prevInc !== null && inc === null) lines.push(prevInc.id + ' resolved');",
-  "    if (prevInc !== null && inc !== null && prevInc.priority !== inc.priority) {",
-  "      lines.push(inc.id + (inc.priority === 'P1'",
-  "        ? ' raised to P1 · ' + inc.site_count + ' branches'",
-  "        : ' lowered to ' + inc.priority));",
-  "    }",
-  "  }",
-  "  for (var s = 0; s < next.sites.length; s++) {",
-  "    var site = next.sites[s];",
-  "    var prevSite = null;",
-  "    for (var t = 0; t < prev.sites.length; t++) {",
-  "      if (prev.sites[t].site_id === site.site_id) { prevSite = prev.sites[t]; break; }",
-  "    }",
-  "    var prevTicket = prevSite === null ? null : prevSite.open_ticket;",
-  "    var ticket = site.open_ticket;",
-  "    if (ticket !== null && (prevTicket === null || prevTicket.id !== ticket.id)) {",
-  "      lines.push(ticket.id + ' opened · ' + site.site_id + ' · ' + ticket.priority);",
-  "    }",
-  "    if (ticket === null && prevTicket !== null) {",
-  "      lines.push(prevTicket.id + ' resolved · ' + site.site_id);",
-  "    }",
-  "  }",
-  "  return lines;",
-  "}",
-  "function kindClass(line) {",
-  "  if (line.indexOf('raised to P1') !== -1 || line.indexOf('declared P1') !== -1) {",
-  "    return 'k-crit';",
-  "  }",
-  "  if (line.indexOf('resolved') !== -1) return 'k-ok';",
-  "  if (line.indexOf('declared') !== -1 || line.indexOf('lowered') !== -1) {",
-  "    return 'k-warn';",
-  "  }",
-  "  if (line.indexOf('opened') !== -1) return 'k-accent';",
-  "  return '';",
-  "}",
-  "function renderFeed(newCount) {",
-  "  var host = byId('feed');",
-  "  while (host.firstChild) host.removeChild(host.firstChild);",
-  "  for (var i = 0; i < feedItems.length && i < 8; i++) {",
-  "    var item = feedItems[i];",
-  "    var cls = item.kind ? item.kind : '';",
-  "    if (i < newCount) cls = (cls + ' fresh').trim();",
-  "    var li = el('li', cls);",
-  "    li.appendChild(el('span', 'ftext', item.text));",
-  "    var time = el('span', 'mono ftime', rel(item.at));",
-  "    time.setAttribute('data-at', String(item.at));",
-  "    li.appendChild(time);",
-  "    host.appendChild(li);",
-  "  }",
-  "}",
-  "function applyBoard(prev, next) {",
-  "  var incidents = 0, p1 = 0, tickets = 0, r, s;",
-  "  for (r = 0; r < next.regions.length; r++) {",
-  "    if (next.regions[r].incident !== null) {",
-  "      incidents++;",
-  "      if (next.regions[r].incident.priority === 'P1') p1++;",
-  "    }",
-  "  }",
-  "  for (s = 0; s < next.sites.length; s++) {",
-  "    if (next.sites[s].open_ticket !== null) tickets++;",
-  "  }",
-  "  byId('kInc').textContent = String(incidents);",
-  "  byId('kP1').textContent = String(p1);",
-  "  byId('kTix').textContent = String(tickets);",
-  "  byId('p1Tile').classList.toggle('hot', p1 > 0);",
-  "  byId('modeChip').textContent = 'actors: ' + next.actor_mode;",
-  "  renderMap(next);",
-  "  renderRegions(next, prev);",
-  "  if (prev === null) {",
-  "    feedItems.unshift({",
-  "      text: 'live board synced · ' + next.sites.length + ' sites watched',",
-  "      kind: '', at: Date.now() });",
-  "    renderFeed(1);",
-  "  } else {",
-  "    var fresh = diffLines(prev, next);",
-  "    for (var i = fresh.length - 1; i >= 0; i--) {",
-  "      var dup = false;",
-  "      for (var j = 0; j < feedItems.length; j++) {",
-  "        if (feedItems[j].text === fresh[i]) { dup = true; break; }",
-  "      }",
-  "      if (!dup) {",
-  "        feedItems.unshift({ text: fresh[i], kind: kindClass(fresh[i]), at: Date.now() });",
-  "      }",
-  "    }",
-  "    feedItems = feedItems.slice(0, 8);",
-  "    renderFeed(fresh.length);",
-  "  }",
-  "  updateAge();",
-  "}",
-].join("\n");
-const JS_LIFE = [
-  "/* polling: no overlap, hard timeout, keep the last board on failure */",
-  "var staleBadge = byId('staleBadge');",
-  "var hair = byId('hair');",
-  "function kickHair() {",
-  "  if (!hair) return;",
-  "  hair.classList.remove('run');",
-  "  void hair.offsetWidth;",
-  "  hair.classList.add('run');",
-  "}",
-  "var polling = false;",
-  "function poll() {",
-  "  if (polling) { setTimeout(poll, POLL_MS); return; }",
-  "  polling = true;",
-  "  var ctrl = new AbortController();",
-  "  var timer = setTimeout(function () { ctrl.abort(); }, FETCH_MS);",
-  "  fetch('/ops/board', { signal: ctrl.signal, headers: { accept: 'application/json' } })",
-  "    .then(function (res) {",
-  "      if (!res.ok) throw new Error('http ' + res.status);",
-  "      return res.json();",
-  "    })",
-  "    .then(function (next) {",
-  "      var prev = board;",
-  "      board = next;",
-  "      generatedMs = Date.parse(next.generated_at) || Date.now();",
-  "      applyBoard(prev, next);",
-  "      kickHair();",
-  "      if (staleBadge) staleBadge.hidden = true;",
-  "    })",
-  "    .catch(function () { if (staleBadge) staleBadge.hidden = false; })",
-  "    .then(function () {",
-  "      clearTimeout(timer);",
-  "      polling = false;",
-  "      setTimeout(poll, POLL_MS);",
-  "    });",
-  "}",
-  "poll();",
-  "/* operator drawer: token lives in sessionStorage only, sent as a bearer */",
-  "var TOKEN_KEY = 'nocOpsToken';",
-  "var tokenInput = byId('opsToken'), opsOut = byId('opsOut');",
-  "try { tokenInput.value = sessionStorage.getItem(TOKEN_KEY) || ''; } catch (err) { /* none */ }",
-  "tokenInput.addEventListener('input', function () {",
-  "  try { sessionStorage.setItem(TOKEN_KEY, tokenInput.value); } catch (err) { /* none */ }",
-  "});",
-  "var OPS_ROUTES = {",
-  "  reset: '/ops/reset',",
-  "  stage: '/ops/stage-incident?region=riyadh-north',",
-  "  ack: '/ops/ack?region=riyadh-north',",
-  "  resolve: '/ops/resolve?region=riyadh-north',",
-  "};",
-  "Array.prototype.forEach.call(document.querySelectorAll('[data-op]'), function (btn) {",
-  "  btn.addEventListener('click', function () {",
-  "    var path = OPS_ROUTES[btn.getAttribute('data-op')];",
-  "    if (!path) return;",
-  "    opsOut.textContent = 'POST ' + path + ' …';",
-  "    fetch(path, { method: 'POST', headers: {",
-  "      authorization: 'Bearer ' + (tokenInput.value || '') } })",
-  "      .then(function (res) {",
-  "        return res.text().then(function (body) {",
-  "          opsOut.textContent = res.status + ' ' + body;",
-  "        });",
-  "      })",
-  "      .catch(function (err) { opsOut.textContent = 'failed: ' + err.message; });",
-  "  });",
-  "});",
-  "})();",
-].join("\n");
-
-const APP_JS = [JS_CORE, JS_RENDER, JS_LIFE].join("\n");
-
-function bodyMarkup(cards: string): string {
-  return [
-  "<telnyx-ai-agent agent-id=\"" + DEMO_AGENT_ID + "\"></telnyx-ai-agent>",
-  "<div class=\"fx\" aria-hidden=\"true\">",
-  "<span class=\"g g1\"></span><span class=\"g g2\"></span><span class=\"g g3\"></span>",
-  "</div>",
-  "<div class=\"fxGrid\" aria-hidden=\"true\"></div>",
-  "<div class=\"fxNoise\" aria-hidden=\"true\"></div>",
-  "<header class=\"top\">",
-  "<div class=\"brand\"><strong class=\"mark\">NOC FRONT DOOR</strong>",
-  "<span class=\"sub\">Najd Networks · 24/7 AI fault line</span></div>",
-  "<div class=\"topRight\">",
-  "<span class=\"live\"><span class=\"liveDot\"></span>LIVE</span>",
-  "<span class=\"clock mono\" id=\"clock\">--:--:--</span>",
-  "<span class=\"modeChip mono\" id=\"modeChip\">actors: …</span>",
-  "</div>",
-  "<span class=\"hair\" id=\"hair\"></span>",
-  "</header>",
-  "<main class=\"wrap\">",
-  "<section class=\"panel left\">",
-  "<h2>Talk to Sanad</h2>",
-  "<div class=\"orbWrap\">",
-  "<button type=\"button\" class=\"orb\" id=\"orb\" aria-label=\"Start a web call with Sanad\">",
-  "<span class=\"orbConic\"></span><span class=\"pulse\"></span><span class=\"pulse p2b\"></span>",
-  "<span class=\"bar b1\"></span><span class=\"bar b2\"></span><span class=\"bar b3\"></span>",
-  "<span class=\"bar b4\"></span><span class=\"bar b5\"></span><span class=\"bar b6\"></span>",
-  "<span class=\"bar b7\"></span>",
-  "</button>",
-  "</div>",
-  "<p class=\"orbCap\" id=\"orbCap\">Tap to start a web call · allow your microphone</p>",
-  "<p class=\"orbHint\">Tap the orb — or 'Talk to Sanad' bottom-right — the Telnyx launcher stays available.</p>",
-  "<div class=\"cards\">" + cards + "</div>",
-  "<div class=\"ribbon\">",
-  "<p class=\"ribbonTitle\">How it works</p>",
-  flowList(),
-  "</div>",
-  "</section>",
-  "<section class=\"panel right\">",
-  "<div class=\"boardHead\">",
-  "<h2>NOC board</h2>",
-  "<span class=\"stale\" id=\"staleBadge\" hidden>stale</span>",
-  "</div>",
-  "<div class=\"kpis\">",
-  "<div class=\"kpi\"><span class=\"kLabel\">Open incidents</span>",
-  "<span class=\"kNum\" id=\"kInc\">–</span></div>",
-  "<div class=\"kpi\" id=\"p1Tile\"><span class=\"kLabel\">P1 incidents</span>",
-  "<span class=\"kNum\" id=\"kP1\">–</span></div>",
-  "<div class=\"kpi\"><span class=\"kLabel\">Open tickets</span>",
-  "<span class=\"kNum\" id=\"kTix\">–</span></div>",
-  "<div class=\"kpi\"><span class=\"kLabel\">Board age</span>",
-  "<span class=\"kNum\" id=\"kAge\">–</span><span class=\"kSub\">since update</span></div>",
-  "</div>",
-  "<div class=\"mapPanel\">",
-  "<div class=\"mapHead\"><span class=\"mapTitle\">KSA situation map</span>",
-  "<span class=\"mapHint\">live telemetry</span></div>",
-  mapSvg(),
-  "</div>",
-  "<div class=\"regions\" id=\"regions\"></div>",
-  "<h3 class=\"feedTitle\">Event feed</h3>",
-  "<ul class=\"feed\" id=\"feed\"></ul>",
-  "<p class=\"panelFoot\">Live from Stateful Actors via /ops/board · refresh 5 s · data masked</p>",
-  "</section>",
-  "</main>",
-  "<details class=\"drawer\" id=\"opsDrawer\">",
-  "<summary>Operator</summary>",
-  "<div class=\"drawerBody\">",
-  "<label>OPS token<input type=\"password\" id=\"opsToken\" autocomplete=\"off\"></label>",
-  "<div class=\"opsBtns\">",
-  "<button type=\"button\" data-op=\"reset\">Reset demo</button>",
-  "<button type=\"button\" data-op=\"stage\">Stage Riyadh North incident</button>",
-  "<button type=\"button\" data-op=\"ack\">Acknowledge</button>",
-  "<button type=\"button\" data-op=\"resolve\">Resolve</button>",
-  "</div>",
-  "<pre class=\"opsOut\" id=\"opsOut\"></pre>",
-  "</div>",
-  "</details>",
-  "<footer class=\"foot\">",
-  "<p>Built on Telnyx Voice AI · Edge Compute · KV · Stateful Actors · MCP — code authored by OpenCode on Telnyx Inference</p>",
-  "<p>Calls are recorded and handled by an AI assistant.</p>",
-  "</footer>",
-  ].join("\n");
+function esc(value: string): string {
+  return value
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#39;");
 }
 
 function pinChip(scenario: GuideScenario | undefined): string {
   if (scenario === undefined) {
-    return `<span class="pin-miss">${GUIDE_FALLBACK}</span>`;
+    return `<p class="pin-fallback">PIN: see the README reviewer guide</p>`;
   }
-  return `<button type="button" class="pin-chip" data-pin="${scenario.pin}">PIN ${scenario.pin} · click to copy</button>`;
+  const pin = esc(scenario.pin);
+  return (
+    `<button type="button" class="pin" data-pin="${pin}" aria-label="Copy the demo PIN for ${esc(scenario.site)}">` +
+    `<span class="pin-label">PIN ${pin}</span><span class="pin-copy">copy</span></button>`
+  );
 }
 
-function scenarioCard(
-  num: number,
-  title: string,
-  say: string,
-  watch: string,
-  chip: string,
-): string {
-  const parts = [
-    `<article class="card">`,
-    `<span class="cardNum">${num}</span>`,
-    `<h3>${title}</h3>`,
-    `<p class="say">Say: <q>${say}</q></p>`,
-    `<p class="watch">Watch: ${watch}</p>`,
-  ];
-  if (chip.length > 0) parts.push(chip);
-  parts.push(`</article>`);
-  return parts.join("");
+interface ScenarioCopy {
+  n: number;
+  title: string;
+  steps: string[];
+  watch: string;
+  chip: string;
 }
+
+function scenarioCard(s: ScenarioCopy): string {
+  const steps = s.steps.map((step) => `<li>${step}</li>`).join("");
+  return (
+    `<article class="scenario" id="scenario-${s.n}">` +
+    `<header><span class="num">${s.n}</span><h3>${s.title}</h3></header>` +
+    `<ol class="steps">${steps}</ol>` +
+    `<p class="watch"><span class="tag">watch</span>${s.watch}</p>` +
+    s.chip +
+    `</article>`
+  );
+}
+
+const CSS = `
+:root{
+  --bg:#111110;--bg-2:#151514;--panel:#191918;--panel-2:#20201e;
+  --line:#292927;--line-2:#383835;
+  --text:#ecece8;--text-2:#b7b7af;--muted:#878780;--faint:#5f5f59;
+  --hl:#f2f28a;--hl-ink:#141413;
+  --p1:#e5484d;--p2:#f5a524;--ok:#46a758;--info:#8d95f7;
+  --display:'Geist','Inter',system-ui,-apple-system,'Segoe UI',sans-serif;
+  --sans:'Inter',system-ui,-apple-system,'Segoe UI',sans-serif;
+  --mono:'Geist Mono',ui-monospace,'SF Mono',Menlo,Consolas,monospace;
+  --radius:6px;
+  color-scheme:dark;
+}
+*{box-sizing:border-box}
+[hidden]{display:none!important}
+html{scroll-behavior:smooth}
+body{margin:0;background:var(--bg);color:var(--text);font:400 15px/1.55 var(--sans);letter-spacing:-0.006em;-webkit-font-smoothing:antialiased;text-rendering:optimizeLegibility}
+a{color:inherit}
+:focus-visible{outline:2px solid var(--text);outline-offset:2px;border-radius:3px}
+.mono{font-family:var(--mono);font-variant-numeric:tabular-nums}
+.hatch{background-image:repeating-linear-gradient(135deg,rgba(236,236,232,.035) 0 1px,transparent 1px 7px)}
+
+/* announcement + nav */
+.announce{background:#0b0b0a;border-bottom:1px solid var(--line);color:var(--text-2);font-size:13px;text-align:center;padding:8px 16px}
+.announce a{color:var(--text);text-underline-offset:3px}
+.nav{position:sticky;top:0;z-index:20;display:flex;align-items:center;justify-content:space-between;gap:16px;height:56px;padding:0 20px;background:var(--bg);border-bottom:1px solid var(--line)}
+.brand{display:flex;align-items:center;gap:10px;text-decoration:none;min-width:0}
+.brand svg{flex:none}
+.wordmark{font:500 17px/1 var(--display);letter-spacing:-0.025em}
+.by{font-size:12px;color:var(--muted);white-space:nowrap}
+.navlinks{display:flex;gap:22px;font-size:14px}
+.navlinks a{color:var(--text-2);text-decoration:none}
+.navlinks a:hover{color:var(--text)}
+.actions{display:flex;gap:8px}
+.btn{display:inline-flex;align-items:center;gap:9px;height:32px;padding:0 10px 0 12px;border-radius:4px;border:1px solid var(--line-2);background:transparent;color:var(--text);font:500 13.5px/1 var(--sans);letter-spacing:-0.01em;cursor:pointer;text-decoration:none;white-space:nowrap}
+.btn:hover{border-color:var(--muted)}
+.btn-primary{background:var(--text);color:var(--bg);border-color:var(--text)}
+.btn-primary:hover{background:#ffffff;border-color:#ffffff}
+.btn-lg{height:38px;font-size:14.5px;padding:0 12px 0 14px}
+.kbd{display:inline-grid;place-items:center;min-width:18px;height:18px;padding:0 4px;border-radius:3px;border:1px solid var(--line-2);font:500 11px/1 var(--mono);color:var(--muted)}
+.btn-primary .kbd{border-color:rgba(17,17,16,.28);color:rgba(17,17,16,.72)}
+
+/* shell */
+.shell{display:grid;grid-template-columns:248px minmax(0,1fr) 216px;max-width:90rem;margin:0 auto}
+.side{position:sticky;top:56px;height:calc(100vh - 56px);overflow:auto;border-right:1px solid var(--line);background:var(--bg-2)}
+.toc{position:sticky;top:56px;height:calc(100vh - 56px);padding:24px 18px;border-left:1px solid var(--line)}
+.side-sec{padding:18px 18px 16px;border-bottom:1px solid var(--line)}
+.side-sec h3{margin:0 0 12px;font:500 13.5px/1.2 var(--sans);color:var(--text)}
+.kv{display:flex;justify-content:space-between;gap:12px;font-size:13px;color:var(--text-2);padding:4px 0}
+.kv b{font:500 13px/1.4 var(--mono);color:var(--text);font-variant-numeric:tabular-nums}
+.kv b.hot{color:var(--p1)}
+.events{list-style:none;margin:0;padding:0}
+.events li{padding:0 0 12px 14px;position:relative;font-size:13px;line-height:1.35;color:var(--text-2)}
+.events li::before{content:"";position:absolute;left:0;top:6px;width:6px;height:6px;border-radius:50%;background:var(--faint)}
+.events li.k-p1::before{background:var(--p1)}
+.events li.k-p2::before{background:var(--p2)}
+.events li.k-ok::before{background:var(--ok)}
+.events li.k-info::before{background:var(--info)}
+.events time{display:block;margin-top:3px;font:400 11.5px/1 var(--mono);color:var(--muted)}
+.events li.fresh{animation:fadein .5s ease-out}
+.stack{list-style:none;margin:0;padding:0;font-size:13px;color:var(--text-2)}
+.stack li{display:flex;justify-content:space-between;padding:4px 0}
+.stack .mono{font-size:11.5px;color:var(--muted)}
+
+.toc h4{margin:0 0 12px;font:500 13.5px/1.2 var(--sans)}
+.toc ol{list-style:none;margin:0;padding:0;border-left:1px solid var(--line)}
+.toc a{display:block;padding:5px 0 5px 12px;margin-left:-1px;border-left:1px solid transparent;font-size:13.5px;color:var(--text-2);text-decoration:none}
+.toc a:hover{color:var(--text)}
+.toc a.active{color:var(--text);border-left:2px solid var(--text);padding-left:11px;font-weight:500}
+
+main{min-width:0;padding:32px 36px 72px}
+.wrap{max-width:880px;margin:0 auto}
+section{scroll-margin-top:76px}
+section+section{margin-top:64px}
+.sec-head{display:flex;align-items:baseline;justify-content:space-between;gap:16px;margin-bottom:14px}
+h2{margin:0;font:500 24px/1.2 var(--display);letter-spacing:-0.025em}
+.meta{font:400 12px/1 var(--mono);color:var(--muted);display:flex;align-items:center;gap:8px}
+.lede{margin:-4px 0 18px;color:var(--text-2);font-size:14.5px;max-width:64ch}
+
+/* hero */
+.frame{position:relative;border:1px solid var(--line);background:var(--bg)}
+.crop{position:absolute;width:11px;height:11px;border-color:var(--muted);border-style:solid;border-width:0}
+.crop.tl{top:-6px;left:-6px;border-top-width:1px;border-left-width:1px}
+.crop.tr{top:-6px;right:-6px;border-top-width:1px;border-right-width:1px}
+.crop.bl{bottom:-6px;left:-6px;border-bottom-width:1px;border-left-width:1px}
+.crop.br{bottom:-6px;right:-6px;border-bottom-width:1px;border-right-width:1px}
+.strip{display:flex;flex-wrap:wrap;justify-content:center;gap:6px 18px;padding:11px 16px;border-bottom:1px solid var(--line);font-size:13.5px;color:var(--text-2)}
+.strip b{color:var(--text);font-weight:600}
+.strip .sep{color:var(--faint)}
+.hero-body{padding:60px 32px 44px;text-align:center}
+h1{margin:0 auto 22px;font:500 clamp(38px,5.4vw,62px)/1.04 var(--display);letter-spacing:-0.04em;max-width:14ch}
+mark{background:var(--hl);color:var(--hl-ink);padding:0 .1em;-webkit-box-decoration-break:clone;box-decoration-break:clone}
+.sub{margin:0 auto;max-width:60ch;font-size:16.5px;line-height:1.55;color:var(--text-2)}
+.cta{display:flex;flex-wrap:wrap;justify-content:center;gap:10px;margin-top:30px}
+.callstate{display:flex;justify-content:center;align-items:center;gap:8px;margin-top:18px;font:400 12.5px/1.4 var(--mono);color:var(--muted)}
+.dot{width:7px;height:7px;border-radius:50%;background:var(--ok);flex:none}
+.dot.wait{background:var(--p2)}
+.hero-foot{display:grid;grid-template-columns:repeat(3,1fr);border-top:1px solid var(--line)}
+.hero-foot div{padding:14px 18px;font-size:13px;color:var(--text-2);border-right:1px solid var(--line)}
+.hero-foot div:last-child{border-right:0}
+.hero-foot b{display:block;margin-bottom:2px;font:500 13px/1.3 var(--sans);color:var(--text)}
+
+/* board */
+.panel{border:1px solid var(--line);border-radius:var(--radius);background:var(--panel);overflow:hidden}
+.stats{display:grid;grid-template-columns:repeat(4,1fr);border-bottom:1px solid var(--line)}
+.stat{padding:14px 16px 16px;border-right:1px solid var(--line)}
+.stat:last-child{border-right:0}
+.stat span{display:block;font-size:12.5px;color:var(--muted);margin-bottom:6px}
+.stat b{font:500 26px/1 var(--mono);font-variant-numeric:tabular-nums;letter-spacing:-0.02em}
+.stat b.hot{color:var(--p1)}
+.stat small{font:400 12px/1 var(--mono);color:var(--muted);margin-left:4px}
+.tbl-wrap{overflow-x:auto}
+.tbl-title{display:flex;justify-content:space-between;align-items:baseline;padding:14px 16px 8px;font:500 13.5px/1.2 var(--sans)}
+.tbl-title .meta{font-size:11.5px}
+table{width:100%;border-collapse:collapse;font-size:13.5px}
+th{text-align:left;font:500 12px/1.2 var(--sans);color:var(--muted);padding:8px 16px;border-top:1px solid var(--line);border-bottom:1px solid var(--line);background:var(--bg-2);white-space:nowrap}
+td{padding:10px 16px;border-top:1px solid var(--line);color:var(--text-2);white-space:nowrap}
+tbody tr:first-child td{border-top:0}
+td.strong{color:var(--text)}
+td .mono{color:var(--text)}
+tr.st-p1 td:first-child{box-shadow:inset 2px 0 0 var(--p1)}
+tr.st-p2 td:first-child{box-shadow:inset 2px 0 0 var(--p2)}
+tr.st-tickets td:first-child{box-shadow:inset 2px 0 0 var(--info)}
+tr.flash td{animation:flash 1.2s ease-out}
+.chip{display:inline-block;padding:3px 6px;border-radius:3px;border:1px solid var(--line-2);font:500 11px/1.2 var(--mono);letter-spacing:.02em;color:var(--muted)}
+.chip.p1{color:var(--p1);border-color:rgba(229,72,77,.42);background:rgba(229,72,77,.09)}
+.chip.p2{color:var(--p2);border-color:rgba(245,165,36,.38);background:rgba(245,165,36,.08)}
+.chip.tickets{color:var(--info);border-color:rgba(141,149,247,.38);background:rgba(141,149,247,.08)}
+.chip.ok{color:var(--ok);border-color:rgba(70,167,88,.38);background:rgba(70,167,88,.08)}
+.chip.stale{color:var(--p2);border-color:rgba(245,165,36,.38)}
+.empty{padding:22px 16px;color:var(--muted);font-size:13px;border-top:1px solid var(--line)}
+.livedot{width:6px;height:6px;border-radius:50%;background:var(--ok)}
+.livedot.blink{animation:blink .8s ease-out}
+.board-foot{padding:10px 16px;border-top:1px solid var(--line);font:400 11.5px/1.4 var(--mono);color:var(--muted)}
+
+/* scenarios */
+.scenarios{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:12px}
+.scenario{display:flex;flex-direction:column;gap:12px;padding:16px;border:1px solid var(--line);border-radius:var(--radius);background:var(--panel)}
+.scenario header{display:flex;align-items:center;gap:10px}
+.num{display:inline-grid;place-items:center;width:22px;height:22px;border:1px solid var(--line-2);border-radius:4px;font:500 12px/1 var(--mono);color:var(--text-2);flex:none}
+.scenario h3{margin:0;font:500 16px/1.25 var(--display);letter-spacing:-0.015em}
+.steps{margin:0;padding-left:18px;color:var(--text-2);font-size:13.5px;line-height:1.5}
+.steps li+li{margin-top:6px}
+.steps q{color:var(--text)}
+.watch{margin:auto 0 0;font-size:13px;color:var(--text-2)}
+.tag{display:inline-block;margin-right:8px;padding:2px 5px;border-radius:3px;background:var(--panel-2);font:500 10.5px/1.3 var(--mono);color:var(--muted);text-transform:uppercase;letter-spacing:.06em}
+.pin{display:flex;justify-content:space-between;align-items:center;width:100%;height:32px;padding:0 10px;border-radius:4px;border:1px solid var(--line-2);background:var(--bg-2);color:var(--text);font:500 12.5px/1 var(--mono);cursor:pointer}
+.pin:hover{border-color:var(--muted)}
+.pin-copy{color:var(--muted);font-size:11.5px}
+.pin-fallback{margin:0;font:400 12px/1.4 var(--mono);color:var(--muted)}
+
+/* how it works */
+.flow{display:grid;grid-template-columns:repeat(5,minmax(0,1fr));gap:22px;padding:22px;border:1px solid var(--line);border-radius:var(--radius)}
+.node{position:relative;padding:12px;border:1px solid var(--line-2);border-radius:5px;background:var(--panel)}
+.node+.node::before{content:"";position:absolute;left:-22px;top:50%;width:22px;border-top:1px solid var(--muted)}
+.node+.node::after{content:"";position:absolute;left:-6px;top:calc(50% - 3px);border:3px solid transparent;border-left:5px solid var(--muted)}
+.node b{display:block;font:500 13px/1.3 var(--sans);color:var(--text)}
+.node span{display:block;margin-top:4px;font:400 11.5px/1.4 var(--mono);color:var(--muted)}
+.facts{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));margin-top:12px;border:1px solid var(--line);border-radius:var(--radius);overflow:hidden}
+.fact{padding:14px 16px;border-right:1px solid var(--line);font-size:13px;color:var(--text-2)}
+.fact:last-child{border-right:0}
+.fact b{display:block;margin-bottom:4px;font:500 13px/1.3 var(--sans);color:var(--text)}
+
+/* operator */
+details.op{border:1px solid var(--line);border-radius:var(--radius);background:var(--panel)}
+details.op summary{cursor:pointer;padding:14px 16px;font:500 14px/1 var(--sans);list-style:none;display:flex;justify-content:space-between}
+details.op summary::after{content:"+";font-family:var(--mono);color:var(--muted)}
+details.op[open] summary::after{content:"−"}
+.op-body{padding:0 16px 16px;display:grid;gap:12px}
+.op-row{display:flex;flex-wrap:wrap;gap:8px}
+.op input{height:32px;flex:1 1 240px;padding:0 10px;border-radius:4px;border:1px solid var(--line-2);background:var(--bg);color:var(--text);font:400 13px/1 var(--mono)}
+.op-out{margin:0;min-height:18px;font:400 12px/1.5 var(--mono);color:var(--text-2);white-space:pre-wrap}
+.hint{margin:0;font-size:12.5px;color:var(--muted)}
+
+footer{margin-top:72px;padding-top:18px;border-top:1px solid var(--line);display:flex;flex-wrap:wrap;justify-content:space-between;gap:10px;font-size:12.5px;color:var(--muted)}
+
+@keyframes fadein{from{opacity:0;transform:translateY(-2px)}to{opacity:1;transform:none}}
+@keyframes flash{from{background:var(--panel-2)}to{background:transparent}}
+@keyframes blink{0%{opacity:1}40%{opacity:.25}100%{opacity:1}}
+
+@media (max-width:80em){.shell{grid-template-columns:240px minmax(0,1fr)}.toc{display:none}}
+@media (max-width:64em){
+  .shell{grid-template-columns:minmax(0,1fr)}
+  .side{position:static;height:auto;border-right:0;border-top:1px solid var(--line);order:2}
+  main{order:1;padding:24px 18px 48px}
+  .navlinks{display:none}
+  .scenarios{grid-template-columns:minmax(0,1fr)}
+  .flow{grid-template-columns:minmax(0,1fr);gap:14px}
+  .node+.node::before{left:50%;top:-14px;width:0;height:14px;border-top:0;border-left:1px solid var(--muted)}
+  .node+.node::after{left:calc(50% - 3px);top:-6px;border:3px solid transparent;border-top:5px solid var(--muted)}
+  .facts,.hero-foot{grid-template-columns:minmax(0,1fr)}
+  .fact,.hero-foot div{border-right:0;border-bottom:1px solid var(--line)}
+}
+@media (max-width:40em){
+  .by{display:none}
+  .actions .btn-secondary{display:none}
+  .hero-body{padding:40px 18px 32px}
+  .stats{grid-template-columns:repeat(2,1fr)}
+  .stat:nth-child(2){border-right:0}
+  .stat:nth-child(-n+2){border-bottom:1px solid var(--line)}
+}
+@media (prefers-reduced-motion:reduce){*,*::before,*::after{animation:none!important;transition:none!important;scroll-behavior:auto!important}}
+`;
+
+// Client script. Plain ES5-style JS inside a TS template literal: it uses no
+// backticks and no template placeholders, and it only ever writes text nodes.
+const JS = `
+(function () {
+  'use strict';
+  var reduce = window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+  function $(id) { return document.getElementById(id); }
+  function el(tag, cls, text) {
+    var n = document.createElement(tag);
+    if (cls) n.className = cls;
+    if (text !== undefined && text !== null) n.textContent = String(text);
+    return n;
+  }
+  function clear(n) { while (n.firstChild) n.removeChild(n.firstChild); }
+
+  /* ---- call ---- */
+  var callDot = $('callDot'), callText = $('callText');
+  function setCall(wait, text) { callDot.className = wait ? 'dot wait' : 'dot'; callText.textContent = text; }
+  function startCall() {
+    var host = document.querySelector('telnyx-ai-agent');
+    var launcher = host && host.shadowRoot ? host.shadowRoot.querySelector('button') : null;
+    if (!launcher) { setCall(true, 'Connecting to Telnyx… try again in a moment.'); return; }
+    setCall(true, 'Starting the call — allow your microphone. The call panel opens bottom-right.');
+    launcher.click();
+  }
+  var callButtons = document.querySelectorAll('[data-action="call"]');
+  for (var i = 0; i < callButtons.length; i++) callButtons[i].addEventListener('click', startCall);
+
+  /* ---- keyboard shortcuts (Langfuse-style) ---- */
+  document.addEventListener('keydown', function (e) {
+    if (e.metaKey || e.ctrlKey || e.altKey) return;
+    var t = e.target;
+    if (t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.isContentEditable)) return;
+    var k = (e.key || '').toLowerCase();
+    if (k === 'c') { e.preventDefault(); startCall(); }
+    else if (k === 'b') { e.preventDefault(); window.open('/ops/board', '_blank', 'noopener'); }
+    else if (k === '1' || k === '2' || k === '3') {
+      var s = $('scenario-' + k);
+      if (s) { e.preventDefault(); s.scrollIntoView({ behavior: reduce ? 'auto' : 'smooth', block: 'center' }); }
+    }
+  });
+
+  /* ---- PIN chips ---- */
+  var pins = document.querySelectorAll('button.pin');
+  for (var p = 0; p < pins.length; p++) (function (b) {
+    b.addEventListener('click', function () {
+      var label = b.querySelector('.pin-copy');
+      var pin = b.getAttribute('data-pin') || '';
+      function done(t) { label.textContent = t; setTimeout(function () { label.textContent = 'copy'; }, 1600); }
+      if (navigator.clipboard && navigator.clipboard.writeText) {
+        navigator.clipboard.writeText(pin).then(function () { done('copied'); }, function () { done('copy failed'); });
+      } else { done('copy failed'); }
+    });
+  })(pins[p]);
+
+  /* ---- live board ---- */
+  var ORDER = ['riyadh-north', 'riyadh-south', 'jeddah', 'dammam'];
+  var last = null, lastOk = 0, stale = false, polling = false;
+  var events = [];
+  function rtime(ms) {
+    var s = Math.max(0, Math.round((Date.now() - ms) / 1000));
+    if (s < 60) return s + ' s ago';
+    var m = Math.round(s / 60);
+    return m < 60 ? m + ' min ago' : Math.round(m / 60) + ' h ago';
+  }
+  function regionStatus(r, sites) {
+    if (r.incident) return r.incident.priority === 'P1' ? 'p1' : 'p2';
+    for (var i = 0; i < sites.length; i++) if (sites[i].region === r.region && sites[i].open_ticket) return 'tickets';
+    return 'quiet';
+  }
+  function label(s) { return String(s || '').replace(/^the\\s+/i, ''); }
+  function pushEvent(kind, text, flash) {
+    events.unshift({ kind: kind, text: text, at: Date.now(), fresh: true });
+    if (events.length > 8) events.length = 8;
+    renderEvents();
+  }
+  function renderEvents() {
+    var list = $('events');
+    clear(list);
+    if (events.length === 0) { list.appendChild(el('li', '', 'Waiting for the first board…')); return; }
+    for (var i = 0; i < events.length; i++) {
+      var ev = events[i];
+      var li = el('li', 'k-' + ev.kind + (ev.fresh ? ' fresh' : ''), ev.text);
+      var t = el('time', '', rtime(ev.at));
+      t.setAttribute('data-at', String(ev.at));
+      li.appendChild(t);
+      list.appendChild(li);
+      ev.fresh = false;
+    }
+  }
+  function byRegion(board) {
+    var m = {};
+    for (var i = 0; i < board.regions.length; i++) m[board.regions[i].region] = board.regions[i];
+    return m;
+  }
+  function bySite(board) {
+    var m = {};
+    for (var i = 0; i < board.sites.length; i++) m[board.sites[i].site_id] = board.sites[i];
+    return m;
+  }
+  var flashKeys = {};
+  function diff(prev, next) {
+    var pr = byRegion(prev), nr = byRegion(next);
+    Object.keys(nr).forEach(function (k) {
+      var a = pr[k] && pr[k].incident, b = nr[k].incident, name = nr[k].label;
+      if (!a && b) { pushEvent(b.priority === 'P1' ? 'p1' : 'p2', b.id + ' declared · ' + name + ' · ' + b.priority + ' · ' + b.site_count + ' branches'); flashKeys['r:' + k] = 1; }
+      else if (a && !b) { pushEvent('ok', a.id + ' resolved · ' + name); flashKeys['r:' + k] = 1; }
+      else if (a && b) {
+        if (a.priority !== b.priority) { pushEvent(b.priority === 'P1' ? 'p1' : 'p2', b.id + ' raised to ' + b.priority + ' · ' + b.site_count + ' branches'); flashKeys['r:' + k] = 1; }
+        else if (a.site_count !== b.site_count) { pushEvent('p2', b.id + ' now affects ' + b.site_count + ' branches'); flashKeys['r:' + k] = 1; }
+        var ea = pr[k].esc, eb = nr[k].esc;
+        if (eb && ea && eb.level > ea.level) { pushEvent('p1', b.id + ' escalated · page L' + eb.level); flashKeys['r:' + k] = 1; }
+        if (eb && ea && eb.acked && !ea.acked) { pushEvent('ok', b.id + ' acknowledged'); flashKeys['r:' + k] = 1; }
+      }
+    });
+    var ps = bySite(prev), ns = bySite(next);
+    Object.keys(ns).forEach(function (k) {
+      var a = ps[k] && ps[k].open_ticket, b = ns[k].open_ticket;
+      if (!a && b) { pushEvent('info', b.id + ' opened · ' + k + ' · ' + b.priority); flashKeys['s:' + k] = 1; }
+      else if (a && !b) { pushEvent('ok', a.id + ' closed · ' + k); }
+      else if (a && b && a.priority !== b.priority) { pushEvent('p2', b.id + ' now ' + b.priority + ' · ' + k); flashKeys['s:' + k] = 1; }
+    });
+  }
+  function cell(tr, text, cls) { var td = el('td', cls || '', text); tr.appendChild(td); return td; }
+  function monoCell(tr, text) { var td = el('td'); td.appendChild(el('span', 'mono', text)); tr.appendChild(td); return td; }
+  function chipCell(tr, text, cls) { var td = el('td'); td.appendChild(el('span', 'chip ' + cls, text)); tr.appendChild(td); return td; }
+  function render(board) {
+    var regions = board.regions.slice().sort(function (a, b) { return ORDER.indexOf(a.region) - ORDER.indexOf(b.region); });
+    var sites = board.sites || [];
+    var incidents = 0, p1 = 0, tickets = 0;
+    regions.forEach(function (r) { if (r.incident) { incidents++; if (r.incident.priority === 'P1') p1++; } });
+    sites.forEach(function (s) { if (s.open_ticket) tickets++; });
+    $('stIncidents').textContent = String(incidents);
+    $('stP1').textContent = String(p1);
+    $('stP1').className = p1 > 0 ? 'hot' : '';
+    $('stTickets').textContent = String(tickets);
+    $('sdIncidents').textContent = String(incidents);
+    $('sdP1').textContent = String(p1);
+    $('sdP1').className = p1 > 0 ? 'hot' : '';
+    $('sdTickets').textContent = String(tickets);
+    $('sdMode').textContent = board.actor_mode || 'unknown';
+
+    var rb = $('regionRows');
+    clear(rb);
+    regions.forEach(function (r) {
+      var st = regionStatus(r, sites);
+      var tr = el('tr', 'st-' + st + (flashKeys['r:' + r.region] ? ' flash' : ''));
+      cell(tr, r.label, 'strong');
+      chipCell(tr, st === 'p1' ? 'P1' : st === 'p2' ? 'P2' : st === 'tickets' ? 'TICKETS' : 'QUIET', st);
+      if (r.incident) {
+        monoCell(tr, r.incident.id);
+        cell(tr, r.incident.site_count + (r.incident.site_count === 1 ? ' branch' : ' branches'));
+        monoCell(tr, r.incident.declared_local || '—');
+      } else { cell(tr, '—'); cell(tr, '—'); cell(tr, '—'); }
+      var e = r.esc;
+      if (e && r.incident) {
+        if (e.acked) chipCell(tr, 'ACKED', 'ok');
+        else monoCell(tr, 'L' + e.level + (e.due_local ? ' · due ' + e.due_local : ''));
+      } else cell(tr, '—');
+      rb.appendChild(tr);
+    });
+
+    var tb = $('ticketRows');
+    clear(tb);
+    var open = sites.filter(function (s) { return s.open_ticket; }).sort(function (a, b) {
+      var d = ORDER.indexOf(a.region) - ORDER.indexOf(b.region);
+      return d !== 0 ? d : (a.site_id < b.site_id ? -1 : 1);
+    });
+    $('ticketsEmpty').hidden = open.length !== 0;
+    $('ticketsTable').hidden = open.length === 0;
+    open.forEach(function (s) {
+      var tr = el('tr', flashKeys['s:' + s.site_id] ? 'flash' : '');
+      monoCell(tr, s.site_id);
+      cell(tr, label(s.label), 'strong');
+      monoCell(tr, s.open_ticket.id);
+      chipCell(tr, s.open_ticket.priority, s.open_ticket.priority === 'P1' ? 'p1' : 'p2');
+      monoCell(tr, s.open_ticket.opened_local || '—');
+      tb.appendChild(tr);
+    });
+    flashKeys = {};
+  }
+  function setStale(on) {
+    stale = on;
+    $('staleChip').hidden = !on;
+  }
+  function ageTick() {
+    var age = lastOk ? rtime(lastOk) : 'never';
+    $('updated').textContent = lastOk ? 'updated ' + age : 'connecting…';
+    $('stAge').textContent = lastOk ? String(Math.max(0, Math.round((Date.now() - lastOk) / 1000))) : '–';
+    $('sdAge').textContent = lastOk ? age : '—';
+    if (lastOk && Date.now() - lastOk > 20000) setStale(true);
+    var times = document.querySelectorAll('#events time[data-at]');
+    for (var i = 0; i < times.length; i++) times[i].textContent = rtime(Number(times[i].getAttribute('data-at')));
+  }
+  function blink() {
+    var d = $('liveDot');
+    d.className = 'livedot';
+    void d.offsetWidth;
+    d.className = 'livedot blink';
+  }
+  function poll() {
+    if (polling) return;
+    polling = true;
+    var ctl = new AbortController();
+    var timer = setTimeout(function () { ctl.abort(); }, 8000);
+    fetch('/ops/board', { signal: ctl.signal, cache: 'no-store' })
+      .then(function (r) { if (!r.ok) throw new Error('HTTP ' + r.status); return r.json(); })
+      .then(function (b) {
+        if (!b || !Array.isArray(b.regions) || !Array.isArray(b.sites)) throw new Error('bad board');
+        var prev = last;
+        last = b; lastOk = Date.now(); setStale(false);
+        if (prev) diff(prev, b); else pushEvent('info', 'Board synced · ' + b.regions.length + ' regions');
+        render(b); blink(); ageTick();
+      })
+      .catch(function () { setStale(true); })
+      .then(function () { clearTimeout(timer); polling = false; setTimeout(poll, 5000); });
+  }
+  renderEvents();
+  poll();
+  setInterval(ageTick, 1000);
+
+  /* ---- on this page ---- */
+  var links = document.querySelectorAll('.toc a');
+  if ('IntersectionObserver' in window && links.length) {
+    var io = new IntersectionObserver(function (entries) {
+      entries.forEach(function (en) {
+        if (!en.isIntersecting) return;
+        for (var i = 0; i < links.length; i++) {
+          links[i].className = links[i].getAttribute('href') === '#' + en.target.id ? 'active' : '';
+        }
+      });
+    }, { rootMargin: '-45% 0px -50% 0px' });
+    ['call', 'board', 'scenarios', 'how', 'operator'].forEach(function (id) { var s = $(id); if (s) io.observe(s); });
+  }
+
+  /* ---- operator: the token lives in sessionStorage only ---- */
+  var TOKEN_KEY = 'noc.opsToken';
+  var tokenInput = $('opsToken'), out = $('opOut');
+  try { tokenInput.value = sessionStorage.getItem(TOKEN_KEY) || ''; } catch (err) { /* storage disabled */ }
+  tokenInput.addEventListener('input', function () {
+    try { sessionStorage.setItem(TOKEN_KEY, tokenInput.value); } catch (err) { /* storage disabled */ }
+  });
+  var OPS = {
+    reset: '/ops/reset',
+    stage: '/ops/stage-incident?region=riyadh-north',
+    ack: '/ops/ack?region=riyadh-north',
+    resolve: '/ops/resolve?region=riyadh-north'
+  };
+  var opButtons = document.querySelectorAll('[data-op]');
+  for (var o = 0; o < opButtons.length; o++) (function (b) {
+    b.addEventListener('click', function () {
+      var path = OPS[b.getAttribute('data-op')];
+      var token = tokenInput.value.trim();
+      if (!path) return;
+      if (!token) { out.textContent = 'Enter the ops token first.'; return; }
+      out.textContent = b.textContent + ' …';
+      fetch(path, { method: 'POST', headers: { Authorization: 'Bearer ' + token } })
+        .then(function (r) { return r.text().then(function (t) { out.textContent = b.textContent + ' → HTTP ' + r.status + (t ? '\\n' + t.slice(0, 400) : ''); }); })
+        .catch(function (err) { out.textContent = b.textContent + ' failed: ' + String(err && err.message || err); });
+    });
+  })(opButtons[o]);
+})();
+`;
+
+const LOGO = `<svg width="22" height="22" viewBox="0 0 22 22" fill="none" aria-hidden="true"><rect x="1.5" y="1.5" width="19" height="19" rx="4" stroke="currentColor" stroke-width="1.5"/><path d="M7 17V6.5h8V17" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round"/><circle cx="12.8" cy="12" r="1.1" fill="currentColor"/></svg>`;
 
 export function renderDemoPage(guide: DemoGuide | null): string {
   const byKey = new Map<string, GuideScenario>();
   for (const scenario of guide?.scenarios ?? []) byKey.set(scenario.key, scenario);
-  const cards = [
-    scenarioCard(
-      1,
-      "Join the incident",
-      "We are fully offline at the Al Yasmin branch in Riyadh North — site R U H one one four. I need to report an outage and join the ongoing incident.",
-      "the Riyadh North incident turn P1 at 3 branches.",
-      pinChip(byKey.get("join")),
-    ),
-    scenarioCard(
-      2,
-      "Open a new ticket",
-      "Site J E D zero zero seven in Jeddah is down — phones and internet are offline. Please open a ticket for us.",
-      "a new ticket appear under the Jeddah region.",
-      pinChip(byKey.get("new")),
-    ),
-    scenarioCard(
-      3,
-      "Lockout &amp; human",
-      "My PIN is not working — try a wrong PIN three times to hear the lock, then ask for a human engineer.",
-      "Sanad lock the site after three wrong PINs, then page the on-call engineer.",
-      "",
-    ),
+
+  const scenarios = [
+    scenarioCard({
+      n: 1,
+      title: "Join the incident",
+      steps: [
+        "Press <b>Start call</b>, then say: <q>Hi, this is Ahmed from Al-Waha Pharmacies. Our Al Yasmin branch is offline — site R U H one one four.</q>",
+        "Read the PIN digit by digit when Sanad asks.",
+        "When Sanad mentions the Riyadh North incident, say <q>yes, add us.</q>",
+      ],
+      watch: "the Riyadh North incident turn P1 at 3 branches, and a new ticket row appear.",
+      chip: pinChip(byKey.get("join")),
+    }),
+    scenarioCard({
+      n: 2,
+      title: "Open a new ticket",
+      steps: [
+        "Say: <q>Our site is J E D zero zero seven in Jeddah.</q> and give the PIN.",
+        "Describe the fault: <q>The internet is down and the card machines don't work — customers are affected.</q>",
+      ],
+      watch: "a new Jeddah ticket appear with its priority, read back to you by Sanad.",
+      chip: pinChip(byKey.get("new")),
+    }),
+    scenarioCard({
+      n: 3,
+      title: "Lockout &amp; human",
+      steps: [
+        "Give any site ID, then a wrong PIN three times.",
+        "Ask: <q>Can I speak to an engineer?</q>",
+      ],
+      watch: "verification lock for the call, then the handover to the on-call engineer (or a callback message).",
+      chip: "",
+    }),
   ].join("");
+
   return `<!doctype html>
 <html lang="en">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>NOC Front Door — Live NOC wall</title>
-<style>
-${CSS}
-</style>
+<meta name="description" content="Sanad, the 24/7 AI fault line of Najd Networks — a live Telnyx Voice AI + Edge Compute demo.">
+<meta name="theme-color" content="#111110">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="${FONTS_URL}" rel="stylesheet">
+<style>${CSS}</style>
 </head>
 <body>
-${bodyMarkup(cards)}
+<div class="announce">Live demo — call Sanad from your browser · Telnyx Voice AI + Edge Compute · <a href="#how">How it works</a></div>
+<header class="nav">
+  <a class="brand" href="#call" aria-label="NOC FRONT DOOR — home">${LOGO}<span class="wordmark">noc front door</span><span class="by">by Najd Networks · 24/7 AI fault line</span></a>
+  <nav class="navlinks" aria-label="Sections"><a href="#call">Talk to Sanad</a><a href="#board">Live board</a><a href="#scenarios">Scenarios</a><a href="#how">How it works</a></nav>
+  <div class="actions">
+    <button type="button" class="btn btn-primary" data-action="call">Start call <span class="kbd">C</span></button>
+    <a class="btn btn-secondary" href="/ops/board" target="_blank" rel="noopener">Board JSON <span class="kbd">B</span></a>
+  </div>
+</header>
+
+<div class="shell">
+  <aside class="side" aria-label="System">
+    <div class="side-sec">
+      <h3>System</h3>
+      <div class="kv"><span>Actors</span><b id="sdMode">—</b></div>
+      <div class="kv"><span>Board updated</span><b id="sdAge">—</b></div>
+      <div class="kv"><span>Open incidents</span><b id="sdIncidents">–</b></div>
+      <div class="kv"><span>P1 incidents</span><b id="sdP1">–</b></div>
+      <div class="kv"><span>Open tickets</span><b id="sdTickets">–</b></div>
+      <div class="kv"><span>Greeting webhook budget</span><b>2.5 s</b></div>
+    </div>
+    <div class="side-sec">
+      <h3>Event feed</h3>
+      <ol class="events" id="events" aria-live="polite"></ol>
+    </div>
+    <div class="side-sec">
+      <h3>Stack</h3>
+      <ul class="stack">
+        <li><span>Telnyx Voice AI</span><span class="mono">workflow</span></li>
+        <li><span>Edge Functions</span><span class="mono">noc-edge</span></li>
+        <li><span>Stateful Actors</span><span class="mono">per site</span></li>
+        <li><span>KV</span><span class="mono">flags · cache</span></li>
+        <li><span>MCP server</span><span class="mono">5 tools</span></li>
+      </ul>
+    </div>
+  </aside>
+
+  <main>
+   <div class="wrap">
+    <section id="call" aria-labelledby="heroTitle">
+      <div class="frame">
+        <span class="crop tl"></span><span class="crop tr"></span><span class="crop bl"></span><span class="crop br"></span>
+        <div class="strip"><span><b>24-node</b> conversation workflow</span><span class="sep">·</span><span><b>5</b> MCP tools</span><span class="sep">·</span><span><b>4</b> regions on the live board</span></div>
+        <div class="hero-body">
+          <h1 id="heroTitle">The 24/7 <mark>AI fault line</mark> for Najd Networks</h1>
+          <p class="sub">Sanad takes outage calls for a Saudi managed-services provider: it verifies the site by PIN, recognises an ongoing regional incident, opens or joins the ticket, and escalates P2 → P1 when a third branch goes down — on Telnyx Voice AI, Edge Functions, KV, Stateful Actors and MCP.</p>
+          <div class="cta">
+            <button type="button" class="btn btn-primary btn-lg" data-action="call">Start call <span class="kbd">C</span></button>
+            <a class="btn btn-lg" href="#scenarios">Scenarios <span class="kbd">1</span></a>
+          </div>
+          <p class="callstate"><span class="dot" id="callDot"></span><span id="callText">Ready — the call runs in your browser; allow the microphone. The Telnyx call panel opens bottom-right.</span></p>
+        </div>
+        <div class="hero-foot">
+          <div><b>Verified callers</b>Site ID + PIN over voice; identity rides the signed webhook body.</div>
+          <div><b>One ticket per site</b>Enforced by a Stateful Actor — concurrency-safe.</div>
+          <div><b>Knows the outage</b>Regional incidents deflect duplicate reports.</div>
+        </div>
+      </div>
+    </section>
+
+    <section id="board" aria-labelledby="boardTitle">
+      <div class="sec-head">
+        <h2 id="boardTitle">Live board</h2>
+        <div class="meta"><span class="livedot" id="liveDot"></span><span id="updated">connecting…</span><span class="chip stale" id="staleChip" hidden>stale</span></div>
+      </div>
+      <p class="lede">Your call changes this board: the ticket appears, and the incident's priority and branch count update within seconds.</p>
+      <div class="panel">
+        <div class="stats">
+          <div class="stat"><span>Open incidents</span><b id="stIncidents">–</b></div>
+          <div class="stat"><span>P1 incidents</span><b id="stP1">–</b></div>
+          <div class="stat"><span>Open tickets</span><b id="stTickets">–</b></div>
+          <div class="stat"><span>Updated</span><b id="stAge">–</b><small>s ago</small></div>
+        </div>
+        <div class="tbl-title"><span>Regions</span></div>
+        <div class="tbl-wrap"><table>
+          <thead><tr><th>Region</th><th>Status</th><th>Incident</th><th>Branches</th><th>Declared</th><th>Escalation</th></tr></thead>
+          <tbody id="regionRows"></tbody>
+        </table></div>
+        <div class="tbl-title"><span>Open tickets</span></div>
+        <div class="tbl-wrap" id="ticketsTable" hidden><table>
+          <thead><tr><th>Site</th><th>Branch</th><th>Ticket</th><th>Priority</th><th>Opened</th></tr></thead>
+          <tbody id="ticketRows"></tbody>
+        </table></div>
+        <div class="empty hatch" id="ticketsEmpty">No open tickets — all branches nominal.</div>
+        <div class="board-foot">Live from Stateful Actors via /ops/board · refresh 5 s · data masked</div>
+      </div>
+    </section>
+
+    <section id="scenarios" aria-labelledby="scenariosTitle">
+      <div class="sec-head"><h2 id="scenariosTitle">Scenarios</h2><div class="meta">press 1 · 2 · 3</div></div>
+      <p class="lede">Three short calls that exercise the whole system. The branches and PINs are fictional demo data.</p>
+      <div class="scenarios">${scenarios}</div>
+    </section>
+
+    <section id="how" aria-labelledby="howTitle">
+      <div class="sec-head"><h2 id="howTitle">How it works</h2></div>
+      <p class="lede">Every call carries one trace id from the greeting webhook through the tools, MCP and the actors.</p>
+      <div class="flow hatch">
+        <div class="node"><b>Caller</b><span>web call · this page</span></div>
+        <div class="node"><b>Telnyx Voice AI</b><span>Sanad · 24-node workflow</span></div>
+        <div class="node"><b>Edge Function</b><span>/dv · tools · MCP</span></div>
+        <div class="node"><b>Stateful Actors + KV</b><span>tickets · incidents · flags</span></div>
+        <div class="node"><b>Live board</b><span>/ops/board · masked</span></div>
+      </div>
+      <div class="facts">
+        <div class="fact"><b>Race test</b>10 concurrent opens for one site: actors create exactly 1 ticket; plain KV creates 10.</div>
+        <div class="fact"><b>Fails open</b>If KV or actors are slow, Sanad still answers with safe defaults and says so honestly.</div>
+        <div class="fact"><b>Observable</b>An external prober checks deep health every 10 s; one trace id per call across every hop.</div>
+      </div>
+    </section>
+
+    <section id="operator" aria-labelledby="opTitle">
+      <details class="op">
+        <summary id="opTitle">Operator</summary>
+        <div class="op-body">
+          <p class="hint">Demo controls for the presenter. The ops token stays in this browser tab (sessionStorage) and is sent only as a bearer header to this site's /ops routes.</p>
+          <div class="op-row"><input id="opsToken" type="password" autocomplete="off" spellcheck="false" placeholder="Ops token" aria-label="Ops token"></div>
+          <div class="op-row">
+            <button type="button" class="btn" data-op="reset">Reset demo</button>
+            <button type="button" class="btn" data-op="stage">Stage Riyadh North incident</button>
+            <button type="button" class="btn" data-op="ack">Acknowledge</button>
+            <button type="button" class="btn" data-op="resolve">Resolve</button>
+          </div>
+          <p class="op-out" id="opOut" aria-live="polite"></p>
+        </div>
+      </details>
+    </section>
+
+    <footer>
+      <span>Built on Telnyx Voice AI · Edge Compute · KV · Stateful Actors · MCP — backend code authored by OpenCode on Telnyx Inference.</span>
+      <span>Calls are recorded and handled by an AI assistant.</span>
+    </footer>
+   </div>
+  </main>
+
+  <nav class="toc" aria-label="On this page">
+    <h4>On this page</h4>
+    <ol>
+      <li><a href="#call" class="active">Talk to Sanad</a></li>
+      <li><a href="#board">Live board</a></li>
+      <li><a href="#scenarios">Scenarios</a></li>
+      <li><a href="#how">How it works</a></li>
+      <li><a href="#operator">Operator</a></li>
+    </ol>
+  </nav>
+</div>
+
+<telnyx-ai-agent agent-id="${DEMO_AGENT_ID}"></telnyx-ai-agent>
 <script async src="${WIDGET_SCRIPT_URL}"></script>
-<script>
-${APP_JS}
-</script>
+<script>${JS}</script>
 </body>
-</html>
-`;
+</html>`;
 }

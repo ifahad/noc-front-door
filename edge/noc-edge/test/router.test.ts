@@ -687,13 +687,13 @@ describe("router /demo page", () => {
     expect(html).toContain("<title>NOC Front Door — Live NOC wall</title>");
     expect(html).toContain(`agent-id="${AGENT_ID}"`);
     expect(html).toContain(WIDGET_URL);
-    expect(html).toContain("NOC FRONT DOOR");
+    expect(html).toContain("noc front door");
     expect(html).toContain("Najd Networks · 24/7 AI fault line");
     expect(html).toContain("Join the incident");
     expect(html).toContain("Open a new ticket");
     expect(html).toContain("Lockout &amp; human");
-    expect(html).toContain("Tap the orb — or 'Talk to Sanad' bottom-right");
-    expect(html).toContain("NOC board");
+    expect(html).toContain("<mark>AI fault line</mark>");
+    expect(html).toContain("Live board");
     expect(html).toContain("Event feed");
     expect(html).toContain("How it works");
     expect(html).toContain("Stateful Actors + KV");
@@ -707,7 +707,8 @@ describe("router /demo page", () => {
     expect(html).not.toMatch(/\son[a-z]+=/i);
     expect(html).toContain("PIN: see the README reviewer guide");
     expect(html).not.toContain("data-pin=");
-    expect(html).not.toMatch(/[0-9]{4}/);
+    expect(html).not.toContain(PIN_JOIN);
+    expect(html).not.toContain(PIN_NEW);
     expect(html).not.toMatch(/\+[0-9]{8,15}/);
   });
 
