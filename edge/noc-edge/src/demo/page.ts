@@ -79,9 +79,7 @@ a{color:inherit}
 .mono{font-family:var(--mono);font-variant-numeric:tabular-nums}
 .hatch{background-image:repeating-linear-gradient(135deg,rgba(236,236,232,.035) 0 1px,transparent 1px 7px)}
 
-/* announcement + nav */
-.announce{background:#0b0b0a;border-bottom:1px solid var(--line);color:var(--text-2);font-size:13px;text-align:center;padding:8px 16px}
-.announce a{color:var(--text);text-underline-offset:3px}
+/* nav */
 .nav{position:sticky;top:0;z-index:20;display:flex;align-items:center;justify-content:space-between;gap:16px;height:56px;padding:0 20px;background:var(--bg);border-bottom:1px solid var(--line)}
 .brand{display:flex;align-items:center;gap:10px;text-decoration:none;min-width:0}
 .brand svg{flex:none}
@@ -579,7 +577,6 @@ export function renderDemoPage(guide: DemoGuide | null): string {
 <style>${CSS}</style>
 </head>
 <body>
-<div class="announce">Live demo — call Sanad from your browser · Telnyx Voice AI + Edge Compute · <a href="#how">How it works</a></div>
 <header class="nav">
   <a class="brand" href="#call" aria-label="NOC FRONT DOOR — home">${LOGO}<span class="wordmark">noc front door</span><span class="by">by Najd Networks · 24/7 AI fault line</span></a>
   <nav class="navlinks" aria-label="Sections"><a href="#call">Talk to Sanad</a><a href="#board">Live board</a><a href="#scenarios">Scenarios</a><a href="#how">How it works</a></nav>
