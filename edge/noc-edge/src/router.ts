@@ -9,6 +9,7 @@ import { handleVerifySite } from "./tools/verifySite";
 import { handleOpenTicket } from "./tools/openTicket";
 import { handleJoinIncident } from "./tools/joinIncident";
 import { handleCallback } from "./tools/callback";
+import { handleMcp } from "./mcp/server";
 import type { ToolDeps } from "./tools/common";
 
 export const DEFAULT_SITE = "RUH-114";
@@ -118,6 +119,22 @@ async function routeTool(
   });
 }
 
+async function routeMcp(request: Request, env: NocEdgeEnv): Promise<Response> {
+  const [mcpToken, opsToken, adapter] = await Promise.all([
+    getSecret(env, "MCP_TOKEN"),
+    getSecret(env, "OPS_TOKEN"),
+    makeAdapter(env),
+  ]);
+  return handleMcp(request, {
+    kv: bindingKvPort(env.CACHE),
+    actors: bindingActorPort(env),
+    adapter,
+    now: () => Date.now(),
+    mcpToken: mcpToken ?? "",
+    opsToken: opsToken ?? "",
+  });
+}
+
 export async function route(
   request: Request,
   env: NocEdgeEnv,
@@ -145,6 +162,12 @@ export async function route(
     return withErrorHandling("tools/callback", () =>
       routeTool(request, env, handleCallback),
     );
+  }
+  if (url.pathname === "/mcp") {
+    if (request.method !== "POST") {
+      return Response.json({ error: "method_not_allowed" }, { status: 405 });
+    }
+    return withErrorHandling("mcp", () => routeMcp(request, env));
   }
   if (request.method === "GET" && url.pathname === "/ops/actor-ping") {
     return withErrorHandling("ops/actor-ping", () =>

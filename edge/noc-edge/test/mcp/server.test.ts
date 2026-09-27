@@ -1,0 +1,512 @@
+import { afterEach, describe, expect, it } from "vitest";
+import { CallToolResultSchema } from "@modelcontextprotocol/sdk/types.js";
+import type { CallToolResult } from "@modelcontextprotocol/sdk/types.js";
+import type { Client } from "@modelcontextprotocol/sdk/client/index.js";
+import {
+  connectClient,
+  callTool,
+  textOf,
+  makeDeps,
+  seedSession,
+  seedTicket,
+  newKv,
+  makeAdapter,
+  startLogs,
+  stopLogs,
+  eventsWith,
+  CONV,
+  MCP_TOKEN,
+  OPS_TOKEN,
+  T0,
+} from "./helpers";
+import { FakeActorPort } from "../fakes/actors";
+import { handleMcp } from "../../src/mcp/server";
+import { normalizeParsedBody } from "../../src/mcp/shim";
+import type { McpDeps } from "../../src/mcp/server";
+
+const TOOL_NAMES = [
+  "find_site",
+  "get_site_status",
+  "check_known_incidents",
+  "get_ticket_status",
+  "add_ticket_note",
+];
+
+const FALLBACK =
+  "I can't reach our network systems right now, but I can still log your ticket.";
+
+const MCP_URL = "https://noc-edge.telnyxcompute.com/mcp";
+
+function postRequest(
+  headers: Record<string, string>,
+  body: unknown,
+): Request {
+  return new Request(MCP_URL, {
+    method: "POST",
+    headers: { "content-type": "application/json", ...headers },
+    body: JSON.stringify(body),
+  });
+}
+
+function initializeBody(): Record<string, unknown> {
+  return {
+    jsonrpc: "2.0",
+    id: 1,
+    method: "initialize",
+    params: {
+      protocolVersion: "2025-11-25",
+      capabilities: {},
+      clientInfo: { name: "vitest", version: "1.0.0" },
+    },
+  };
+}
+
+let deps: McpDeps;
+let client: Client | undefined;
+
+afterEach(() => {
+  stopLogs();
+});
+
+async function sessionClient(seed = {}): Promise<Client> {
+  await seedSession(deps.kv, seed);
+  return connectClient(deps, MCP_TOKEN);
+}
+
+describe("MCP transport", () => {
+  it("lists exactly the five tools after initialize", async () => {
+    deps = makeDeps();
+    client = await sessionClient();
+    const tools = await client.listTools();
+    expect(tools.tools.map((t) => t.name).sort()).toEqual([...TOOL_NAMES].sort());
+    expect(
+      tools.tools.every(
+        (t) => typeof t.description === "string" && t.description.length > 0,
+      ),
+    ).toBe(true);
+  });
+
+  it("keeps the serverInfo name noc-mcp and version 1.0.0", async () => {
+    deps = makeDeps();
+    const response = await handleMcp(
+      postRequest(
+        { authorization: `Bearer ${MCP_TOKEN}` },
+        initializeBody(),
+      ),
+      deps,
+    );
+    expect(response.status).toBe(200);
+    const parsed = (await response.json()) as {
+      result?: { serverInfo?: { name?: string; version?: string } };
+    };
+    expect(parsed.result?.serverInfo?.name).toBe("noc-mcp");
+    expect(parsed.result?.serverInfo?.version).toBe("1.0.0");
+  });
+
+  it("accepts params._meta.progressToken null", async () => {
+    deps = makeDeps();
+    client = await sessionClient();
+    const params = {
+      name: "get_site_status",
+      arguments: {},
+      _meta: { progressToken: null, telnyx_conversation_id: CONV },
+    } as unknown as Parameters<typeof client.request>[0]["params"];
+    const result = (await client.request(
+      { method: "tools/call", params },
+      CallToolResultSchema,
+    )) as CallToolResult;
+    expect(textOf(result)).toContain("Al Yasmin");
+  });
+
+  it("accepts notifications with 202", async () => {
+    deps = makeDeps();
+    const response = await handleMcp(
+      postRequest(
+        {
+          authorization: `Bearer ${MCP_TOKEN}`,
+          "content-type": "application/json",
+          accept: "application/json, text/event-stream",
+        },
+        { jsonrpc: "2.0", method: "notifications/initialized" },
+      ),
+      deps,
+    );
+    expect(response.status).toBe(202);
+  });
+
+  it("returns -32601 for an unknown JSON-RPC method, never 404", async () => {
+    deps = makeDeps();
+    client = await sessionClient();
+    await expect(
+      client.request({ method: "bogus/method" } as never, CallToolResultSchema),
+    ).rejects.toMatchObject({ code: -32601 });
+  });
+
+  it("normalizes progressToken null in the parsed body", () => {
+    const parsed = {
+      params: { _meta: { progressToken: null, telnyx_conversation_id: CONV } },
+    };
+    const cleaned = normalizeParsedBody(parsed) as {
+      params: { _meta: { progressToken?: unknown; telnyx_conversation_id?: string } };
+    };
+    expect("progressToken" in cleaned.params._meta).toBe(false);
+    expect(cleaned.params._meta.telnyx_conversation_id).toBe(CONV);
+  });
+
+  it("rejects an absent bearer with 401 before the SDK", async () => {
+    deps = makeDeps();
+    const response = await handleMcp(
+      postRequest({}, initializeBody()),
+      deps,
+    );
+    expect(response.status).toBe(401);
+    expect((await response.json()) as Record<string, unknown>).toHaveProperty("error");
+  });
+
+  it("rejects a wrong bearer with 401 before the SDK", async () => {
+    deps = makeDeps();
+    const response = await handleMcp(
+      postRequest(
+        { authorization: `Bearer ${["w", "rong"].join("")}` },
+        initializeBody(),
+      ),
+      deps,
+    );
+    expect(response.status).toBe(401);
+  });
+
+  it("accepts a lowercase bearer scheme", async () => {
+    deps = makeDeps();
+    const response = await handleMcp(
+      postRequest(
+        { authorization: `bearer ${MCP_TOKEN}`, accept: "application/json, text/event-stream" },
+        initializeBody(),
+      ),
+      deps,
+    );
+    expect(response.status).toBe(200);
+    const parsed = (await response.json()) as { result?: unknown };
+    expect(parsed.result).toBeDefined();
+  });
+});
+
+describe("MCP session scope", () => {
+  it("speaks the fallback when tools/call carries no _meta", async () => {
+    deps = makeDeps();
+    client = await sessionClient();
+    const result = await callTool(client, "get_site_status", {}, null);
+    expect(result.isError).not.toBe(true);
+    expect(textOf(result)).toBe(FALLBACK);
+  });
+
+  it("speaks the fallback when the conversation is not linked", async () => {
+    deps = makeDeps();
+    client = await sessionClient();
+    const result = await callTool(client, "get_site_status", {}, "conv-unknown");
+    expect(result.isError).not.toBe(true);
+    expect(textOf(result)).toBe(FALLBACK);
+  });
+
+  it("speaks the default site status without arguments", async () => {
+    deps = makeDeps();
+    client = await sessionClient();
+    const result = await callTool(client, "get_site_status", {});
+    expect(result.isError).not.toBe(true);
+    expect(textOf(result)).toBe(
+      "The edge router at the Al Yasmin branch stopped responding at 1:52 AM; the backup LTE link is also down.",
+    );
+    expect((result.structuredContent as Record<string, unknown>)?.site_id).toBe("RUH-114");
+  });
+
+  it("speaks a healthy status for another site of the caller's customer", async () => {
+    deps = makeDeps({ kv: newKv(), actors: new FakeActorPort(), adapter: makeAdapter() });
+    client = await sessionClient();
+    const result = await callTool(client, "get_site_status", { site_id: "JED-007" });
+    expect(result.isError).not.toBe(true);
+    expect(textOf(result)).toBe("The JED-007 branch looks healthy from our side.");
+  });
+
+  it("reads another site of the caller's own customer", async () => {
+    deps = makeDeps();
+    client = await sessionClient();
+    const result = await callTool(client, "get_site_status", { site_id: "RUH-121" });
+    expect(result.isError).not.toBe(true);
+    expect(textOf(result)).toContain("Al Malqa");
+  });
+
+  it("refuses an unknown site id as not found", async () => {
+    deps = makeDeps();
+    client = await sessionClient();
+    const result = await callTool(client, "get_site_status", { site_id: "RUH-999" });
+    expect(result.isError).not.toBe(true);
+    expect(textOf(result)).toBe("I couldn't find that branch for your organisation.");
+  });
+
+  it("looks up a spoken branch name", async () => {
+    deps = makeDeps();
+    client = await sessionClient();
+    const result = await callTool(client, "find_site", { description: "the Yasmin branch" });
+    expect(result.isError).not.toBe(true);
+    expect(textOf(result)).toBe("That's the Al Yasmin branch, site R U H, 1 1 4.");
+    expect((result.structuredContent as Record<string, unknown>)?.site_id).toBe("RUH-114");
+  });
+
+  it("cannot find a branch outside the caller's organisation", async () => {
+    deps = makeDeps();
+    client = await sessionClient();
+    const result = await callTool(client, "find_site", { description: "the JED-900 branch" });
+    expect(result.isError).not.toBe(true);
+    expect(textOf(result)).toBe("I couldn't find that branch for your organisation.");
+  });
+
+  it("refuses another tenant's site and logs auth.denied", async () => {
+    deps = makeDeps();
+    startLogs();
+    client = await sessionClient();
+    const result = await callTool(client, "get_site_status", { site_id: "JED-900" });
+    expect(result.isError).not.toBe(true);
+    expect(textOf(result)).toBe("I can only look up your own site.");
+    const denials = eventsWith("auth.denied");
+    expect(denials).toHaveLength(1);
+    expect(denials[0]).toMatchObject({ hop: "mcp", tool: "get_site_status" });
+  });
+
+  it("reports the regional incident with a spoken branch count", async () => {
+    deps = makeDeps();
+    const k = await seedSession(deps.kv, {});
+    client = await connectClient(deps, MCP_TOKEN);
+    const ticketId = await seedTicket(deps.actors, k);
+    await deps.actors.region("riyadh-north").reportSite({
+      siteId: "RUH-114",
+      ticketId,
+      regionCode: "1",
+      trace_id: "t-test",
+      at: T0,
+    });
+    const opened2 = await deps.actors.site("RUH-121").openOrAttach({
+      k,
+      trace_id: "t-test",
+      callerRef: "c-ahmed",
+      symptom: "loss of connectivity",
+      impact: "site_down",
+      serviceAffecting: true,
+      priority: "P2",
+      at: T0,
+      siteCode: "21",
+    });
+    await deps.actors.region("riyadh-north").reportSite({
+      siteId: "RUH-121",
+      ticketId: opened2.ticket.id,
+      regionCode: "1",
+      trace_id: "t-test",
+      at: T0,
+    });
+    const result = await callTool(client, "check_known_incidents", {});
+    expect(result.isError).not.toBe(true);
+    expect(textOf(result)).toBe(
+      "There's an active priority 2 incident in Riyadh North affecting two branches since 9:00 AM.",
+    );
+  });
+
+  it("speaks no incidents when the region is quiet", async () => {
+    deps = makeDeps();
+    client = await sessionClient();
+    const result = await callTool(client, "check_known_incidents", {});
+    expect(result.isError).not.toBe(true);
+    expect(textOf(result)).toBe("No known incidents in your area.");
+  });
+
+  it("speaks a lookup failure when the incident actor fails", async () => {
+    const actors = new FakeActorPort();
+    actors.failNextGetIncident("riyadh-north", 1);
+    deps = makeDeps({ actors });
+    client = await sessionClient();
+    const result = await callTool(client, "check_known_incidents", {});
+    expect(result.isError).not.toBe(true);
+    expect(textOf(result)).toBe("I can't check incidents right now.");
+  });
+
+  it("reads the session site's ticket without arguments", async () => {
+    deps = makeDeps();
+    const k = await seedSession(deps.kv, {});
+    await seedTicket(deps.actors, k);
+    client = await connectClient(deps, MCP_TOKEN);
+    const result = await callTool(client, "get_ticket_status", {});
+    expect(result.isError).not.toBe(true);
+    expect(textOf(result)).toBe(
+      "Ticket N J D, 1 4 0 1 is priority 2; engineer response due by 9:30 AM.",
+    );
+  });
+
+  it("speaks no ticket when the session site has none", async () => {
+    deps = makeDeps();
+    client = await sessionClient();
+    const result = await callTool(client, "get_ticket_status", {});
+    expect(result.isError).not.toBe(true);
+    expect(textOf(result)).toBe("I don't see an open ticket for that branch.");
+  });
+
+  it("looks up a given ticket through its site code", async () => {
+    deps = makeDeps();
+    client = await sessionClient({ sites: ["RUH-121"] });
+    const opened = await deps.actors.site("RUH-121").openOrAttach({
+      k: "k-other",
+      trace_id: "t-test",
+      callerRef: "c-sara",
+      symptom: "loss of connectivity",
+      impact: "site_down",
+      serviceAffecting: true,
+      priority: "P2",
+      at: T0,
+      siteCode: "21",
+    });
+    const result = await callTool(client, "get_ticket_status", {
+      ticket_id: opened.ticket.id,
+    });
+    expect(result.isError).not.toBe(true);
+    expect(textOf(result)).toContain("priority 2");
+  });
+
+  it("refuses a ticket that belongs to another customer and logs auth.denied", async () => {
+    deps = makeDeps();
+    startLogs();
+    client = await sessionClient();
+    const result = await callTool(client, "get_ticket_status", { ticket_id: "NJD-9001" });
+    expect(result.isError).not.toBe(true);
+    expect(textOf(result)).toBe("I can only look up your own site.");
+    expect(eventsWith("auth.denied")).toHaveLength(1);
+  });
+
+  it("adds a note to the session site's ticket", async () => {
+    deps = makeDeps();
+    const k = await seedSession(deps.kv, {});
+    const ticketId = await seedTicket(deps.actors, k);
+    client = await connectClient(deps, MCP_TOKEN);
+    const result = await callTool(client, "add_ticket_note", {
+      note: "Power restored in the back office.",
+    });
+    expect(result.isError).not.toBe(true);
+    expect(textOf(result)).toBe("I've added your update to ticket N J D, 1 4 0 1.");
+    const ticket = await deps.actors.site("RUH-114").getTicket({ trace_id: "t-test" });
+    expect(ticket.ticket?.notes).toHaveLength(1);
+    expect(ticket.ticket?.notes[0]?.text).toBe("Power restored in the back office.");
+    expect(ticket.ticket?.notes[0]?.k).toBe(k);
+    expect(ticket.ticket?.id).toBe(ticketId);
+  });
+
+  it("refuses a note on a ticket outside the session sites", async () => {
+    deps = makeDeps();
+    startLogs();
+    const k = await seedSession(deps.kv, {});
+    await seedTicket(deps.actors, k);
+    const opened = await deps.actors.site("RUH-121").openOrAttach({
+      k: "other",
+      trace_id: "t-test",
+      callerRef: "c-sara",
+      symptom: "loss of connectivity",
+      impact: "site_down",
+      serviceAffecting: true,
+      priority: "P2",
+      at: T0,
+      siteCode: "21",
+    });
+    client = await connectClient(deps, MCP_TOKEN);
+    const result = await callTool(client, "add_ticket_note", {
+      ticket_id: opened.ticket.id,
+      note: "Power restored in the back office.",
+    });
+    expect(result.isError).not.toBe(true);
+    expect(textOf(result)).toBe("I can only add notes to tickets for your own site.");
+    expect(eventsWith("auth.denied")).toHaveLength(1);
+  });
+
+  it("rejects a note longer than 300 characters", async () => {
+    deps = makeDeps();
+    const k = await seedSession(deps.kv, {});
+    await seedTicket(deps.actors, k);
+    client = await connectClient(deps, MCP_TOKEN);
+    const result = await callTool(client, "add_ticket_note", { note: "x".repeat(301) });
+    expect(result.isError).toBe(true);
+  });
+
+  it("logs exactly one mcp.tool line per call with the session trace", async () => {
+    deps = makeDeps();
+    startLogs();
+    client = await sessionClient();
+    await callTool(client, "get_site_status", {});
+    const lines = eventsWith("mcp.tool");
+    expect(lines).toHaveLength(1);
+    expect(lines[0]).toMatchObject({
+      hop: "mcp",
+      tool: "get_site_status",
+      outcome: "ok",
+    });
+    expect(typeof lines[0].total_ms).toBe("number");
+    expect(typeof lines[0].trace_id).toBe("string");
+    expect(String(lines[0].trace_id)).toMatch(/^t-/);
+  });
+});
+
+describe("MCP ops scope", () => {
+  it("reads a site status by site_id", async () => {
+    deps = makeDeps();
+    client = await connectClient(deps, OPS_TOKEN);
+    const result = await callTool(client, "get_site_status", { site_id: "RUH-114" }, null);
+    expect(result.isError).not.toBe(true);
+    expect(textOf(result)).toContain("stopped responding at 1:52 AM");
+  });
+
+  it("resolves any site globally", async () => {
+    deps = makeDeps();
+    client = await connectClient(deps, OPS_TOKEN);
+    const result = await callTool(client, "find_site", { description: "the JED-900 branch" }, null);
+    expect(result.isError).not.toBe(true);
+    expect((result.structuredContent as Record<string, unknown>)?.site_id).toBe("JED-900");
+  });
+
+  it("rejects add_ticket_note", async () => {
+    deps = makeDeps();
+    startLogs();
+    client = await connectClient(deps, OPS_TOKEN);
+    const result = await callTool(client, "add_ticket_note", { note: "hi" }, null);
+    expect(result.isError).toBe(true);
+    expect(eventsWith("auth.denied")).toHaveLength(1);
+  });
+
+  it("rejects requests that carry _meta with 403", async () => {
+    deps = makeDeps();
+    startLogs();
+    const response = await handleMcp(
+      postRequest(
+        {
+          authorization: `Bearer ${OPS_TOKEN}`,
+          "content-type": "application/json",
+          accept: "application/json, text/event-stream",
+        },
+        {
+          jsonrpc: "2.0",
+          id: 1,
+          method: "tools/list",
+          params: { _meta: { telnyx_conversation_id: CONV } },
+        },
+      ),
+      deps,
+    );
+    expect(response.status).toBe(403);
+    expect(eventsWith("auth.denied")).toHaveLength(1);
+  });
+
+  it("still lists the five tools in ops scope", async () => {
+    deps = makeDeps();
+    client = await connectClient(deps, OPS_TOKEN);
+    const tools = await client.listTools();
+    expect(tools.tools.map((t) => t.name).sort()).toEqual([...TOOL_NAMES].sort());
+  });
+
+  it("requires site_id when there is no session", async () => {
+    deps = makeDeps();
+    client = await connectClient(deps, OPS_TOKEN);
+    const result = await callTool(client, "get_site_status", {}, null);
+    expect(result.isError).toBe(true);
+  });
+});
