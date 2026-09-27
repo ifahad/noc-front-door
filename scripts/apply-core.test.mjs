@@ -180,73 +180,83 @@ test('listAll keeps paging through three pages', async () => {
 
 const sentWebhookTool = {
   type: 'webhook',
-  display_name: 'probe_echo',
+  display_name: 'verify_site',
   timeout_ms: 5000,
   webhook: {
-    name: 'probe_echo',
-    url: 'https://x.test/tools/echo',
+    name: 'verify_site',
+    description: 'Verify site identity and PIN.',
+    url: 'https://x.test/tools/verify-site',
     method: 'POST',
-    store_fields_as_variables: [{ name: 'echo_result', value_path: 'result' }],
+    preset_body_fields: { site_id: 'RUH-114' },
+    headers: [{ name: 'content-type', value: 'application/json' }],
+    store_fields_as_variables: [{ name: 'verify_result', value_path: 'result' }],
   },
 };
 
-const gotToolLikeApi = (toolDefinition, displayName = 'probe_echo') => ({
+const gotToolLikeApi = (toolDefinition, displayName = 'verify_site') => ({
   id: 'tool-id-1',
   type: 'webhook',
   display_name: displayName,
   tool_definition: toolDefinition,
+  timeout_ms: 5000,
   created_at: '2026-01-01',
 });
 
-test('normaliseToolReadback lifts the per-type body so a real GET shape has zero DRIFT', () => {
-  const got = normaliseToolReadback(
-    gotToolLikeApi({
-      webhook: { ...sentWebhookTool.webhook, timeout_ms: 5000 },
-    }),
-  );
+test('normaliseToolReadback lifts tool_definition into the webhook key so a real GET shape has zero DRIFT', () => {
+  const got = normaliseToolReadback(gotToolLikeApi(sentWebhookTool.webhook));
   assert.deepEqual(subsetDiff(sentWebhookTool, got), []);
 });
 
+test('normaliseToolReadback zero-drifts a real hangup GET shape', () => {
+  const sent = {
+    type: 'hangup',
+    display_name: 'end_call',
+    timeout_ms: 5000,
+    hangup: { description: 'End the call after the goodbye.' },
+  };
+  const got = normaliseToolReadback({
+    id: 'tool-id-2',
+    type: 'hangup',
+    display_name: 'end_call',
+    tool_definition: { description: 'End the call after the goodbye.' },
+    timeout_ms: 5000,
+    created_at: '2026-01-01',
+  });
+  assert.deepEqual(subsetDiff(sent, got), []);
+});
+
 test('normaliseToolReadback still reports a real mismatch under tool_definition', () => {
-  const def = { webhook: { ...sentWebhookTool.webhook, timeout_ms: 5000 } };
-  def.webhook.url = 'https://x.test/other';
+  const def = { ...sentWebhookTool.webhook, url: 'https://x.test/other' };
   const got = normaliseToolReadback(gotToolLikeApi(def));
   const diffs = subsetDiff(sentWebhookTool, got);
   assert.deepEqual(diffs, [
     {
       path: 'webhook.url',
-      sent: 'https://x.test/tools/echo',
+      sent: 'https://x.test/tools/verify-site',
       got: 'https://x.test/other',
     },
   ]);
 });
 
 test('normaliseToolReadback passes through a shape without tool_definition', () => {
-  const raw = { id: 'x', display_name: 'probe_echo' };
+  const raw = { id: 'x', display_name: 'verify_site' };
   assert.deepEqual(normaliseToolReadback(raw), raw);
   assert.equal(subsetDiff(sentWebhookTool, normaliseToolReadback(raw)).length, 3);
 });
 
-test('normaliseToolReadback accepts timeout_ms at the tool_definition top level', () => {
-  const got = normaliseToolReadback(
-    gotToolLikeApi({ timeout_ms: 5000, webhook: sentWebhookTool.webhook }),
-  );
-  assert.deepEqual(subsetDiff(sentWebhookTool, got), []);
-});
-
-test('normaliseToolReadback lifts update_dynamic_variables bodies', () => {
+test('normaliseToolReadback lifts a flat update_dynamic_variables tool_definition', () => {
   const sent = {
     type: 'update_dynamic_variables',
     display_name: 'probe_capture',
     update_dynamic_variables: { name: 'probe_capture', updatable_variables: [] },
   };
-  const got = normaliseToolReadback(
-    gotToolLikeApi(
-      { update_dynamic_variables: sent.update_dynamic_variables },
-      'probe_capture',
-    ),
-  );
-  got.type = 'update_dynamic_variables';
+  const got = normaliseToolReadback({
+    id: 'tool-id-3',
+    type: 'update_dynamic_variables',
+    display_name: 'probe_capture',
+    tool_definition: { name: 'probe_capture', updatable_variables: [] },
+    created_at: '2026-01-01',
+  });
   assert.deepEqual(subsetDiff(sent, got), []);
 });
 

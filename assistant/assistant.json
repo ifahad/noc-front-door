@@ -9,16 +9,7 @@
     "model": "deepgram/nova-3",
     "language": "en",
     "settings": {
-      "keyterm": [
-        "RUH",
-        "JED",
-        "DMM",
-        "Najd",
-        "Yasmin",
-        "Malqa",
-        "Hittin",
-        "Arabic"
-      ]
+      "keyterm": "RUH,JED,DMM,Najd,Yasmin,Malqa,Hittin,Arabic"
     }
   },
   "interruption_settings": {

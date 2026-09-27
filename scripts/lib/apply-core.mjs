@@ -54,16 +54,12 @@ export function normaliseToolReadback(got) {
     got !== null &&
     typeof got === 'object' &&
     !Array.isArray(got) &&
+    typeof got.type === 'string' &&
     got.tool_definition !== null &&
     typeof got.tool_definition === 'object' &&
     !Array.isArray(got.tool_definition)
   ) {
-    const def = got.tool_definition;
-    const typeKey = Object.keys(def).find(
-      (k) => def[k] !== null && typeof def[k] === 'object' && !Array.isArray(def[k]),
-    );
-    const inner = typeKey ? def[typeKey] : {};
-    return { ...inner, ...def, ...got };
+    return { ...got, [got.type]: got.tool_definition };
   }
   return got;
 }

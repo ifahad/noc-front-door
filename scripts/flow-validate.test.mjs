@@ -295,6 +295,21 @@ test('validateAssistant accepts a known system variable mustache', async () => {
   assert.deepEqual(validateAssistant(assistant), []);
 });
 
+test('validateAssistant rejects a keyterm array', async () => {
+  const assistant = await realAssistant();
+  assistant.transcription = { settings: { keyterm: ['RUH', 'JED'] } };
+  const errs = validateAssistant(assistant);
+  assert.ok(errs.some((e) => e.includes('keyterm') && e.includes('string')));
+});
+
+test('validateAssistant accepts a comma-separated keyterm string', async () => {
+  const assistant = await realAssistant();
+  assistant.transcription = {
+    settings: { keyterm: ['RUH', 'JED', 'DMM', 'Najd', 'Yasmin', 'Malqa', 'Hittin', 'Arabic'].join(',') },
+  };
+  assert.deepEqual(validateAssistant(assistant), []);
+});
+
 test('validateAssistant resolves real tool ids through a custom toolName map', async () => {
   const assistant = await realAssistant();
   assistant.tool_ids = ['abc-123'];

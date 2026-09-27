@@ -15,15 +15,21 @@ export async function telnyx(path, { method = 'GET', body } = {}) {
   if (!res.ok) {
     let code = 'unknown';
     let title = res.statusText || 'request failed';
+    let suffix = '';
     try {
       const parsed = await res.json();
       const err = parsed?.errors?.[0];
       if (err?.code) code = String(err.code);
       if (err?.title) title = String(err.title);
+      if (err?.detail) suffix += `: ${String(err.detail)}`;
+      const pointer = err?.source?.pointer;
+      if (pointer) suffix += ` (at ${String(pointer)})`;
     } catch {
       // non-JSON error body: keep defaults
     }
-    throw new Error(`telnyx ${method} ${path} -> ${res.status} ${code} ${title}`);
+    throw new Error(
+      `telnyx ${method} ${path} -> ${res.status} ${code} ${title}${suffix}`,
+    );
   }
   const text = await res.text();
   if (!text) return null;

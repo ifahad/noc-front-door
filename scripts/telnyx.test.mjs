@@ -77,6 +77,41 @@ test('telnyx error message never contains the api key', async () => {
   }
 });
 
+test('telnyx error message includes detail and source.pointer', async () => {
+  const saved = { ...process.env };
+  const realFetch = globalThis.fetch;
+  try {
+    process.env.TELNYX_API_KEY = FAKE_KEY;
+    globalThis.fetch = async () =>
+      new Response(
+        JSON.stringify({
+          errors: [
+            {
+              code: '10026',
+              title: 'Invalid parameter type',
+              detail: 'Expected string type',
+              source: { pointer: '/body/transcription/settings/keyterm' },
+            },
+          ],
+        }),
+        { status: 400, headers: { 'content-type': 'application/json' } },
+      );
+    await assert.rejects(
+      () => telnyx('/v2/ai/assistants/x', { method: 'POST', body: {} }),
+      (err) => {
+        assert.equal(
+          err.message,
+          'telnyx POST /v2/ai/assistants/x -> 400 10026 Invalid parameter type: Expected string type (at /body/transcription/settings/keyterm)',
+        );
+        return true;
+      },
+    );
+  } finally {
+    process.env = saved;
+    globalThis.fetch = realFetch;
+  }
+});
+
 test('telnyx sends JSON body and parses success', async () => {
   const realFetch = globalThis.fetch;
   try {

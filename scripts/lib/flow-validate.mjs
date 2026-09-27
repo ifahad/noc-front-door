@@ -169,6 +169,18 @@ export function validateAssistant(
     );
   }
   const declared = new Set(Object.keys(assistant.dynamic_variables ?? {}));
+  const keyterm = assistant.transcription?.settings?.keyterm;
+  if (keyterm !== undefined) {
+    if (typeof keyterm !== 'string' || keyterm.length === 0) {
+      errors.push(
+        'transcription.settings.keyterm must be a non-empty comma-separated string',
+      );
+    } else if (/\s,|,\s/.test(keyterm)) {
+      errors.push(
+        'transcription.settings.keyterm must not contain spaces around commas',
+      );
+    }
+  }
   const texts = [];
   if (typeof assistant.instructions === 'string') {
     texts.push(['instructions', assistant.instructions]);
