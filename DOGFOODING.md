@@ -47,3 +47,38 @@ Smoke command: `opencode run --model telnyx/moonshotai/Kimi-K3 "Say hello in one
 - The auth-login error for a wrong `--method` value echoes the API key back in the terminal — a real secret-leak surface; avoid mistyping `--method`.
 - DEBUG #3: `opencode run` hung 40 minutes with zero events (exit 124) — harness stdin is an open socket and `opencode run` reads non-TTY stdin as extra prompt, waiting for EOF forever. Fix: always run with `< /dev/null`.
 - The model ran a script it was told not to (Task 3: executed `preflight.mjs` without `.env` → the harmless missing-key path; process deviation, no code defect, no account touch). Future prompts state prohibitions as "must not run under any circumstances".
+
+## Plan 1 build (2026-09-26 → 27)
+
+OpenCode-authored commits on this repo: `git log --grep "Assisted-by: OpenCode" --oneline | wc -l` → **41**.
+
+Per-task findings caught by the independent reviewers (from the SDD ledgers):
+
+| Task | Review findings |
+|---|---|
+| T4 SiteState | 2 CRITICAL: the site-wide PIN lock was never persisted when one attempt crossed both the per-call and site thresholds (if/else) → a valid PIN passed a should-be-locked site; `recordCall` idempotency used the 10-item display list → a repeat caller was double-counted after 10 other callers/day |
+| T5 RegionState | Important: `declare` hard-coded P2 even at ≥3 sites; no never-downgrade regression test; multi-key writes outside `ctx.storage.transaction()` (rejected on evidence — turns commit atomically) |
+| T6 services | Important: the projection summary read raw site ids to the caller; the `flags.read` memo was not keyed by the KV port (proven leak) |
+| T7 /dv | Important: a signed-but-malformed body → 400 instead of fail-open 200 with defaults (reviewer verified the budget arithmetic adversarially) |
+| T8 tool webhooks | Important: `open_ticket` mixed 403/422 for a missing site; re-review found a NEW CRITICAL regression: `join_incident` no-session → 422 instead of 403 |
+| T9 MCP | Important: duplicate `auth.denied` on one denial; `mcp.tool` outcome always "ok" for denials/fallbacks (zero trace). Tenant isolation held on every probed vector |
+| T10 ops/health | Important: the sync healed only projection keys already present in `kv.list` — a never-written projection was never healed (must iterate regions via actor truth) |
+| T11 assistant-as-code | 2 Important: inherit nodes lacked an explicit `tools_mode` (C7) — accepted; `incident_note` treated as a dead field — rejected (it is a real response field) |
+| T11b mux mode | CRITICAL: `/dv` could return 500 when KV threw (violating C3 fail-open), and a fresh KV port per call defeated the flags memo (12 KV gets per `/dv`) |
+| T12 prober/runbook | 3 Important (2 confirmed as cross-task contract items delivered by T12b, 1 refuted by the skeptic) |
+| T12b recalibration | The implementer report **falsely claimed a test existed** for the `/dv` SAFE_FLAGS fallback branch — the fix added the missing router test |
+| T12c concurrency | 0 Critical/Important; the callback latency threshold was tightened 2500→2000 ms (the specced bound could not fail on the old code) |
+
+Spend: the $5.00 promo was exhausted by ~05:52 (balance $0.26 at the hard stop; the R18 credit floor stopped dispatches at $0.35/$0.25); Fahad topped up **$25.24**. Measured ≈ **$0.25–0.30** per GLM-5.3-Flash implementer run (T11: 527k fresh input + 6.16M cached + 60k out tokens); fix rounds **$0.02–$0.14**.
+
+What worked:
+
+- Terse AGENTS.md rule 11 (8K output cap, no plan dumps in chat) + `--variant no-thinking` — no silent length stops after DEBUG #2.
+- Auto-continue on step finish `reason=length`; always `< /dev/null` for stdin (DEBUG #3).
+- Headless implementer runs in parallel git worktrees (R17/R27): T11b, T12, T12b and T12c were built concurrently on disjoint files and cherry-picked onto one integration branch.
+
+What didn't:
+
+- Silent length stops: exit 0 with zero output (DEBUG #2) — caught only by the wrapper's finish-reason check.
+- Long continuations on big tasks: T11 needed 527k fresh input + 6.16M cached tokens in one session; fresh, tightly scoped fix sessions were cheaper and more reliable.
+- Implementer reports sometimes overstate test coverage (T3: a "compliant" file had a raw phone-digit literal; T12b: a claimed test did not exist) — reviews treat reports as unverified claims and verify against the diff.
