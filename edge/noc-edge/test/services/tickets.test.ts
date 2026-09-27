@@ -377,14 +377,14 @@ describe("tickets.joinIncident", () => {
   });
 
   it.each([[[]], [["none"]], [["{{site_id}}"]]])(
-    "throws 422 missing_site_id for a session site of %j before the identification check",
+    "returns 403 not_identified for a session site of %j with no usable identified site",
     async (sites) => {
       const kv = new FakeKv();
       kv.setNow(T0);
       const ctx = makeCtx({ kv, actors: new FakeActorPort() });
       await expect(
         joinIncident(ctx, makeSession({ identified: true, sites })),
-      ).rejects.toMatchObject({ status: 422, code: "missing_site_id" });
+      ).rejects.toMatchObject({ status: 403, code: "not_identified" });
       expect(kv.calls).toHaveLength(0);
     },
   );

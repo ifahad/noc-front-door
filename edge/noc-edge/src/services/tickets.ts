@@ -206,14 +206,11 @@ export async function joinIncident(
   ctx: TicketCtx,
   session: Session,
 ): Promise<OpenResult> {
-  const siteId = session.sites[0] ?? "";
-  if (!usableSite(siteId)) {
-    throw new TicketError(422, "missing_site_id");
-  }
   if (ctx.flags.fault_open_ticket !== null) {
     throw new TicketError(ctx.flags.fault_open_ticket, "fault_injected");
   }
-  if (!(session.identified || session.verified)) {
+  const siteId = session.sites[0] ?? "";
+  if (!usableSite(siteId) || !(session.identified || session.verified)) {
     logEvent("auth.denied", {
       hop: "services/tickets",
       trace_id: ctx.trace_id,

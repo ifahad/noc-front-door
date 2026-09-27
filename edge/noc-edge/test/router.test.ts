@@ -297,14 +297,14 @@ describe("router tool webhooks", () => {
     expect(await res.json()).toEqual({ error: "missing_site_id" });
   });
 
-  it("routes a signed join_incident with no session to 422", async () => {
+  it("routes a signed join_incident with no session to 403", async () => {
     const { env, priv } = await makeToolEnv();
     const res = await route(
       await signedTool("/tools/join-incident", presets(), priv),
       env,
     );
-    expect(res.status).toBe(422);
-    expect(await res.json()).toEqual({ error: "missing_site_id" });
+    expect(res.status).toBe(403);
+    expect(await res.json()).toEqual({ error: "not_identified" });
   });
 
   it("routes a signed callback to 200 escalated", async () => {

@@ -133,7 +133,7 @@ describe("handleJoinIncident", () => {
     expect(lines[0].outcome).toBe("denied");
   });
 
-  it("returns 422 missing_site_id when the session carries no site", async () => {
+  it("returns 403 when the identified session carries no usable site", async () => {
     const keys = await makeKeys();
     const kv = newKv();
     await putDv(kv, K, {
@@ -148,20 +148,23 @@ describe("handleJoinIncident", () => {
       await signedToolRequest("/tools/join-incident", presets(), keys),
       makeDeps(kv, new FakeActorPort(), keys),
     );
-    expect(res.status).toBe(422);
+    expect(res.status).toBe(403);
     const out = await jsonOf(res);
-    expect(out.error).toBe("missing_site_id");
+    expect(out.error).toBe("not_identified");
+    const lines = eventsWith("tool.join_incident");
+    expect(lines).toHaveLength(1);
+    expect(lines[0].outcome).toBe("denied");
   });
 
-  it("returns 422 missing_site_id when there is no session at all", async () => {
+  it("returns 403 when there is no session at all", async () => {
     const keys = await makeKeys();
     const res = await handleJoinIncident(
       await signedToolRequest("/tools/join-incident", presets(), keys),
       makeDeps(newKv(), new FakeActorPort(), keys),
     );
-    expect(res.status).toBe(422);
+    expect(res.status).toBe(403);
     const out = await jsonOf(res);
-    expect(out.error).toBe("missing_site_id");
+    expect(out.error).toBe("not_identified");
   });
 
   it("rejects unsigned, stale and unkeyed requests", async () => {
