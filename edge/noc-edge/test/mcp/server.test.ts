@@ -201,10 +201,12 @@ describe("MCP session scope", () => {
 
   it("speaks the fallback when the conversation is not linked", async () => {
     deps = makeDeps();
+    startLogs();
     client = await sessionClient();
     const result = await callTool(client, "get_site_status", {}, "conv-unknown");
     expect(result.isError).not.toBe(true);
     expect(textOf(result)).toBe(FALLBACK);
+    expect(eventsWith("mcp.tool")[0]?.outcome).toBe("fallback");
   });
 
   it("speaks the default site status without arguments", async () => {
@@ -269,6 +271,21 @@ describe("MCP session scope", () => {
     const denials = eventsWith("auth.denied");
     expect(denials).toHaveLength(1);
     expect(denials[0]).toMatchObject({ hop: "mcp", tool: "get_site_status" });
+    const toolLines = eventsWith("mcp.tool");
+    expect(toolLines).toHaveLength(1);
+    expect(toolLines[0].outcome).toBe("denied");
+  });
+
+  it("logs no auth.denied when the session has no site to default to", async () => {
+    deps = makeDeps();
+    startLogs();
+    await seedSession(deps.kv, { sites: [], identified: true, verified: false });
+    client = await connectClient(deps, MCP_TOKEN);
+    const result = await callTool(client, "get_site_status", {});
+    expect(result.isError).not.toBe(true);
+    expect(textOf(result)).toBe("I can only look up your own site.");
+    expect(eventsWith("auth.denied")).toHaveLength(0);
+    expect(eventsWith("mcp.tool")[0]?.outcome).toBe("fallback");
   });
 
   it("reports the regional incident with a spoken branch count", async () => {
@@ -418,6 +435,81 @@ describe("MCP session scope", () => {
     expect(result.isError).not.toBe(true);
     expect(textOf(result)).toBe("I can only add notes to tickets for your own site.");
     expect(eventsWith("auth.denied")).toHaveLength(1);
+  });
+
+  it("logs exactly one auth.denied and one mcp.tool line for a cross-tenant note", async () => {
+    deps = makeDeps();
+    startLogs();
+    const k = await seedSession(deps.kv, {});
+    await seedTicket(deps.actors, k);
+    const opened = await deps.actors.site("RUH-121").openOrAttach({
+      k: "other",
+      trace_id: "t-test",
+      callerRef: "c-sara",
+      symptom: "loss of connectivity",
+      impact: "site_down",
+      serviceAffecting: true,
+      priority: "P2",
+      at: T0,
+      siteCode: "21",
+    });
+    client = await connectClient(deps, MCP_TOKEN);
+    const result = await callTool(client, "add_ticket_note", {
+      ticket_id: opened.ticket.id,
+      note: "Power restored in the back office.",
+    });
+    expect(result.isError).not.toBe(true);
+    expect(textOf(result)).toBe("I can only add notes to tickets for your own site.");
+    expect(eventsWith("auth.denied")).toHaveLength(1);
+    expect(eventsWith("auth.denied")[0]).toMatchObject({ hop: "mcp", tool: "add_ticket_note" });
+    const toolLines = eventsWith("mcp.tool");
+    expect(toolLines).toHaveLength(1);
+    expect(toolLines[0].outcome).toBe("denied");
+  });
+
+  it("speaks no ticket when add_note hits a ticket mismatch", async () => {
+    deps = makeDeps();
+    startLogs();
+    const k = await seedSession(deps.kv, {});
+    await seedTicket(deps.actors, k);
+    client = await connectClient(deps, MCP_TOKEN);
+    const result = await callTool(client, "add_ticket_note", {
+      ticket_id: "NJD-1499",
+      note: "Power restored in the back office.",
+    });
+    expect(result.isError).not.toBe(true);
+    expect(textOf(result)).toBe("I don't see an open ticket for that branch.");
+    expect(eventsWith("mcp.tool")[0]?.outcome).toBe("ok");
+  });
+
+  it("speaks a write failure when the site actor throws", async () => {
+    const actors = new FakeActorPort();
+    const failingSite = Object.create(actors.site("RUH-114")) as {
+      addNote: (input: unknown) => Promise<never>;
+    };
+    failingSite.addNote = async () => {
+      throw new Error("kv_write_failed");
+    };
+    deps = makeDeps({
+      actors: {
+        site: (siteId: string) =>
+          siteId === "RUH-114" ? (failingSite as never) : actors.site(siteId),
+        region: (region: string) => actors.region(region),
+      },
+    });
+    startLogs();
+    const k = await seedSession(deps.kv, {});
+    await seedTicket(deps.actors, k);
+    client = await connectClient(deps, MCP_TOKEN);
+    const result = await callTool(client, "add_ticket_note", {
+      note: "Power restored in the back office.",
+    });
+    expect(result.isError).not.toBe(true);
+    expect(textOf(result)).toBe("I can't update tickets right now.");
+    const line = eventsWith("mcp.tool")[0];
+    expect(line?.outcome).toBe("error");
+    expect(line?.error).toBe("Error");
+    expect(String(line?.error)).not.toContain("kv_write_failed");
   });
 
   it("rejects a note longer than 300 characters", async () => {

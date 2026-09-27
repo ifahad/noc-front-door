@@ -20,11 +20,14 @@ const NOT_FOUND = "I couldn't find that branch for your organisation.";
 const INCIDENT_LOOKUP_FAIL = "I can't check incidents right now.";
 const NO_TICKET = "I don't see an open ticket for that branch.";
 const WRITE_NOT_ALLOWED = "I can only add notes to tickets for your own site.";
+const WRITE_FAIL = "I can't update tickets right now.";
 const OPS_WRITE_REJECTED = "add_ticket_note is not available in ops scope.";
 const OPS_ARG_REQUIRED = "This tool needs a site or ticket id in ops scope.";
 
 export const MCP_HOP = "mcp";
 const INCIDENT_DEADLINE_MS = 1500;
+
+export type McpToolOutcome = "ok" | "fallback" | "denied" | "error";
 
 export interface ToolCtx {
   scope: "session" | "ops";
@@ -61,46 +64,25 @@ type ToolResult = {
   content: { type: "text"; text: string }[];
   structuredContent: Record<string, unknown>;
   isError?: true;
+  outcome: McpToolOutcome;
+  errorName?: string;
 };
 
 type ToolHandler = (args: Record<string, unknown>) => Promise<ToolResult>;
 
-function wrapTool(ctx: ToolCtx, name: string, handler: ToolHandler): ToolHandler {
-  return async (args) => {
-    const started = ctx.now();
-    try {
-      const result = await handler(args);
-      logEvent("mcp.tool", {
-        hop: MCP_HOP,
-        tool: name,
-        trace_id: traceIdOf(ctx),
-        outcome: result.isError === true ? "denied" : "ok",
-        total_ms: ctx.now() - started,
-      });
-      return result;
-    } catch (err) {
-      logEvent("mcp.tool", {
-        hop: MCP_HOP,
-        tool: name,
-        trace_id: traceIdOf(ctx),
-        outcome: "error",
-        error: err instanceof Error ? err.message : String(err),
-        total_ms: ctx.now() - started,
-      });
-      throw err;
-    }
-  };
-}
-
 function spoken(input: {
   speech: string;
-  structured: Record<string, unknown>;
+  structured?: Record<string, unknown>;
   isError?: true;
+  outcome: McpToolOutcome;
+  errorName?: string;
 }): ToolResult {
   return {
     content: [{ type: "text", text: input.speech }],
-    structuredContent: input.structured,
+    structuredContent: input.structured ?? NONE_IDS,
     ...(input.isError === true ? { isError: true } : {}),
+    outcome: input.outcome,
+    ...(input.errorName !== undefined ? { errorName: input.errorName } : {}),
   };
 }
 
@@ -136,15 +118,18 @@ function denyLog(
   });
 }
 
-type SiteResolution =
-  | { kind: "site"; site: Site }
-  | { kind: "not_yours" }
+type NotResolvable =
+  | { kind: "not_yours"; reason: string; target: string | null }
+  | { kind: "no_site" }
   | { kind: "not_found" }
   | { kind: "missing" };
+type SiteResolution = { kind: "site"; site: Site } | NotResolvable;
+type TicketResolution =
+  | { kind: "ticket"; ticketId: string | null; site: Site }
+  | NotResolvable;
 
 async function resolveSiteArg(
   ctx: ToolCtx,
-  tool: string,
   raw: string | undefined,
 ): Promise<SiteResolution> {
   const arg = usable(raw) ? raw : null;
@@ -152,20 +137,18 @@ async function resolveSiteArg(
     const site = await ctx.adapter.getSite(arg);
     if (site === null) return { kind: "not_found" };
     if (ctx.scope === "session" && !canRead(sessionOf(ctx) as Session, site)) {
-      denyLog(ctx, tool, "site_not_read", arg);
-      return { kind: "not_yours" };
+      return { kind: "not_yours", reason: "site_not_read", target: arg };
     }
     return { kind: "site", site };
   }
   if (ctx.scope === "ops") return { kind: "missing" };
   const session = sessionOf(ctx) as Session | null;
   const defaultSiteId = session !== null ? session.sites[0] : undefined;
-  if (!usable(defaultSiteId)) return { kind: "not_yours" };
+  if (!usable(defaultSiteId)) return { kind: "no_site" };
   const site = await ctx.adapter.getSite(defaultSiteId);
   if (site === null) return { kind: "not_found" };
   if (!canRead(session as Session, site)) {
-    denyLog(ctx, tool, "site_not_read", defaultSiteId);
-    return { kind: "not_yours" };
+    return { kind: "not_yours", reason: "site_not_read", target: defaultSiteId };
   }
   return { kind: "site", site };
 }
@@ -222,15 +205,8 @@ function ticketSpeech(ticket: Ticket): string {
   return `Ticket ${spellId(ticket.id)} is priority ${ticket.priority.slice(1)}; engineer response due by ${dueBy}.`;
 }
 
-type TicketResolution =
-  | { kind: "ticket"; ticketId: string | null; site: Site }
-  | { kind: "not_yours" }
-  | { kind: "not_found" }
-  | { kind: "missing" };
-
 async function resolveTicketArg(
   ctx: ToolCtx,
-  tool: string,
   raw: string | undefined,
 ): Promise<TicketResolution> {
   const arg = usable(raw) ? raw : null;
@@ -248,31 +224,71 @@ async function resolveTicketArg(
     }
     if (site === null) {
       if (ctx.scope === "session") {
-        denyLog(ctx, tool, "ticket_not_in_scope", arg);
-        return { kind: "not_yours" };
+        return { kind: "not_yours", reason: "ticket_not_in_scope", target: arg };
       }
       return { kind: "not_found" };
-    }
-    if (ctx.scope === "session" && !canRead(sessionOf(ctx) as Session, site)) {
-      denyLog(ctx, tool, "site_not_read", arg);
-      return { kind: "not_yours" };
     }
     return { kind: "ticket", ticketId: arg, site };
   }
   if (ctx.scope === "ops") return { kind: "missing" };
   const session = sessionOf(ctx) as Session | null;
   const defaultSiteId = session !== null ? session.sites[0] : undefined;
-  if (!usable(defaultSiteId)) return { kind: "not_yours" };
+  if (!usable(defaultSiteId)) return { kind: "no_site" };
   const site = await ctx.adapter.getSite(defaultSiteId);
   if (site === null) return { kind: "not_found" };
   if (!canRead(session as Session, site)) {
-    denyLog(ctx, tool, "site_not_read", defaultSiteId);
-    return { kind: "not_yours" };
+    return { kind: "not_yours", reason: "site_not_read", target: defaultSiteId };
   }
   return { kind: "ticket", ticketId: null, site };
 }
 
+function refusalOf(ctx: ToolCtx, tool: string, resolved: NotResolvable): ToolResult {
+  switch (resolved.kind) {
+    case "not_yours":
+      denyLog(ctx, tool, resolved.reason, resolved.target);
+      return spoken({ speech: NOT_YOUR_SITE, outcome: "denied" });
+    case "no_site":
+      return spoken({ speech: NOT_YOUR_SITE, outcome: "fallback" });
+    case "not_found":
+      return spoken({ speech: NOT_FOUND, outcome: "ok" });
+    case "missing":
+      return spoken({
+        speech: OPS_ARG_REQUIRED,
+        isError: true,
+        outcome: "error",
+      });
+  }
+}
+
 export function registerMcpTools(server: McpServer, ctx: ToolCtx): void {
+  const wrap = (name: string, handler: ToolHandler): ToolHandler => {
+    return async (args) => {
+      const started = ctx.now();
+      try {
+        const result = await handler(args);
+        logEvent("mcp.tool", {
+          hop: MCP_HOP,
+          tool: name,
+          trace_id: traceIdOf(ctx),
+          outcome: result.outcome,
+          ...(result.errorName !== undefined ? { error: result.errorName } : {}),
+          total_ms: ctx.now() - started,
+        });
+        return result;
+      } catch (err) {
+        logEvent("mcp.tool", {
+          hop: MCP_HOP,
+          tool: name,
+          trace_id: traceIdOf(ctx),
+          outcome: "error",
+          error: err instanceof Error ? err.name : "Error",
+          total_ms: ctx.now() - started,
+        });
+        throw err;
+      }
+    };
+  };
+
   server.registerTool(
     "find_site",
     {
@@ -280,9 +296,11 @@ export function registerMcpTools(server: McpServer, ctx: ToolCtx): void {
         "Call when the caller names a branch or a garbled site id (e.g. 'the Yasmin branch', 'R U H one one four') and you need its site id. Resolves only branches that belong to the caller's organisation.",
       inputSchema: TOOL_SCHEMAS.find_site.shape,
     },
-    wrapTool(ctx, "find_site", async (raw) => {
+    wrap("find_site", async (raw) => {
       const args = raw as { description: string };
-      if (needsFallback(ctx)) return spoken({ speech: SESSION_FALLBACK, structured: NONE_IDS });
+      if (needsFallback(ctx)) {
+        return spoken({ speech: SESSION_FALLBACK, outcome: "fallback" });
+      }
       const scope = ctx.scope;
       const customerId = scope === "session" ? (sessionOf(ctx) as Session).customer_id : null;
       const site =
@@ -291,7 +309,9 @@ export function registerMcpTools(server: McpServer, ctx: ToolCtx): void {
           : customerId !== null
             ? await ctx.adapter.resolveSite(args.description, customerId)
             : null;
-      if (site === null) return spoken({ speech: NOT_FOUND, structured: NONE_IDS });
+      if (site === null) {
+        return spoken({ speech: NOT_FOUND, outcome: "ok" });
+      }
       return spoken({
         speech: `That's ${site.label}, site ${spellId(site.site_id)}.`,
         structured: {
@@ -300,6 +320,7 @@ export function registerMcpTools(server: McpServer, ctx: ToolCtx): void {
           region: site.region,
           region_label: site.region_label,
         },
+        outcome: "ok",
       });
     }),
   );
@@ -311,11 +332,13 @@ export function registerMcpTools(server: McpServer, ctx: ToolCtx): void {
         "Call to check whether a branch is reachable from our monitoring. Without site_id it uses the caller's own site.",
       inputSchema: TOOL_SCHEMAS.get_site_status.shape,
     },
-    wrapTool(ctx, "get_site_status", async (raw) => {
+    wrap("get_site_status", async (raw) => {
       const args = raw as { site_id?: string };
-      if (needsFallback(ctx)) return spoken({ speech: SESSION_FALLBACK, structured: NONE_IDS });
-      const resolved = await resolveSiteArg(ctx, "get_site_status", args.site_id);
-      if (resolved.kind !== "site") return refusal(resolved);
+      if (needsFallback(ctx)) {
+        return spoken({ speech: SESSION_FALLBACK, outcome: "fallback" });
+      }
+      const resolved = await resolveSiteArg(ctx, args.site_id);
+      if (resolved.kind !== "site") return refusalOf(ctx, "get_site_status", resolved);
       const status = await ctx.adapter.getNmsStatus(resolved.site.site_id);
       return spoken({
         speech: nmsSpeech(resolved.site, status),
@@ -327,6 +350,7 @@ export function registerMcpTools(server: McpServer, ctx: ToolCtx): void {
           alarms: status.alarms.join("; ") || "none",
           device: status.device || "none",
         },
+        outcome: "ok",
       });
     }),
   );
@@ -338,11 +362,15 @@ export function registerMcpTools(server: McpServer, ctx: ToolCtx): void {
         "Call before opening a ticket to see whether a regional incident already covers the branch. Without site_id it uses the caller's own site.",
       inputSchema: TOOL_SCHEMAS.check_known_incidents.shape,
     },
-    wrapTool(ctx, "check_known_incidents", async (raw) => {
+    wrap("check_known_incidents", async (raw) => {
       const args = raw as { site_id?: string };
-      if (needsFallback(ctx)) return spoken({ speech: SESSION_FALLBACK, structured: NONE_IDS });
-      const resolved = await resolveSiteArg(ctx, "check_known_incidents", args.site_id);
-      if (resolved.kind !== "site") return refusal(resolved);
+      if (needsFallback(ctx)) {
+        return spoken({ speech: SESSION_FALLBACK, outcome: "fallback" });
+      }
+      const resolved = await resolveSiteArg(ctx, args.site_id);
+      if (resolved.kind !== "site") {
+        return refusalOf(ctx, "check_known_incidents", resolved);
+      }
       const outcome = await deadline(
         ctx.actors.region(resolved.site.region).getIncident({
           trace_id: traceIdOf(ctx),
@@ -351,13 +379,14 @@ export function registerMcpTools(server: McpServer, ctx: ToolCtx): void {
         "mcp.getIncident",
       );
       if (!outcome.ok) {
-        return spoken({ speech: INCIDENT_LOOKUP_FAIL, structured: NONE_IDS });
+        return spoken({ speech: INCIDENT_LOOKUP_FAIL, outcome: "fallback" });
       }
       const incident = outcome.value.incident;
       if (incident === null) {
         return spoken({
           speech: "No known incidents in your area.",
           structured: { ...NONE_IDS, site_count: "0" },
+          outcome: "ok",
         });
       }
       const siteCount = Object.keys(incident.sites).length;
@@ -371,6 +400,7 @@ export function registerMcpTools(server: McpServer, ctx: ToolCtx): void {
           region: resolved.site.region,
           region_label: resolved.site.region_label,
         },
+        outcome: "ok",
       });
     }),
   );
@@ -382,11 +412,15 @@ export function registerMcpTools(server: McpServer, ctx: ToolCtx): void {
         "Call to read an open ticket for the caller's own site (default) or, with ticket_id, any ticket of the caller's organisation. Gives priority and the engineer response target.",
       inputSchema: TOOL_SCHEMAS.get_ticket_status.shape,
     },
-    wrapTool(ctx, "get_ticket_status", async (raw) => {
+    wrap("get_ticket_status", async (raw) => {
       const args = raw as { ticket_id?: string };
-      if (needsFallback(ctx)) return spoken({ speech: SESSION_FALLBACK, structured: NONE_IDS });
-      const resolved = await resolveTicketArg(ctx, "get_ticket_status", args.ticket_id);
-      if (resolved.kind !== "ticket") return refusal(resolved);
+      if (needsFallback(ctx)) {
+        return spoken({ speech: SESSION_FALLBACK, outcome: "fallback" });
+      }
+      const resolved = await resolveTicketArg(ctx, args.ticket_id);
+      if (resolved.kind !== "ticket") {
+        return refusalOf(ctx, "get_ticket_status", resolved);
+      }
       const result = await ctx.actors.site(resolved.site.site_id).getTicket({
         trace_id: traceIdOf(ctx),
       });
@@ -395,7 +429,11 @@ export function registerMcpTools(server: McpServer, ctx: ToolCtx): void {
         ticket === null ||
         (resolved.ticketId !== null && ticket.id !== resolved.ticketId)
       ) {
-        return spoken({ speech: NO_TICKET, structured: NONE_IDS });
+        return spoken({
+          speech: NO_TICKET,
+          structured: { ...NONE_IDS, ticket: "none" },
+          outcome: "ok",
+        });
       }
       return spoken({
         speech: ticketSpeech(ticket),
@@ -408,6 +446,7 @@ export function registerMcpTools(server: McpServer, ctx: ToolCtx): void {
           ),
           site_id: resolved.site.site_id,
         },
+        outcome: "ok",
       });
     }),
   );
@@ -419,27 +458,39 @@ export function registerMcpTools(server: McpServer, ctx: ToolCtx): void {
         "Call when the caller wants to add an update to an existing ticket for their own site (e.g. 'we got the power back'). Never call this for ops requests.",
       inputSchema: TOOL_SCHEMAS.add_ticket_note.shape,
     },
-    wrapTool(ctx, "add_ticket_note", async (raw) => {
+    wrap("add_ticket_note", async (raw) => {
       const args = raw as { ticket_id?: string; note: string };
       if (ctx.scope === "ops") {
         denyLog(ctx, "add_ticket_note", "ops_write", null);
         return spoken({
           speech: OPS_WRITE_REJECTED,
-          structured: NONE_IDS,
           isError: true,
+          outcome: "denied",
         });
       }
-      if (needsFallback(ctx)) return spoken({ speech: SESSION_FALLBACK, structured: NONE_IDS });
-      const session = sessionOf(ctx) as Session;
-      const resolved = await resolveTicketArg(ctx, "add_ticket_note", args.ticket_id);
-      if (resolved.kind === "not_yours") {
-        denyLog(ctx, "add_ticket_note", "site_not_writable", args.ticket_id ?? null);
-        return spoken({ speech: WRITE_NOT_ALLOWED, structured: NONE_IDS });
+      if (needsFallback(ctx)) {
+        return spoken({ speech: SESSION_FALLBACK, outcome: "fallback" });
       }
-      if (resolved.kind !== "ticket") return refusal(resolved);
+      const session = sessionOf(ctx) as Session;
+      const resolved = await resolveTicketArg(ctx, args.ticket_id);
+      if (resolved.kind === "not_yours") {
+        denyLog(ctx, "add_ticket_note", "site_not_writable", resolved.target);
+        return spoken({ speech: WRITE_NOT_ALLOWED, outcome: "denied" });
+      }
+      if (resolved.kind === "no_site") {
+        return spoken({ speech: WRITE_NOT_ALLOWED, outcome: "fallback" });
+      }
+      if (resolved.kind !== "ticket") {
+        return refusalOf(ctx, "add_ticket_note", resolved);
+      }
       if (!canWrite(session, resolved.site.site_id)) {
-        denyLog(ctx, "add_ticket_note", "site_not_writable", args.ticket_id ?? resolved.site.site_id);
-        return spoken({ speech: WRITE_NOT_ALLOWED, structured: NONE_IDS });
+        denyLog(
+          ctx,
+          "add_ticket_note",
+          "site_not_writable",
+          args.ticket_id ?? resolved.site.site_id,
+        );
+        return spoken({ speech: WRITE_NOT_ALLOWED, outcome: "denied" });
       }
       let ticketId = resolved.ticketId;
       if (ticketId === null) {
@@ -447,7 +498,11 @@ export function registerMcpTools(server: McpServer, ctx: ToolCtx): void {
           trace_id: traceIdOf(ctx),
         });
         if (existing.ticket === null) {
-          return spoken({ speech: NO_TICKET, structured: NONE_IDS });
+          return spoken({
+            speech: NO_TICKET,
+            structured: { ...NONE_IDS, ticket: "none" },
+            outcome: "ok",
+          });
         }
         ticketId = existing.ticket.id;
       }
@@ -466,23 +521,22 @@ export function registerMcpTools(server: McpServer, ctx: ToolCtx): void {
             added: added.added ? "true" : "repeat",
             site_id: resolved.site.site_id,
           },
+          outcome: "ok",
         });
-      } catch {
-        return spoken({ speech: NO_TICKET, structured: NONE_IDS });
+      } catch (err) {
+        if (err instanceof Error && err.message === "ticket_mismatch") {
+          return spoken({
+            speech: NO_TICKET,
+            structured: { ...NONE_IDS, ticket: "none" },
+            outcome: "ok",
+          });
+        }
+        return spoken({
+          speech: WRITE_FAIL,
+          outcome: "error",
+          errorName: err instanceof Error ? err.name : "Error",
+        });
       }
     }),
   );
-}
-
-function refusal(
-  resolved: { kind: "not_yours" } | { kind: "not_found" } | { kind: "missing" },
-): ToolResult {
-  switch (resolved.kind) {
-    case "not_yours":
-      return spoken({ speech: NOT_YOUR_SITE, structured: NONE_IDS });
-    case "not_found":
-      return spoken({ speech: NOT_FOUND, structured: NONE_IDS });
-    case "missing":
-      return spoken({ speech: OPS_ARG_REQUIRED, structured: NONE_IDS, isError: true });
-  }
 }
