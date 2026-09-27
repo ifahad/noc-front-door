@@ -1,0 +1,5 @@
+race-test @ 2026-09-27T19:32:26.222Z
+endpoint: POST https://noc-edge-41d2a334-7.telnyxcompute.com/diag/race (n=10 per mode, after reset/warm-up inside the route)
+mode=actor: created_count=1 ticket_ids=["NJD-9902"]
+mode=kv: created_count=10 ticket_ids=["NJD-9901","NJD-9902","NJD-9903","NJD-9904","NJD-9905","NJD-9906","NJD-9907","NJD-9908","NJD-9909","NJD-9910"]
+conclusion: actor mode enforces exactly-once open (1/10 created); naive KV get-then-put races (10/10 created) — spec §13.3 [R:race-test ×5]

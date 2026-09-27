@@ -69,7 +69,7 @@ Per-task findings caught by the independent reviewers (from the SDD ledgers):
 | T12b recalibration | The implementer report **falsely claimed a test existed** for the `/dv` SAFE_FLAGS fallback branch — the fix added the missing router test |
 | T12c concurrency | 0 Critical/Important; the callback latency threshold was tightened 2500→2000 ms (the specced bound could not fail on the old code) |
 
-Spend: the $5.00 promo was exhausted by ~05:52 (balance $0.26 at the hard stop; the R18 credit floor stopped dispatches at $0.35/$0.25); Fahad topped up **$25.24**. Measured ≈ **$0.25–0.30** per GLM-5.3-Flash implementer run (T11: 527k fresh input + 6.16M cached + 60k out tokens); fix rounds **$0.02–$0.14**.
+Spend: the $5.00 promo was exhausted by ~05:52 (balance $0.26 at the hard stop; the R18 credit floor stopped dispatches at $0.35/$0.25); Fahad topped up **$25** (resulting balance $25.24). Measured ≈ **$0.25–0.30** per GLM-5.3-Flash implementer run (T11: 527k fresh input + 6.16M cached + 60k out tokens); fix rounds **$0.02–$0.14**.
 
 What worked:
 
