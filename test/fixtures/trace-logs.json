@@ -1,0 +1,40 @@
+[
+  {
+    "record_type": "compute_func_invocation_log",
+    "method": "POST",
+    "path": "/dv",
+    "status_code": 200,
+    "duration_ms": 911
+  },
+  {
+    "message": "{\"ts\":\"2026-09-27T10:00:00.005Z\",\"lvl\":\"info\",\"svc\":\"noc-edge\",\"hop\":\"kv\",\"evt\":\"kv.op\",\"trace_id\":\"t-fix-1\",\"total_ms\":1400,\"outcome\":\"ok\",\"k\":\"flag/actor_mode\",\"kv_ms\":1400}"
+  },
+  {
+    "message": "{\"ts\":\"2026-09-27T10:00:00.010Z\",\"lvl\":\"info\",\"svc\":\"noc-edge\",\"hop\":\"dv\",\"evt\":\"dv.request\",\"trace_id\":\"t-fix-1\",\"total_ms\":2,\"outcome\":\"ok\",\"caller\":\"+1555****001\"}"
+  },
+  {
+    "message": "{\"ts\":\"2026-09-27T10:00:00.120Z\",\"lvl\":\"info\",\"svc\":\"noc-edge\",\"hop\":\"mcp\",\"evt\":\"mcp.request\",\"trace_id\":\"t-fix-1\",\"total_ms\":12,\"outcome\":\"ok\",\"conv_id\":\"cv-fixture-1\"}"
+  },
+  {
+    "message": "{\"ts\":\"2026-09-27T10:00:00.480Z\",\"lvl\":\"info\",\"svc\":\"noc-edge\",\"hop\":\"tool\",\"evt\":\"tool.open_ticket\",\"trace_id\":\"t-fix-1\",\"total_ms\":95,\"outcome\":\"ok\",\"tool\":\"open_ticket\",\"status\":200}"
+  },
+  {
+    "message": "{\"ts\":\"2026-09-27T10:00:00.520Z\",\"lvl\":\"info\",\"svc\":\"noc-edge\",\"hop\":\"actor\",\"evt\":\"actor.call\",\"trace_id\":\"t-fix-1\",\"total_ms\":210,\"outcome\":\"ok\",\"actor_ms\":210,\"site\":\"TST-001\"}"
+  },
+  {
+    "message": "{\"ts\":\"2026-09-27T10:00:00.900Z\",\"lvl\":\"warn\",\"svc\":\"noc-edge\",\"hop\":\"dv\",\"evt\":\"dv.late\",\"trace_id\":\"t-fix-1\",\"total_ms\":2600,\"outcome\":\"fallback\",\"route_hint\":\"site_down\",\"fault_injected\":true}"
+  },
+  {
+    "message": "{\"ts\":\"2026-09-27T10:00:00.300Z\",\"lvl\":\"info\",\"svc\":\"noc-edge\",\"hop\":\"dv\",\"evt\":\"dv.route\",\"trace_id\":\"t-other\",\"total_ms\":3,\"outcome\":\"ok\",\"route_hint\":\"general\"}"
+  },
+  {
+    "message": "panic: boom (not a json log line)"
+  },
+  {
+    "record_type": "compute_func_invocation_log",
+    "method": "GET",
+    "path": "/ops/status",
+    "status_code": 200,
+    "duration_ms": 14
+  }
+]
