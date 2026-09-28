@@ -47,6 +47,23 @@ export function createPagingHealth({ stallAfter = DEFAULT_STALL_AFTER } = {}) {
   };
 }
 
+// Verdict for one /ops/health/deep probe. An actor or sync hang means the
+// call path is wedged, so the probe fails; a kv-only timeout keeps ok but
+// flags degraded. The detail never echoes request or response bodies.
+export function classifyProbe(httpOk, body) {
+  const timedOut = Array.isArray(body?.timed_out) ? body.timed_out.map(String) : [];
+  const hung = timedOut.some((name) => name === 'actor' || name === 'sync');
+  const ok = httpOk === true && body?.ok === true && !hung;
+  const slow = Array.isArray(body?.slow) ? body.slow.map(String) : [];
+  const degraded = body?.degraded === true;
+  return {
+    ok,
+    degraded,
+    slow,
+    detail: !ok ? (hung ? 'actor timed out' : httpOk ? 'ok:false' : 'http failed') : null,
+  };
+}
+
 export function createProber({ failThreshold = 2 } = {}) {
   if (!Number.isInteger(failThreshold) || failThreshold < 1) {
     throw new Error('failThreshold must be a positive integer');

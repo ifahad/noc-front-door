@@ -2,7 +2,7 @@
 import { execFile } from 'node:child_process';
 import os from 'node:os';
 import { loadDotEnv } from './lib/telnyx.mjs';
-import { createPagingHealth, createProber, apiErrorMessage, planPaging } from './lib/prober-core.mjs';
+import { classifyProbe, createPagingHealth, createProber, apiErrorMessage, planPaging } from './lib/prober-core.mjs';
 
 const DEFAULT_EDGE_URL = 'https://noc-edge-41d2a334-7.telnyxcompute.com';
 const PROBE_TIMEOUT_MS = 8000;
@@ -66,11 +66,11 @@ async function probe(edgeUrl, opsToken) {
     } catch {
       body = null;
     }
-    const ok = res.ok && body?.ok === true;
-    const degraded = body?.degraded === true;
-    const slow = Array.isArray(body?.slow) ? body.slow.map(String) : [];
-    const detail = ok ? null : `http ${res.status}${body?.ok === false ? ' (ok:false)' : ''}`;
-    return { ok, ms: Date.now() - started, degraded, slow, detail };
+    const verdict = classifyProbe(res.ok, body);
+    const detail = res.ok
+      ? verdict.detail
+      : `http ${res.status}${body?.ok === false ? ' (ok:false)' : ''}`;
+    return { ok: verdict.ok, ms: Date.now() - started, degraded: verdict.degraded, slow: verdict.slow, detail };
   } catch (err) {
     const detail = controller.signal.aborted
       ? `timeout after ${PROBE_TIMEOUT_MS} ms`

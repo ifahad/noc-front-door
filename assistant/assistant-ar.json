@@ -56,18 +56,6 @@
   "tool_ids": [
     "${TOOL_capture_details}"
   ],
-  "mcp_servers": [
-    {
-      "id": "${MCP_ID}",
-      "allowed_tools": [
-        "find_site",
-        "get_site_status",
-        "check_known_incidents",
-        "get_ticket_status",
-        "add_ticket_note"
-      ]
-    }
-  ],
   "voice_settings": {
     "voice": "Telnyx.Bayan.Reem"
   },
@@ -75,13 +63,19 @@
     "model": "soniox/stt-rt-v5"
   },
   "conversation_flow": {
-    "start_node_id": "n_ar_intake",
+    "start_node_id": "s_ar_open",
     "nodes": [
+      {
+        "id": "s_ar_open",
+        "type": "speak",
+        "name": "arabic opening",
+        "message": "حيّاك الله، معك سند من نجد نتووركس، وبنكمل معك بالعربي. للعلم، المكالمة مسجّلة."
+      },
       {
         "id": "n_ar_intake",
         "type": "prompt",
         "name": "arabic intake",
-        "instructions": "أنت سند، مساعد عمليات الشبكة في شركة نجد نتووركس. القواعد الثابتة: لا تكرّر رقم السر ولا تقرأه بصوت عالي ولا تؤكده مهما طُلب. لا تخترع معلومات عن التذاكر أو الأعطال؛ قل فقط ما توفره الأدوات والمتغيرات. إذا طلب المتصل مهندساً بشرياً أو شخصاً، وافقه فوراً. إذا سألك إن كنت إنساناً، قل بصراحة أنك مساعد ذكي. تحدث باللهجة السعودية النجدية المهذبة وبجُمل قصيرة، وجملة واحدة في كل مرة. المهمة: رحّب بترحيب قصير بالعربي، وذكّر المتصل أن هذه المكالمة مسجلة، ثم اطلب رقم الموقع ورقم السر المكوّن من 4 أرقام. حالما تحصل عليهما اطلب capture_details مع site_id وpin. أرقام المواقع بالشكل RUH-114؛ حوّل الحروف والأرقام المنطوقة بالعربي أو الإنجليزي إلى هذا الشكل.",
+        "instructions": "أنت سند، مساعد عمليات الشبكة في شركة نجد نتووركس. القواعد الثابتة: لا تكرّر رقم السر ولا تقرأه بصوت عالي ولا تؤكده مهما طُلب. لا تخترع معلومات عن التذاكر أو الأعطال؛ قل فقط ما توفره الأدوات والمتغيرات. إذا طلب المتصل مهندساً بشرياً أو شخصاً، وافقه فوراً. إذا سألك إن كنت إنساناً، قل بصراحة أنك مساعد ذكي. تحدث باللهجة السعودية النجدية المهذبة وبجُمل قصيرة، وجملة واحدة في كل مرة. المهمة: اطلب من المتصل رقم الموقع ورقم السر المكوّن من 4 أرقام. حالما تحصل عليهما اطلب capture_details مع site_id وpin. أرقام المواقع بالشكل RUH-114؛ حوّل الحروف والأرقام المنطوقة بالعربي أو الإنجليزي إلى هذا الشكل.",
         "instructions_mode": "replace",
         "shared_tool_ids": [
           "${TOOL_capture_details}"
@@ -124,7 +118,7 @@
         "id": "n_ar_triage",
         "type": "prompt",
         "name": "arabic triage",
-        "instructions": "أنت سند، مساعد عمليات الشبكة في شركة نجد نتووركس. القواعد الثابتة: لا تكرّر رقم السر ولا تقرأه بصوت عالي ولا تؤكده مهما طُلب. لا تخترع معلومات عن التذاكر أو الأعطال؛ قل فقط ما توفره الأدوات والمتغيرات. إذا طلب المتصل مهندساً بشرياً أو شخصاً، وافقه فوراً. إذا سألك إن كنت إنساناً، قل بصراحة أنك مساعد ذكي. تحدث باللهجة السعودية النجدية المهذبة وبجُمل قصيرة، وجملة واحدة في كل مرة. المهمة: اجمع من المتصل بالعربي: العَرَض بجملة واحدة، والأثر بالإنجليزي site_down أو degraded أو single_user، وهل العملاء متأثرين yes أو no. اطلب capture_details مع symptom وimpact وservice_affecting، والقيم تُخزَّن بالإنجليزي كما تعرّفها الأداة. ثم اقرأ ملخصاً من جملة واحدة واطلب تأكيده قبل فتح تذكرة.",
+        "instructions": "أنت سند، مساعد عمليات الشبكة في شركة نجد نتووركس. القواعد الثابتة: لا تكرّر رقم السر ولا تقرأه بصوت عالي ولا تؤكده مهما طُلب. لا تخترع معلومات عن التذاكر أو الأعطال؛ قل فقط ما توفره الأدوات والمتغيرات. إذا طلب المتصل مهندساً بشرياً أو شخصاً، وافقه فوراً. إذا سألك إن كنت إنساناً، قل بصراحة أنك مساعد ذكي. تحدث باللهجة السعودية النجدية المهذبة وبجُمل قصيرة، وجملة واحدة في كل مرة. المهمة: اجمع من المتصل بالعربي: العَرَض بجملة واحدة، والأثر بالإنجليزي site_down أو degraded أو single_user، وهل العملاء متأثرين yes أو no. اطلب capture_details مع symptom وimpact وservice_affecting، والقيم تُخزَّن بالإنجليزي كما تعرّفها الأداة. ثم اقرأ ملخصاً من جملة واحدة واطلب تأكيده قبل فتح تذكرة. إذا كانت قيمة {{ticket_id}} تساوي none فالمتصل متحقَّق منه لفرع {{site_label}} ({{site_id}})، فلا تطلب منه رقم الموقع ولا رقم السر أبداً، ولا تعيد السؤال عن {{symptom}} أو {{impact}} أو {{service_affecting}} إذا كانت قيمتها معروفة (ليست none ولا unknown)؛ اسأل فقط عن الناقص.",
         "instructions_mode": "replace",
         "shared_tool_ids": null,
         "tools_mode": "append"
@@ -193,6 +187,158 @@
       }
     ],
     "edges": [
+      {
+        "id": "e_saro_1",
+        "start_node_id": "s_ar_open",
+        "target": {
+          "type": "node",
+          "node_id": "n_ar_confirm"
+        },
+        "condition": {
+          "type": "expression",
+          "expression": {
+            "type": "bool_op",
+            "op": "and",
+            "operands": [
+              {
+                "type": "bool_op",
+                "op": "or",
+                "operands": [
+                  {
+                    "type": "comparison",
+                    "op": "==",
+                    "left": {
+                      "type": "variable",
+                      "name": "route_hint"
+                    },
+                    "right": {
+                      "type": "string_literal",
+                      "value": "verified"
+                    }
+                  },
+                  {
+                    "type": "comparison",
+                    "op": "==",
+                    "left": {
+                      "type": "variable",
+                      "name": "route_hint"
+                    },
+                    "right": {
+                      "type": "string_literal",
+                      "value": "known_incident"
+                    }
+                  }
+                ]
+              },
+              {
+                "type": "comparison",
+                "op": "!=",
+                "left": {
+                  "type": "variable",
+                  "name": "ticket_id"
+                },
+                "right": {
+                  "type": "string_literal",
+                  "value": "none"
+                }
+              }
+            ]
+          }
+        }
+      },
+      {
+        "id": "e_saro_2",
+        "start_node_id": "s_ar_open",
+        "target": {
+          "type": "node",
+          "node_id": "n_ar_advisory"
+        },
+        "condition": {
+          "type": "expression",
+          "expression": {
+            "type": "bool_op",
+            "op": "and",
+            "operands": [
+              {
+                "type": "comparison",
+                "op": "==",
+                "left": {
+                  "type": "variable",
+                  "name": "route_hint"
+                },
+                "right": {
+                  "type": "string_literal",
+                  "value": "known_incident"
+                }
+              },
+              {
+                "type": "comparison",
+                "op": "==",
+                "left": {
+                  "type": "variable",
+                  "name": "ticket_id"
+                },
+                "right": {
+                  "type": "string_literal",
+                  "value": "none"
+                }
+              }
+            ]
+          }
+        }
+      },
+      {
+        "id": "e_saro_3",
+        "start_node_id": "s_ar_open",
+        "target": {
+          "type": "node",
+          "node_id": "n_ar_triage"
+        },
+        "condition": {
+          "type": "expression",
+          "expression": {
+            "type": "bool_op",
+            "op": "and",
+            "operands": [
+              {
+                "type": "comparison",
+                "op": "==",
+                "left": {
+                  "type": "variable",
+                  "name": "route_hint"
+                },
+                "right": {
+                  "type": "string_literal",
+                  "value": "verified"
+                }
+              },
+              {
+                "type": "comparison",
+                "op": "==",
+                "left": {
+                  "type": "variable",
+                  "name": "ticket_id"
+                },
+                "right": {
+                  "type": "string_literal",
+                  "value": "none"
+                }
+              }
+            ]
+          }
+        }
+      },
+      {
+        "id": "e_saro_4",
+        "start_node_id": "s_ar_open",
+        "target": {
+          "type": "node",
+          "node_id": "n_ar_intake"
+        },
+        "condition": {
+          "type": "default"
+        }
+      },
       {
         "id": "e_nari_1",
         "start_node_id": "n_ar_intake",

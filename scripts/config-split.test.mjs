@@ -111,14 +111,107 @@ test('both assistants share the calmer turn-taking interruption settings', () =>
   assert.deepEqual(ar.interruption_settings, INTERRUPTION_SETTINGS);
 });
 
-test('the Arabic flow starts at n_ar_intake and has only Arabic nodes', () => {
+test('the Arabic flow starts at s_ar_open and has only Arabic nodes', () => {
   const flow = ar.conversation_flow;
-  assert.equal(flow.start_node_id, 'n_ar_intake');
-  assert.equal(flow.nodes.length, 14);
+  assert.equal(flow.start_node_id, 's_ar_open');
+  assert.equal(flow.nodes.length, 15);
   for (const n of flow.nodes) {
-    assert.ok(/^(n_ar_|t_ar_)/.test(n.id), `unexpected node id ${n.id}`);
+    assert.ok(/^(n_ar_|t_ar_|s_ar_)/.test(n.id), `unexpected node id ${n.id}`);
   }
-  assert.equal(flow.edges.length, 32);
+  assert.equal(flow.edges.length, 36);
+});
+
+test('the Arabic opening speaks first and discloses the recording', () => {
+  const node = ar.conversation_flow.nodes[0];
+  assert.equal(node.id, 's_ar_open');
+  assert.equal(node.type, 'speak');
+  assert.equal(node.name, 'arabic opening');
+  assert.equal(
+    node.message,
+    'حيّاك الله، معك سند من نجد نتووركس، وبنكمل معك بالعربي. للعلم، المكالمة مسجّلة.',
+  );
+});
+
+const cmp = (op, name, value) => ({
+  type: 'comparison',
+  op,
+  left: { type: 'variable', name },
+  right: { type: 'string_literal', value },
+});
+
+test('s_ar_open routes by the carried state with exactly one default, first in edges', () => {
+  const flow = ar.conversation_flow;
+  const edges = flow.edges.filter((e) => e.start_node_id === 's_ar_open');
+  assert.deepEqual(
+    edges.map((e) => e.id),
+    ['e_saro_1', 'e_saro_2', 'e_saro_3', 'e_saro_4'],
+  );
+  assert.deepEqual(
+    flow.edges.slice(0, 4).map((e) => e.id),
+    ['e_saro_1', 'e_saro_2', 'e_saro_3', 'e_saro_4'],
+  );
+  assert.equal(edges[0].target.node_id, 'n_ar_confirm');
+  assert.equal(edges[1].target.node_id, 'n_ar_advisory');
+  assert.equal(edges[2].target.node_id, 'n_ar_triage');
+  assert.equal(edges[3].target.node_id, 'n_ar_intake');
+  assert.equal(edges.filter((e) => e.condition?.type === 'default').length, 1);
+  assert.deepEqual(edges[3].condition, { type: 'default' });
+  assert.deepEqual(edges[0].condition.expression, {
+    type: 'bool_op',
+    op: 'and',
+    operands: [
+      {
+        type: 'bool_op',
+        op: 'or',
+        operands: [cmp('==', 'route_hint', 'verified'), cmp('==', 'route_hint', 'known_incident')],
+      },
+      cmp('!=', 'ticket_id', 'none'),
+    ],
+  });
+  assert.deepEqual(edges[1].condition.expression, {
+    type: 'bool_op',
+    op: 'and',
+    operands: [cmp('==', 'route_hint', 'known_incident'), cmp('==', 'ticket_id', 'none')],
+  });
+  assert.deepEqual(edges[2].condition.expression, {
+    type: 'bool_op',
+    op: 'and',
+    operands: [cmp('==', 'route_hint', 'verified'), cmp('==', 'ticket_id', 'none')],
+  });
+});
+
+const INTAKE_TASK =
+  'المهمة: اطلب من المتصل رقم الموقع ورقم السر المكوّن من 4 أرقام. حالما تحصل عليهما اطلب capture_details مع site_id وpin. أرقام المواقع بالشكل RUH-114؛ حوّل الحروف والأرقام المنطوقة بالعربي أو الإنجليزي إلى هذا الشكل.';
+
+test('n_ar_intake keeps its preamble and asks only for the site id and PIN', () => {
+  const intake = ar.conversation_flow.nodes.find((n) => n.id === 'n_ar_intake');
+  const idx = intake.instructions.indexOf('المهمة:');
+  assert.ok(idx > 0);
+  assert.equal(intake.instructions.slice(idx), INTAKE_TASK);
+});
+
+const TRIAGE_APPEND =
+  ' إذا كانت قيمة {{ticket_id}} تساوي none فالمتصل متحقَّق منه لفرع {{site_label}} ({{site_id}})، فلا تطلب منه رقم الموقع ولا رقم السر أبداً، ولا تعيد السؤال عن {{symptom}} أو {{impact}} أو {{service_affecting}} إذا كانت قيمتها معروفة (ليست none ولا unknown)؛ اسأل فقط عن الناقص.';
+
+test('n_ar_triage tells the model a carried verified caller needs no re-verification', () => {
+  const triage = ar.conversation_flow.nodes.find((n) => n.id === 'n_ar_triage');
+  assert.ok(triage.instructions.endsWith(TRIAGE_APPEND));
+});
+
+test('the Arabic assistant has no MCP server while the English one keeps it', () => {
+  assert.equal('mcp_servers' in ar, false);
+  assert.deepEqual(en.mcp_servers, [
+    {
+      id: '${MCP_ID}',
+      allowed_tools: [
+        'find_site',
+        'get_site_status',
+        'check_known_incidents',
+        'get_ticket_status',
+        'add_ticket_note',
+      ],
+    },
+  ]);
 });
 
 test('n_ar_goodbye hands off to the Arabic end_call tool node', () => {
@@ -183,7 +276,6 @@ test('the Arabic assistant shares the English assistant settings unchanged', () 
   );
   assert.deepEqual(ar.dynamic_variables, en.dynamic_variables);
   assert.deepEqual(ar.tool_ids, en.tool_ids);
-  assert.deepEqual(ar.mcp_servers, en.mcp_servers);
 });
 
 test('instructions-ar.md is exactly the n_ar_intake rules preamble', () => {

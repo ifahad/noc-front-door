@@ -131,8 +131,9 @@ async function main() {
     resolvePlaceholders(assistant, dryVars);
     for (const a of [assistantAr, assistant]) {
       const flow = a.conversation_flow;
+      const mcpCount = Array.isArray(a.mcp_servers) ? a.mcp_servers.length : 0;
       console.log(
-        `assistant:${a.name} nodes=${flow.nodes.length} edges=${flow.edges.length} start=${flow.start_node_id} tool_ids=1 mcp_servers=1`,
+        `assistant:${a.name} nodes=${flow.nodes.length} edges=${flow.edges.length} start=${flow.start_node_id} tool_ids=1 mcp_servers=${mcpCount}`,
       );
     }
     console.log('placeholders: all resolved');

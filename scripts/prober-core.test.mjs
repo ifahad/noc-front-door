@@ -1,6 +1,12 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { apiErrorMessage, createPagingHealth, createProber, planPaging } from './lib/prober-core.mjs';
+import {
+  apiErrorMessage,
+  classifyProbe,
+  createPagingHealth,
+  createProber,
+  planPaging,
+} from './lib/prober-core.mjs';
 
 const OK = { ok: true, ms: 1200, at: 0 };
 const FAIL = { ok: false, ms: 1200, at: 0 };
@@ -119,6 +125,69 @@ test('plain ok clears degraded', () => {
   const r = prober.observe(OK);
   assert.equal(r.state, 'ok');
   assert.equal(r.alert, null);
+});
+
+const HUNG_BODY = {
+  ok: true,
+  degraded: true,
+  slow: ['actor'],
+  timed_out: ['actor'],
+};
+
+test('classifyProbe passes a clean health body through', () => {
+  assert.deepEqual(classifyProbe(true, { ok: true, degraded: false, slow: [], timed_out: [] }), {
+    ok: true,
+    degraded: false,
+    slow: [],
+    detail: null,
+  });
+});
+
+test('classifyProbe fails a body whose ok is not true', () => {
+  const r = classifyProbe(true, { ok: false, degraded: false, slow: [], timed_out: [] });
+  assert.equal(r.ok, false);
+  assert.equal(typeof r.detail, 'string');
+  assert.ok(r.detail.length > 0);
+});
+
+test('classifyProbe fails a body without ok at all', () => {
+  const r = classifyProbe(true, {});
+  assert.equal(r.ok, false);
+});
+
+test('classifyProbe treats an actor timeout as a failed probe', () => {
+  const r = classifyProbe(true, HUNG_BODY);
+  assert.equal(r.ok, false);
+  assert.equal(r.detail, 'actor timed out');
+});
+
+test('classifyProbe treats a sync timeout as a failed probe', () => {
+  const r = classifyProbe(true, { ...HUNG_BODY, slow: ['sync'], timed_out: ['sync'] });
+  assert.equal(r.ok, false);
+  assert.equal(r.detail, 'actor timed out');
+});
+
+test('classifyProbe treats a kv-only timeout as ok but degraded', () => {
+  const r = classifyProbe(true, { ...HUNG_BODY, slow: ['kv'], timed_out: ['kv'] });
+  assert.equal(r.ok, true);
+  assert.equal(r.degraded, true);
+  assert.equal(r.detail, null);
+});
+
+test('classifyProbe fails when the http response was not ok', () => {
+  const r = classifyProbe(false, null);
+  assert.equal(r.ok, false);
+  assert.ok(r.detail);
+  assert.notEqual(r.detail, 'actor timed out');
+});
+
+test('two consecutive hung probes raise the existing down alert', () => {
+  const prober = createProber();
+  const hung = classifyProbe(true, HUNG_BODY);
+  prober.observe({ ...hung, ms: 1500 });
+  const r = prober.observe({ ...hung, ms: 1500 });
+  assert.equal(r.state, 'down');
+  assert.equal(r.alert, 'down');
 });
 
 const PAGE_A = { id: 'INC-1001:1', region: 'riyadh-north', level: 1, created_local: '9:52 AM' };
