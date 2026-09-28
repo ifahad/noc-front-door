@@ -387,6 +387,27 @@ describe("router actor-mode selection", () => {
     expect(fallbacks[0].mode).toBe("mux");
     expect(eventsWith("actor_mode.read")).toHaveLength(1);
   });
+
+  it("logs the flags fallback on every request inside the flag-read cooldown", async () => {
+    const { env, pings } = await makePingEnv();
+    const boom = (): Promise<never> => Promise.reject(new Error("kv_down"));
+    (env as unknown as { CACHE: unknown }).CACHE = {
+      get: () => boom(),
+      put: () => boom(),
+      delete: () => boom(),
+      list: () => boom(),
+    };
+    const first = await actorPing(env);
+    expect(first.status).toBe(200);
+    const second = await actorPing(env);
+    expect(second.status).toBe(200);
+    const fallbacks = eventsWith("flags.fallback");
+    expect(fallbacks).toHaveLength(2);
+    expect(fallbacks[0].mode).toBe("mux");
+    expect(fallbacks[1].mode).toBe("mux");
+    expect(fallbacks[1].total_ms).toBeLessThan(2000);
+    expect(pings.map((p) => p.binding)).toEqual(["MUX", "MUX", "MUX", "MUX"]);
+  });
 });
 
 describe("router /dv fail-open", () => {

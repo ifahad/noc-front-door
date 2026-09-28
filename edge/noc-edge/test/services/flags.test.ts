@@ -1,16 +1,19 @@
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it } from "vitest";
 import {
-  ACTOR_MODE_DEFAULT,
-  FALLBACK_FLAGS,
   NEG_MEMO_MS,
   __setNegJitterForTests,
   read,
+  readDetailed,
 } from "../../src/services/flags";
 import { kvKey } from "../../../shared/src/kvkeys";
 import { FakeKv } from "../fakes/kv";
 
 const DEMO_CONTACT = ["c-", "demo"].join("");
 const T0 = Date.UTC(2026, 8, 26, 6, 0, 0);
+
+afterEach(() => {
+  __setNegJitterForTests(() => Math.random() * 5_000);
+});
 
 function kvFor(): FakeKv {
   const kv = new FakeKv();
@@ -124,89 +127,74 @@ describe("flags.read", () => {
     }
   });
 
-  it("neg-memoises a failed read for 30 s: the next read returns FALLBACK_FLAGS without KV calls", async () => {
+  it("the flag-read cooldown rejects reads for 30 s without touching KV", async () => {
     const kv = kvFor();
     const slow = slowKv(kv, 20, { failGets: true });
     __setNegJitterForTests(() => 0);
     await expect(read(slow, T0)).rejects.toThrow("injected_slow_error");
-    expect(await read(slow, T0 + 1000)).toEqual({
-      deflection_enabled: true,
-      require_pin: true,
-      demo_caller: null,
-      fault_open_ticket: null,
-      fault_dv_delay_ms: null,
-      actor_mode: "mux",
-    });
-    expect(await read(slow, T0 + 1000)).toBe(FALLBACK_FLAGS);
+    await expect(read(slow, T0 + 1000)).rejects.toThrow("flags_cooldown");
+    await expect(readDetailed(slow, T0 + 2000)).rejects.toThrow("flags_cooldown");
     for (const key of FLAG_KEYS) {
       expect(slow.getCalls(key)).toBe(1);
     }
   });
 
-  it("never serves actor_mode per-entity from the fallback", async () => {
+  it("retries KV after the flag-read cooldown expires", async () => {
     const kv = kvFor();
     const slow = slowKv(kv, 20, { failGets: true });
-    __setNegJitterForTests(() => 0);
+    __setNegJitterForTests(() => -29_000);
     await expect(read(slow, T0)).rejects.toThrow("injected_slow_error");
-    const flags = await read(slow, T0 + 1000);
-    expect(flags.actor_mode).toBe(ACTOR_MODE_DEFAULT);
-    expect(flags.actor_mode).not.toBe("per-entity");
-  });
-
-  it("the negative memo serves the last successful flags", async () => {
-    const kv = kvFor();
-    const slow = slowKv(kv, 20);
-    __setNegJitterForTests(() => 0);
-    await kv.put(kvKey("flag", "require_pin"), "true");
-    await kv.put(kvKey("flag", "actor_mode"), "per-entity");
-    expect((await read(slow, T0)).require_pin).toBe(true);
-    slow.failGets = true;
-    await expect(read(slow, T0 + 61_000)).rejects.toThrow("injected_slow_error");
-    const flags = await read(slow, T0 + 61_500);
-    expect(flags.require_pin).toBe(true);
-    expect(flags.actor_mode).toBe("per-entity");
-    for (const key of FLAG_KEYS) {
-      expect(slow.getCalls(key)).toBe(2);
-    }
-  });
-
-  it("retries KV after the negative memo expires", async () => {
-    const kv = kvFor();
-    const slow = slowKv(kv, 20, { failGets: true });
-    __setNegJitterForTests(() => 1234);
-    await expect(read(slow, T0)).rejects.toThrow("injected_slow_error");
-    expect(await read(slow, T0 + NEG_MEMO_MS - 1)).toEqual(FALLBACK_FLAGS);
-    expect(await read(slow, T0 + NEG_MEMO_MS + 1233)).toEqual(FALLBACK_FLAGS);
+    await expect(read(slow, T0 + 1)).rejects.toThrow("flags_cooldown");
     for (const key of FLAG_KEYS) {
       expect(slow.getCalls(key)).toBe(1);
     }
-    await expect(read(slow, T0 + NEG_MEMO_MS + 1234)).rejects.toThrow(
-      "injected_slow_error",
-    );
+    await sleep(1050);
+    await expect(read(slow, T0 + 2000)).rejects.toThrow("injected_slow_error");
     for (const key of FLAG_KEYS) {
       expect(slow.getCalls(key)).toBe(2);
     }
-    expect(await read(slow, T0 + NEG_MEMO_MS + 1235)).toEqual(FALLBACK_FLAGS);
+    await expect(read(slow, T0 + 2001)).rejects.toThrow("flags_cooldown");
     for (const key of FLAG_KEYS) {
       expect(slow.getCalls(key)).toBe(2);
     }
   });
 
-  it("a success after a failure restores the normal 60 s memo", async () => {
+  it("a success clears the flag-read cooldown and restores the 60 s memo", async () => {
     const kv = kvFor();
     const slow = slowKv(kv, 20, { failGets: true });
-    __setNegJitterForTests(() => 0);
+    __setNegJitterForTests(() => -29_000);
     await expect(read(slow, T0)).rejects.toThrow("injected_slow_error");
-    expect(await read(slow, T0 + 1000)).toEqual(FALLBACK_FLAGS);
+    await expect(read(slow, T0 + 1)).rejects.toThrow("flags_cooldown");
+    await sleep(1050);
     slow.failGets = false;
     await kv.put(kvKey("flag", "require_pin"), "true");
-    const at = T0 + NEG_MEMO_MS;
-    expect((await read(slow, at)).require_pin).toBe(true);
+    expect((await read(slow, T0 + 2000)).require_pin).toBe(true);
     await kv.put(kvKey("flag", "require_pin"), "false");
-    expect((await read(slow, at + 59_999)).require_pin).toBe(true);
-    expect((await read(slow, at + 60_000)).require_pin).toBe(false);
+    expect((await read(slow, T0 + 61_999)).require_pin).toBe(true);
+    expect((await read(slow, T0 + 62_000)).require_pin).toBe(false);
     for (const key of FLAG_KEYS) {
       expect(slow.getCalls(key)).toBe(3);
+    }
+  });
+
+  it("the flag-read cooldown counts from the failure, not the read start", async () => {
+    const kv = kvFor();
+    const slow = slowKv(kv, 200, { failGets: true });
+    __setNegJitterForTests(() => -29_900);
+    await expect(read(slow, T0)).rejects.toThrow("injected_slow_error");
+    await expect(read(slow, T0 + 1)).rejects.toThrow("flags_cooldown");
+    for (const key of FLAG_KEYS) {
+      expect(slow.getCalls(key)).toBe(1);
+    }
+    await sleep(50);
+    await expect(read(slow, T0 + 2)).rejects.toThrow("flags_cooldown");
+    for (const key of FLAG_KEYS) {
+      expect(slow.getCalls(key)).toBe(1);
+    }
+    await sleep(200);
+    await expect(read(slow, T0 + 3)).rejects.toThrow("injected_slow_error");
+    for (const key of FLAG_KEYS) {
+      expect(slow.getCalls(key)).toBe(2);
     }
   });
 });

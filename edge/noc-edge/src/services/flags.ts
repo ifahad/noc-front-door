@@ -30,15 +30,6 @@ const NEG_JITTER_MS = 5_000;
 const MAX_DV_DELAY_MS = 12000;
 const FAULT_STATUSES: readonly number[] = [500, 503, 504];
 
-export const FALLBACK_FLAGS: Flags = {
-  deflection_enabled: true,
-  require_pin: true,
-  demo_caller: null,
-  fault_open_ticket: null,
-  fault_dv_delay_ms: null,
-  actor_mode: ACTOR_MODE_DEFAULT,
-};
-
 interface Memo {
   at: number;
   flags: Flags;
@@ -58,10 +49,6 @@ export function __setNegJitterForTests(f: () => number): void {
   negJitter = f;
 }
 
-function fallbackFor(kv: KvPort): Flags {
-  return memoByKv.get(kv)?.flags ?? FALLBACK_FLAGS;
-}
-
 export interface FlagsRead {
   flags: Flags;
   memo_hit: boolean;
@@ -73,8 +60,8 @@ export async function readDetailed(kv: KvPort, now: number): Promise<FlagsRead> 
     return { flags: memo.flags, memo_hit: true };
   }
   const neg = negMemoByKv.get(kv);
-  if (neg !== undefined && now < neg.expiresAt) {
-    return { flags: fallbackFor(kv), memo_hit: true };
+  if (neg !== undefined && Date.now() < neg.expiresAt) {
+    throw new Error("flags_cooldown");
   }
   const existing = inFlightByKv.get(kv);
   if (existing !== undefined) return { flags: await existing, memo_hit: false };
@@ -115,7 +102,7 @@ async function doRead(kv: KvPort, now: number): Promise<Flags> {
     memoByKv.set(kv, { at: now, flags });
     return flags;
   } catch (err) {
-    negMemoByKv.set(kv, { expiresAt: now + NEG_MEMO_MS + negJitter() });
+    negMemoByKv.set(kv, { expiresAt: Date.now() + NEG_MEMO_MS + negJitter() });
     throw err;
   }
 }
