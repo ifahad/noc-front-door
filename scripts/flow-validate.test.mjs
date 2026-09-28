@@ -237,10 +237,10 @@ const realAssistant = async () => {
   return assistant;
 };
 
-test('validateFlow with human exits accepts the real 37-node assistant flow', async () => {
+test('validateFlow with human exits accepts the split English assistant flow', async () => {
   const assistant = await realAssistant();
-  assert.equal(assistant.conversation_flow.nodes.length, 37);
-  assert.equal(assistant.conversation_flow.edges.length, 93);
+  assert.equal(assistant.conversation_flow.nodes.length, 24);
+  assert.equal(assistant.conversation_flow.edges.length, 56);
   assert.deepEqual(
     validateFlow(assistant.conversation_flow, { requireHumanExits: true }),
     [],
@@ -425,4 +425,89 @@ test('validateAssistant resolves real tool ids through a custom toolName map', a
     toolName: (id) => (id === 'abc-123' ? 'capture_details' : null),
   });
   assert.deepEqual(errs, []);
+});
+
+const assistantEdge = (id, from, assistantId = 'asst-target-1', voiceMode = 'distinct') => ({
+  id,
+  start_node_id: from,
+  target: {
+    type: 'assistant',
+    assistant_id: assistantId,
+    ...(voiceMode === null ? {} : { voice_mode: voiceMode }),
+  },
+  condition: llm_('The caller asked to continue in Arabic.'),
+});
+
+test('an assistant-target edge is accepted', () => {
+  const flow = validFlow();
+  flow.edges.push(assistantEdge('ea', 'n1'));
+  assert.deepEqual(validateFlow(flow), []);
+});
+
+test('an assistant-target edge without voice_mode is accepted', () => {
+  const flow = validFlow();
+  flow.edges.push(assistantEdge('ea', 'n1', 'asst-target-1', null));
+  assert.deepEqual(validateFlow(flow), []);
+});
+
+test('an assistant-target edge with voice_mode unified is accepted', () => {
+  const flow = validFlow();
+  flow.edges.push(assistantEdge('ea', 'n1', 'asst-target-1', 'unified'));
+  assert.deepEqual(validateFlow(flow), []);
+});
+
+test('an assistant-target edge with an empty assistant_id is rejected', () => {
+  const flow = validFlow();
+  flow.edges.push(assistantEdge('ea', 'n1', ''));
+  const errs = validateFlow(flow);
+  assert.ok(errs.some((e) => e.includes('ea') && e.includes('assistant_id')));
+});
+
+test('an assistant-target edge without assistant_id is rejected', () => {
+  const flow = validFlow();
+  flow.edges.push({
+    id: 'ea',
+    start_node_id: 'n1',
+    target: { type: 'assistant', voice_mode: 'distinct' },
+    condition: llm_('The caller asked to continue in Arabic.'),
+  });
+  const errs = validateFlow(flow);
+  assert.ok(errs.some((e) => e.includes('ea') && e.includes('assistant_id')));
+});
+
+test('an assistant-target edge with a bad voice_mode is rejected', () => {
+  const flow = validFlow();
+  flow.edges.push(assistantEdge('ea', 'n1', 'asst-target-1', 'split'));
+  const errs = validateFlow(flow);
+  assert.ok(errs.some((e) => e.includes('ea') && e.includes('voice_mode')));
+});
+
+test('an edge with an unknown target type is rejected', () => {
+  const flow = validFlow();
+  flow.edges.push({
+    id: 'ex',
+    start_node_id: 'n1',
+    target: { type: 'webhook' },
+    condition: llm_('x'),
+  });
+  const errs = validateFlow(flow);
+  assert.ok(errs.some((e) => e.includes('ex') && e.includes('webhook')));
+});
+
+test('allowAssistantTargets false rejects an assistant-target edge', () => {
+  const flow = validFlow();
+  flow.edges.push(assistantEdge('ea', 'n1'));
+  const errs = validateFlow(flow, { allowAssistantTargets: false });
+  assert.ok(errs.some((e) => e.includes('ea') && e.includes('assistant')));
+});
+
+test('allowAssistantTargets false still accepts node targets', () => {
+  assert.deepEqual(validateFlow(validFlow(), { allowAssistantTargets: false }), []);
+});
+
+test('a node-target edge to an unknown node is still rejected', () => {
+  const flow = validFlow();
+  flow.edges[3] = edge('e4', 'n1', llm_('x'), 'ghost');
+  const errs = validateFlow(flow, { allowAssistantTargets: true });
+  assert.ok(errs.some((e) => e.includes('e4') && e.includes('target node')));
 });

@@ -20,6 +20,7 @@ const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
 const DRY_RUN = process.argv.includes('--dry-run');
 const PRUNE_PROBE = process.argv.includes('--prune-probe');
 const ASSISTANT_NAME = 'sanad-noc';
+const ASSISTANT_AR_NAME = 'sanad-noc-ar';
 const MCP_NAME = 'noc-mcp';
 const SECRET_IDENTIFIER = 'noc_mcp_token';
 const MCP_TOOLS = [
@@ -74,12 +75,15 @@ async function main() {
   const mcp = await readJson('assistant/mcp.json');
   const assistant = await readJson('assistant/assistant.json');
   assistant.instructions = await readText('assistant/instructions.md');
+  const assistantAr = await readJson('assistant/assistant-ar.json');
+  assistantAr.instructions = await readText('assistant/instructions-ar.md');
 
   const toolNames = tools.map((t) => t.display_name);
   const dryVars = {
     EDGE_URL,
     ONCALL_NUMBER: process.env.ONCALL_NUMBER ?? 'DRYRUN_ONCALL_NUMBER',
     MCP_ID: 'DRYRUN_noc-mcp',
+    ASSISTANT_AR_ID: 'DRYRUN_sanad-noc-ar',
   };
   for (const name of toolNames) {
     dryVars[`TOOL_${name}`] = `DRYRUN_${name}`;
@@ -89,9 +93,21 @@ async function main() {
     requireHumanExits: true,
   });
   const assistantErrors = validateAssistant(assistant);
-  if (flowErrors.length > 0 || assistantErrors.length > 0) {
+  const arFlowErrors = validateFlow(assistantAr.conversation_flow, {
+    requireHumanExits: true,
+    allowAssistantTargets: false,
+  });
+  const arAssistantErrors = validateAssistant(assistantAr);
+  if (
+    flowErrors.length > 0 ||
+    assistantErrors.length > 0 ||
+    arFlowErrors.length > 0 ||
+    arAssistantErrors.length > 0
+  ) {
     for (const e of flowErrors) console.log(`FAILED flow ${e}`);
     for (const e of assistantErrors) console.log(`FAILED assistant ${e}`);
+    for (const e of arFlowErrors) console.log(`FAILED flow-ar ${e}`);
+    for (const e of arAssistantErrors) console.log(`FAILED assistant-ar ${e}`);
     process.exit(1);
   }
 
@@ -105,10 +121,14 @@ async function main() {
     const mcpResolved = resolvePlaceholders(mcp.server, dryVars);
     console.log(`mcp_server:${mcpResolved.name} ${mcpResolved.url}`);
     console.log(`integration_secret:${SECRET_IDENTIFIER} skip-if-exists`);
-    const flow = assistant.conversation_flow;
-    console.log(
-      `assistant:${assistant.name} nodes=${flow.nodes.length} edges=${flow.edges.length} start=${flow.start_node_id} tool_ids=1 mcp_servers=1`,
-    );
+    resolvePlaceholders(assistantAr, dryVars);
+    resolvePlaceholders(assistant, dryVars);
+    for (const a of [assistantAr, assistant]) {
+      const flow = a.conversation_flow;
+      console.log(
+        `assistant:${a.name} nodes=${flow.nodes.length} edges=${flow.edges.length} start=${flow.start_node_id} tool_ids=1 mcp_servers=1`,
+      );
+    }
     console.log('placeholders: all resolved');
     return;
   }
@@ -211,15 +231,14 @@ async function main() {
     }
   }
 
-  // assistant (update in place; never create a second, never delete)
+  // assistants (both upserted by name, update in place; never create a second pair, never delete)
   let assistantOk = false;
-  try {
-    const resolved = resolvePlaceholders(assistant, vars);
+  const upsertAssistant = async (name, resolved) => {
     const list = await listAll('/v2/ai/assistants', telnyx);
-    const existing = findByName(list, 'name', ASSISTANT_NAME);
+    const existing = findByName(list, 'name', name);
     let saved;
     if (existing) {
-      console.log(`exists assistant ${existing.id}`);
+      console.log(`exists assistant:${name} ${existing.id}`);
       saved = unwrap(
         await telnyx(`/v2/ai/assistants/${existing.id}`, {
           method: 'POST',
@@ -230,28 +249,41 @@ async function main() {
       saved = unwrap(
         await telnyx('/v2/ai/assistants', { method: 'POST', body: resolved }),
       );
-      console.log(`created assistant ${saved?.id ?? ''}`);
+      console.log(`created assistant:${name} ${saved?.id ?? ''}`);
     }
-    if (saved?.id) {
-      const got = normaliseAssistantReadback(unwrap(await telnyx(`/v2/ai/assistants/${saved.id}`)));
-      printDrift('assistant', subsetDiff(resolved, got));
-      const nameById = new Map(
-        Object.entries(state.tools).map(([name, id]) => [id, name]),
-      );
-      const readbackErrors = validateAssistant(got, {
-        toolName: (id) => nameById.get(String(id)) ?? null,
-      });
-      if (readbackErrors.length > 0) {
-        for (const e of readbackErrors) {
-          console.log(`FAILED assistant-readback ${e}`);
-        }
-        exitCode = 1;
-      } else {
-        console.log('assistant-readback: validateAssistant []');
+    if (!saved?.id) throw new Error(`assistant:${name} upsert returned no id`);
+    const got = normaliseAssistantReadback(
+      unwrap(await telnyx(`/v2/ai/assistants/${saved.id}`)),
+    );
+    printDrift(`assistant:${name}`, subsetDiff(resolved, got));
+    const nameById = new Map(
+      Object.entries(state.tools).map(([toolName, id]) => [id, toolName]),
+    );
+    const readbackErrors = validateAssistant(got, {
+      toolName: (id) => nameById.get(String(id)) ?? null,
+    });
+    if (readbackErrors.length > 0) {
+      for (const e of readbackErrors) {
+        console.log(`FAILED assistant-readback:${name} ${e}`);
       }
-      state.assistant = saved.id;
-      assistantOk = true;
+      throw new Error(`assistant:${name} readback failed validation`);
     }
+    console.log(`assistant-readback:${name} validateAssistant []`);
+    return saved.id;
+  };
+  try {
+    const arId = await upsertAssistant(
+      ASSISTANT_AR_NAME,
+      resolvePlaceholders(assistantAr, vars),
+    );
+    vars.ASSISTANT_AR_ID = arId;
+    const enId = await upsertAssistant(
+      ASSISTANT_NAME,
+      resolvePlaceholders(assistant, vars),
+    );
+    state.assistant = enId;
+    state.assistant_ar = arId;
+    assistantOk = true;
   } catch (err) {
     reportFailure('assistant', err);
     exitCode = 1;

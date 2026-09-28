@@ -1,0 +1,1023 @@
+{
+  "name": "sanad-noc-ar",
+  "model": "moonshotai/Kimi-K2.6",
+  "greeting": "<assistant-speaks-first-with-model-generated-message>",
+  "interruption_settings": {
+    "disable_greeting_interruption": true
+  },
+  "telephony_settings": {
+    "time_limit_secs": 600,
+    "user_idle_timeout_secs": 60,
+    "supports_unauthenticated_web_calls": true,
+    "recording_settings": {
+      "enabled": true
+    }
+  },
+  "dynamic_variables_webhook_url": "${EDGE_URL}/dv",
+  "dynamic_variables_webhook_timeout_ms": 2500,
+  "dynamic_variables": {
+    "msp_name": "Najd Networks",
+    "route_hint": "unverified",
+    "caller_name": "there",
+    "customer_name": "your organisation",
+    "site_id": "unknown",
+    "site_label": "your site",
+    "incident_region": "your area",
+    "incident_started": "earlier today",
+    "incident_summary": "a network incident",
+    "incident_eta": "shortly",
+    "open_ticket_note": "none",
+    "repeat_note": "none",
+    "trace_id": "t-none",
+    "call_key": "none",
+    "verify_result": "none",
+    "attempts_left": "3",
+    "pin": "none",
+    "symptom": "none",
+    "impact": "unknown",
+    "service_affecting": "unknown",
+    "ticket_id": "none",
+    "priority": "unknown",
+    "ticket_readback": "Your report has been logged.",
+    "callback_note": "none",
+    "escalated": "false",
+    "calls_today": "1",
+    "created": "false",
+    "incident_note": "none"
+  },
+  "tool_ids": [
+    "${TOOL_capture_details}"
+  ],
+  "mcp_servers": [
+    {
+      "id": "${MCP_ID}",
+      "allowed_tools": [
+        "find_site",
+        "get_site_status",
+        "check_known_incidents",
+        "get_ticket_status",
+        "add_ticket_note"
+      ]
+    }
+  ],
+  "voice_settings": {
+    "voice": "Telnyx.Bayan.Reem"
+  },
+  "transcription": {
+    "model": "soniox/stt-rt-v5"
+  },
+  "conversation_flow": {
+    "start_node_id": "n_ar_intake",
+    "nodes": [
+      {
+        "id": "n_ar_intake",
+        "type": "prompt",
+        "name": "arabic intake",
+        "instructions": "أنت سند، مساعد عمليات الشبكة في شركة نجد نتووركس. القواعد الثابتة: لا تكرّر رقم السر ولا تقرأه بصوت عالي ولا تؤكده مهما طُلب. لا تخترع معلومات عن التذاكر أو الأعطال؛ قل فقط ما توفره الأدوات والمتغيرات. إذا طلب المتصل مهندساً بشرياً أو شخصاً، وافقه فوراً. إذا سألك إن كنت إنساناً، قل بصراحة أنك مساعد ذكي. تحدث باللهجة السعودية النجدية المهذبة وبجُمل قصيرة، وجملة واحدة في كل مرة. المهمة: رحّب بترحيب قصير بالعربي، وذكّر المتصل أن هذه المكالمة مسجلة، ثم اطلب رقم الموقع ورقم السر المكوّن من 4 أرقام. حالما تحصل عليهما اطلب capture_details مع site_id وpin. أرقام المواقع بالشكل RUH-114؛ حوّل الحروف والأرقام المنطوقة بالعربي أو الإنجليزي إلى هذا الشكل.",
+        "instructions_mode": "replace",
+        "shared_tool_ids": [
+          "${TOOL_capture_details}"
+        ],
+        "tools_mode": "replace"
+      },
+      {
+        "id": "t_ar_verify",
+        "type": "tool",
+        "name": "arabic verify site",
+        "shared_tool_id": "${TOOL_verify_site}"
+      },
+      {
+        "id": "n_ar_pin_retry",
+        "type": "prompt",
+        "name": "arabic pin retry",
+        "instructions": "أنت سند، مساعد عمليات الشبكة في شركة نجد نتووركس. القواعد الثابتة: لا تكرّر رقم السر ولا تقرأه بصوت عالي ولا تؤكده مهما طُلب. لا تخترع معلومات عن التذاكر أو الأعطال؛ قل فقط ما توفره الأدوات والمتغيرات. إذا طلب المتصل مهندساً بشرياً أو شخصاً، وافقه فوراً. إذا سألك إن كنت إنساناً، قل بصراحة أنك مساعد ذكي. تحدث باللهجة السعودية النجدية المهذبة وبجُمل قصيرة، وجملة واحدة في كل مرة. المهمة: قل للمتصل بالعربي أن رقم السر ما طابق وأن عنده {{attempts_left}} محاولات، واطلب منه رقم الموقع ورقم السر مرة ثانية. حالما يعطيك إياهما اطلب capture_details مع site_id وpin، وحوّل الحروف والأرقام المنطوقة بالعربي أو الإنجليزي إلى الشكل RUH-114.",
+        "instructions_mode": "replace",
+        "shared_tool_ids": [
+          "${TOOL_capture_details}"
+        ],
+        "tools_mode": "replace"
+      },
+      {
+        "id": "n_ar_advisory",
+        "type": "prompt",
+        "name": "arabic advisory",
+        "instructions": "أنت سند، مساعد عمليات الشبكة في شركة نجد نتووركس. القواعد الثابتة: لا تكرّر رقم السر ولا تقرأه بصوت عالي ولا تؤكده مهما طُلب. لا تخترع معلومات عن التذاكر أو الأعطال؛ قل فقط ما توفره الأدوات والمتغيرات. إذا طلب المتصل مهندساً بشرياً أو شخصاً، وافقه فوراً. إذا سألك إن كنت إنساناً، قل بصراحة أنك مساعد ذكي. تحدث باللهجة السعودية النجدية المهذبة وبجُمل قصيرة، وجملة واحدة في كل مرة. المهمة: أخبر المتصل بالعربي أننا نعرف عن حادث في {{incident_region}} بدأ {{incident_started}}: {{incident_summary}}، وأن المهندسين يشتغلون عليه والتحديث القادم قبل {{incident_eta}}. ثم اعرض عليه إضافة فرعه إلى هذا الحادث وانتظر جوابه.",
+        "instructions_mode": "replace",
+        "shared_tool_ids": [],
+        "tools_mode": "replace"
+      },
+      {
+        "id": "t_ar_join",
+        "type": "tool",
+        "name": "arabic join incident",
+        "shared_tool_id": "${TOOL_join_incident}"
+      },
+      {
+        "id": "n_ar_triage",
+        "type": "prompt",
+        "name": "arabic triage",
+        "instructions": "أنت سند، مساعد عمليات الشبكة في شركة نجد نتووركس. القواعد الثابتة: لا تكرّر رقم السر ولا تقرأه بصوت عالي ولا تؤكده مهما طُلب. لا تخترع معلومات عن التذاكر أو الأعطال؛ قل فقط ما توفره الأدوات والمتغيرات. إذا طلب المتصل مهندساً بشرياً أو شخصاً، وافقه فوراً. إذا سألك إن كنت إنساناً، قل بصراحة أنك مساعد ذكي. تحدث باللهجة السعودية النجدية المهذبة وبجُمل قصيرة، وجملة واحدة في كل مرة. المهمة: اجمع من المتصل بالعربي: العَرَض بجملة واحدة، والأثر بالإنجليزي site_down أو degraded أو single_user، وهل العملاء متأثرين yes أو no. اطلب capture_details مع symptom وimpact وservice_affecting، والقيم تُخزَّن بالإنجليزي كما تعرّفها الأداة. ثم اقرأ ملخصاً من جملة واحدة واطلب تأكيده قبل فتح تذكرة.",
+        "instructions_mode": "replace",
+        "shared_tool_ids": null,
+        "tools_mode": "append"
+      },
+      {
+        "id": "t_ar_open_ticket",
+        "type": "tool",
+        "name": "arabic open ticket",
+        "shared_tool_id": "${TOOL_open_ticket}"
+      },
+      {
+        "id": "n_ar_confirm",
+        "type": "prompt",
+        "name": "arabic ticket confirm",
+        "instructions": "أنت سند، مساعد عمليات الشبكة في شركة نجد نتووركس. القواعد الثابتة: لا تكرّر رقم السر ولا تقرأه بصوت عالي ولا تؤكده مهما طُلب. لا تخترع معلومات عن التذاكر أو الأعطال؛ قل فقط ما توفره الأدوات والمتغيرات. إذا طلب المتصل مهندساً بشرياً أو شخصاً، وافقه فوراً. إذا سألك إن كنت إنساناً، قل بصراحة أنك مساعد ذكي. تحدث باللهجة السعودية النجدية المهذبة وبجُمل قصيرة، وجملة واحدة في كل مرة. المهمة: أخبر المتصل بالعربي بما أكده النظام: {{ticket_readback}}. ترجمه للعربية بدقة دون تغيير أي معنى، وتهجّأ أرقام التذاكر وأرقام الحوادث حرفاً حرفاً بالحروف الإنجليزية مثل: N J D، 1 4 0 2. لا تختلق أي رقم أو تفصيل غير المذكور فيه. ثم اسأل إن كان هناك شيء ثاني.",
+        "instructions_mode": "replace",
+        "shared_tool_ids": [],
+        "tools_mode": "replace"
+      },
+      {
+        "id": "n_ar_handover",
+        "type": "prompt",
+        "name": "arabic handover",
+        "instructions": "أنت سند، مساعد عمليات الشبكة في شركة نجد نتووركس. القواعد الثابتة: لا تكرّر رقم السر ولا تقرأه بصوت عالي ولا تؤكده مهما طُلب. لا تخترع معلومات عن التذاكر أو الأعطال؛ قل فقط ما توفره الأدوات والمتغيرات. إذا طلب المتصل مهندساً بشرياً أو شخصاً، وافقه فوراً. إذا سألك إن كنت إنساناً، قل بصراحة أنك مساعد ذكي. تحدث باللهجة السعودية النجدية المهذبة وبجُمل قصيرة، وجملة واحدة في كل مرة. المهمة: أخبر المتصل بالعربي أنك بتوصله بمهندس المناوبة الآن، واطلب منه البقاء على الخط.",
+        "instructions_mode": "replace",
+        "shared_tool_ids": [],
+        "tools_mode": "replace"
+      },
+      {
+        "id": "t_ar_callback",
+        "type": "tool",
+        "name": "arabic log callback",
+        "shared_tool_id": "${TOOL_log_callback}"
+      },
+      {
+        "id": "n_ar_goodbye",
+        "type": "prompt",
+        "name": "arabic goodbye",
+        "instructions": "أنت سند، مساعد عمليات الشبكة في شركة نجد نتووركس. القواعد الثابتة: لا تكرّر رقم السر ولا تقرأه بصوت عالي ولا تؤكده مهما طُلب. لا تخترع معلومات عن التذاكر أو الأعطال؛ قل فقط ما توفره الأدوات والمتغيرات. إذا طلب المتصل مهندساً بشرياً أو شخصاً، وافقه فوراً. إذا سألك إن كنت إنساناً، قل بصراحة أنك مساعد ذكي. تحدث باللهجة السعودية النجدية المهذبة وبجُمل قصيرة، وجملة واحدة في كل مرة. المهمة: اشكر المتصل بالعربي وودّعه بجملة قصيرة.",
+        "instructions_mode": "replace",
+        "shared_tool_ids": [],
+        "tools_mode": "replace"
+      },
+      {
+        "id": "t_ar_transfer",
+        "type": "tool",
+        "name": "arabic transfer oncall",
+        "shared_tool_id": "${TOOL_transfer_oncall}"
+      },
+      {
+        "id": "n_ar_take_message",
+        "type": "prompt",
+        "name": "arabic take callback message",
+        "instructions": "أنت سند، مساعد عمليات الشبكة في شركة نجد نتووركس. القواعد الثابتة: لا تكرّر رقم السر ولا تقرأه بصوت عالي ولا تؤكده مهما طُلب. لا تخترع معلومات عن التذاكر أو الأعطال؛ قل فقط ما توفره الأدوات والمتغيرات. إذا طلب المتصل مهندساً بشرياً أو شخصاً، وافقه فوراً. إذا سألك إن كنت إنساناً، قل بصراحة أنك مساعد ذكي. تحدث باللهجة السعودية النجدية المهذبة وبجُمل قصيرة، وجملة واحدة في كل مرة. المهمة: اعتذر للمتصل بالعربي أن المهندس غير متاح حالياً، واطلب منه رسالة اتصال قصيرة، واطلب capture_details مع callback_note، وأكّد الرسالة له.",
+        "instructions_mode": "replace",
+        "shared_tool_ids": [
+          "${TOOL_capture_details}"
+        ],
+        "tools_mode": "replace"
+      }
+    ],
+    "edges": [
+      {
+        "id": "e_nari_1",
+        "start_node_id": "n_ar_intake",
+        "target": {
+          "type": "node",
+          "node_id": "t_ar_verify"
+        },
+        "condition": {
+          "type": "expression",
+          "expression": {
+            "type": "bool_op",
+            "op": "and",
+            "operands": [
+              {
+                "type": "comparison",
+                "op": "!=",
+                "left": {
+                  "type": "variable",
+                  "name": "pin"
+                },
+                "right": {
+                  "type": "string_literal",
+                  "value": "none"
+                }
+              },
+              {
+                "type": "comparison",
+                "op": "!=",
+                "left": {
+                  "type": "variable",
+                  "name": "site_id"
+                },
+                "right": {
+                  "type": "string_literal",
+                  "value": "unknown"
+                }
+              }
+            ]
+          }
+        }
+      },
+      {
+        "id": "e_nari_2",
+        "start_node_id": "n_ar_intake",
+        "target": {
+          "type": "node",
+          "node_id": "n_ar_handover"
+        },
+        "condition": {
+          "type": "llm",
+          "prompt": "The caller asked for a human engineer or a person (in Arabic or English)."
+        }
+      },
+      {
+        "id": "e_nari_4",
+        "start_node_id": "n_ar_intake",
+        "target": {
+          "type": "node",
+          "node_id": "n_ar_handover"
+        },
+        "condition": {
+          "type": "expression",
+          "expression": {
+            "type": "bool_op",
+            "op": "and",
+            "operands": [
+              {
+                "type": "comparison",
+                "op": ">=",
+                "left": {
+                  "type": "variable",
+                  "name": "telnyx_conversation_duration_secs"
+                },
+                "right": {
+                  "type": "number_literal",
+                  "value": 300
+                }
+              },
+              {
+                "type": "comparison",
+                "op": "!=",
+                "left": {
+                  "type": "variable",
+                  "name": "escalated"
+                },
+                "right": {
+                  "type": "string_literal",
+                  "value": "true"
+                }
+              }
+            ]
+          }
+        }
+      },
+      {
+        "id": "e_narp_1",
+        "start_node_id": "n_ar_pin_retry",
+        "target": {
+          "type": "node",
+          "node_id": "t_ar_verify"
+        },
+        "condition": {
+          "type": "expression",
+          "expression": {
+            "type": "bool_op",
+            "op": "and",
+            "operands": [
+              {
+                "type": "comparison",
+                "op": "!=",
+                "left": {
+                  "type": "variable",
+                  "name": "pin"
+                },
+                "right": {
+                  "type": "string_literal",
+                  "value": "none"
+                }
+              },
+              {
+                "type": "comparison",
+                "op": "!=",
+                "left": {
+                  "type": "variable",
+                  "name": "site_id"
+                },
+                "right": {
+                  "type": "string_literal",
+                  "value": "unknown"
+                }
+              }
+            ]
+          }
+        }
+      },
+      {
+        "id": "e_narp_2",
+        "start_node_id": "n_ar_pin_retry",
+        "target": {
+          "type": "node",
+          "node_id": "n_ar_handover"
+        },
+        "condition": {
+          "type": "llm",
+          "prompt": "The caller asked for a human engineer or a person (in Arabic or English)."
+        }
+      },
+      {
+        "id": "e_narp_4",
+        "start_node_id": "n_ar_pin_retry",
+        "target": {
+          "type": "node",
+          "node_id": "n_ar_handover"
+        },
+        "condition": {
+          "type": "expression",
+          "expression": {
+            "type": "bool_op",
+            "op": "and",
+            "operands": [
+              {
+                "type": "comparison",
+                "op": ">=",
+                "left": {
+                  "type": "variable",
+                  "name": "telnyx_conversation_duration_secs"
+                },
+                "right": {
+                  "type": "number_literal",
+                  "value": 300
+                }
+              },
+              {
+                "type": "comparison",
+                "op": "!=",
+                "left": {
+                  "type": "variable",
+                  "name": "escalated"
+                },
+                "right": {
+                  "type": "string_literal",
+                  "value": "true"
+                }
+              }
+            ]
+          }
+        }
+      },
+      {
+        "id": "e_tarv_1",
+        "start_node_id": "t_ar_verify",
+        "target": {
+          "type": "node",
+          "node_id": "n_ar_advisory"
+        },
+        "condition": {
+          "type": "expression",
+          "expression": {
+            "type": "bool_op",
+            "op": "and",
+            "operands": [
+              {
+                "type": "bool_op",
+                "op": "or",
+                "operands": [
+                  {
+                    "type": "comparison",
+                    "op": "==",
+                    "left": {
+                      "type": "variable",
+                      "name": "telnyx_last_tool_status_code"
+                    },
+                    "right": {
+                      "type": "string_literal",
+                      "value": "200"
+                    }
+                  },
+                  {
+                    "type": "comparison",
+                    "op": "==",
+                    "left": {
+                      "type": "variable",
+                      "name": "telnyx_last_tool_status_code"
+                    },
+                    "right": {
+                      "type": "number_literal",
+                      "value": 200
+                    }
+                  }
+                ]
+              },
+              {
+                "type": "comparison",
+                "op": "==",
+                "left": {
+                  "type": "variable",
+                  "name": "verify_result"
+                },
+                "right": {
+                  "type": "string_literal",
+                  "value": "ok"
+                }
+              },
+              {
+                "type": "comparison",
+                "op": "==",
+                "left": {
+                  "type": "variable",
+                  "name": "route_hint"
+                },
+                "right": {
+                  "type": "string_literal",
+                  "value": "known_incident"
+                }
+              }
+            ]
+          }
+        }
+      },
+      {
+        "id": "e_tarv_2",
+        "start_node_id": "t_ar_verify",
+        "target": {
+          "type": "node",
+          "node_id": "n_ar_triage"
+        },
+        "condition": {
+          "type": "expression",
+          "expression": {
+            "type": "bool_op",
+            "op": "and",
+            "operands": [
+              {
+                "type": "bool_op",
+                "op": "or",
+                "operands": [
+                  {
+                    "type": "comparison",
+                    "op": "==",
+                    "left": {
+                      "type": "variable",
+                      "name": "telnyx_last_tool_status_code"
+                    },
+                    "right": {
+                      "type": "string_literal",
+                      "value": "200"
+                    }
+                  },
+                  {
+                    "type": "comparison",
+                    "op": "==",
+                    "left": {
+                      "type": "variable",
+                      "name": "telnyx_last_tool_status_code"
+                    },
+                    "right": {
+                      "type": "number_literal",
+                      "value": 200
+                    }
+                  }
+                ]
+              },
+              {
+                "type": "comparison",
+                "op": "==",
+                "left": {
+                  "type": "variable",
+                  "name": "verify_result"
+                },
+                "right": {
+                  "type": "string_literal",
+                  "value": "ok"
+                }
+              }
+            ]
+          }
+        }
+      },
+      {
+        "id": "e_tarv_3",
+        "start_node_id": "t_ar_verify",
+        "target": {
+          "type": "node",
+          "node_id": "n_ar_handover"
+        },
+        "condition": {
+          "type": "expression",
+          "expression": {
+            "type": "bool_op",
+            "op": "and",
+            "operands": [
+              {
+                "type": "bool_op",
+                "op": "or",
+                "operands": [
+                  {
+                    "type": "comparison",
+                    "op": "==",
+                    "left": {
+                      "type": "variable",
+                      "name": "telnyx_last_tool_status_code"
+                    },
+                    "right": {
+                      "type": "string_literal",
+                      "value": "200"
+                    }
+                  },
+                  {
+                    "type": "comparison",
+                    "op": "==",
+                    "left": {
+                      "type": "variable",
+                      "name": "telnyx_last_tool_status_code"
+                    },
+                    "right": {
+                      "type": "number_literal",
+                      "value": 200
+                    }
+                  }
+                ]
+              },
+              {
+                "type": "comparison",
+                "op": "==",
+                "left": {
+                  "type": "variable",
+                  "name": "verify_result"
+                },
+                "right": {
+                  "type": "string_literal",
+                  "value": "locked"
+                }
+              }
+            ]
+          }
+        }
+      },
+      {
+        "id": "e_tarv_4",
+        "start_node_id": "t_ar_verify",
+        "target": {
+          "type": "node",
+          "node_id": "n_ar_pin_retry"
+        },
+        "condition": {
+          "type": "expression",
+          "expression": {
+            "type": "bool_op",
+            "op": "and",
+            "operands": [
+              {
+                "type": "bool_op",
+                "op": "or",
+                "operands": [
+                  {
+                    "type": "comparison",
+                    "op": "==",
+                    "left": {
+                      "type": "variable",
+                      "name": "telnyx_last_tool_status_code"
+                    },
+                    "right": {
+                      "type": "string_literal",
+                      "value": "200"
+                    }
+                  },
+                  {
+                    "type": "comparison",
+                    "op": "==",
+                    "left": {
+                      "type": "variable",
+                      "name": "telnyx_last_tool_status_code"
+                    },
+                    "right": {
+                      "type": "number_literal",
+                      "value": 200
+                    }
+                  }
+                ]
+              },
+              {
+                "type": "comparison",
+                "op": "==",
+                "left": {
+                  "type": "variable",
+                  "name": "verify_result"
+                },
+                "right": {
+                  "type": "string_literal",
+                  "value": "invalid"
+                }
+              }
+            ]
+          }
+        }
+      },
+      {
+        "id": "e_tarv_5",
+        "start_node_id": "t_ar_verify",
+        "target": {
+          "type": "node",
+          "node_id": "n_ar_handover"
+        },
+        "condition": {
+          "type": "default"
+        }
+      },
+      {
+        "id": "e_nara_1",
+        "start_node_id": "n_ar_advisory",
+        "target": {
+          "type": "node",
+          "node_id": "t_ar_join"
+        },
+        "condition": {
+          "type": "llm",
+          "prompt": "The caller agreed to add their branch to the incident."
+        }
+      },
+      {
+        "id": "e_nara_2",
+        "start_node_id": "n_ar_advisory",
+        "target": {
+          "type": "node",
+          "node_id": "n_ar_triage"
+        },
+        "condition": {
+          "type": "llm",
+          "prompt": "The caller reported a different problem or declined."
+        }
+      },
+      {
+        "id": "e_nara_3",
+        "start_node_id": "n_ar_advisory",
+        "target": {
+          "type": "node",
+          "node_id": "n_ar_handover"
+        },
+        "condition": {
+          "type": "llm",
+          "prompt": "The caller asked for a human engineer or a person (in Arabic or English)."
+        }
+      },
+      {
+        "id": "e_nara_5",
+        "start_node_id": "n_ar_advisory",
+        "target": {
+          "type": "node",
+          "node_id": "n_ar_handover"
+        },
+        "condition": {
+          "type": "expression",
+          "expression": {
+            "type": "bool_op",
+            "op": "and",
+            "operands": [
+              {
+                "type": "comparison",
+                "op": ">=",
+                "left": {
+                  "type": "variable",
+                  "name": "telnyx_conversation_duration_secs"
+                },
+                "right": {
+                  "type": "number_literal",
+                  "value": 300
+                }
+              },
+              {
+                "type": "comparison",
+                "op": "!=",
+                "left": {
+                  "type": "variable",
+                  "name": "escalated"
+                },
+                "right": {
+                  "type": "string_literal",
+                  "value": "true"
+                }
+              }
+            ]
+          }
+        }
+      },
+      {
+        "id": "e_tarj_1",
+        "start_node_id": "t_ar_join",
+        "target": {
+          "type": "node",
+          "node_id": "n_ar_confirm"
+        },
+        "condition": {
+          "type": "expression",
+          "expression": {
+            "type": "bool_op",
+            "op": "or",
+            "operands": [
+              {
+                "type": "comparison",
+                "op": "==",
+                "left": {
+                  "type": "variable",
+                  "name": "telnyx_last_tool_status_code"
+                },
+                "right": {
+                  "type": "string_literal",
+                  "value": "200"
+                }
+              },
+              {
+                "type": "comparison",
+                "op": "==",
+                "left": {
+                  "type": "variable",
+                  "name": "telnyx_last_tool_status_code"
+                },
+                "right": {
+                  "type": "number_literal",
+                  "value": 200
+                }
+              }
+            ]
+          }
+        }
+      },
+      {
+        "id": "e_tarj_2",
+        "start_node_id": "t_ar_join",
+        "target": {
+          "type": "node",
+          "node_id": "n_ar_handover"
+        },
+        "condition": {
+          "type": "default"
+        }
+      },
+      {
+        "id": "e_nart_1",
+        "start_node_id": "n_ar_triage",
+        "target": {
+          "type": "node",
+          "node_id": "t_ar_open_ticket"
+        },
+        "condition": {
+          "type": "llm",
+          "prompt": "The caller confirmed the fault summary the assistant read back and agreed to open a ticket."
+        }
+      },
+      {
+        "id": "e_nart_2",
+        "start_node_id": "n_ar_triage",
+        "target": {
+          "type": "node",
+          "node_id": "n_ar_handover"
+        },
+        "condition": {
+          "type": "llm",
+          "prompt": "The caller asked for a human engineer or a person (in Arabic or English)."
+        }
+      },
+      {
+        "id": "e_nart_4",
+        "start_node_id": "n_ar_triage",
+        "target": {
+          "type": "node",
+          "node_id": "n_ar_handover"
+        },
+        "condition": {
+          "type": "expression",
+          "expression": {
+            "type": "bool_op",
+            "op": "and",
+            "operands": [
+              {
+                "type": "comparison",
+                "op": ">=",
+                "left": {
+                  "type": "variable",
+                  "name": "telnyx_conversation_duration_secs"
+                },
+                "right": {
+                  "type": "number_literal",
+                  "value": 300
+                }
+              },
+              {
+                "type": "comparison",
+                "op": "!=",
+                "left": {
+                  "type": "variable",
+                  "name": "escalated"
+                },
+                "right": {
+                  "type": "string_literal",
+                  "value": "true"
+                }
+              }
+            ]
+          }
+        }
+      },
+      {
+        "id": "e_taro_1",
+        "start_node_id": "t_ar_open_ticket",
+        "target": {
+          "type": "node",
+          "node_id": "n_ar_confirm"
+        },
+        "condition": {
+          "type": "expression",
+          "expression": {
+            "type": "bool_op",
+            "op": "or",
+            "operands": [
+              {
+                "type": "comparison",
+                "op": "==",
+                "left": {
+                  "type": "variable",
+                  "name": "telnyx_last_tool_status_code"
+                },
+                "right": {
+                  "type": "string_literal",
+                  "value": "200"
+                }
+              },
+              {
+                "type": "comparison",
+                "op": "==",
+                "left": {
+                  "type": "variable",
+                  "name": "telnyx_last_tool_status_code"
+                },
+                "right": {
+                  "type": "number_literal",
+                  "value": 200
+                }
+              }
+            ]
+          }
+        }
+      },
+      {
+        "id": "e_taro_2",
+        "start_node_id": "t_ar_open_ticket",
+        "target": {
+          "type": "node",
+          "node_id": "n_ar_handover"
+        },
+        "condition": {
+          "type": "default"
+        }
+      },
+      {
+        "id": "e_narc_1",
+        "start_node_id": "n_ar_confirm",
+        "target": {
+          "type": "node",
+          "node_id": "n_ar_handover"
+        },
+        "condition": {
+          "type": "llm",
+          "prompt": "The caller asked for a human engineer or a person (in Arabic or English)."
+        }
+      },
+      {
+        "id": "e_narc_4",
+        "start_node_id": "n_ar_confirm",
+        "target": {
+          "type": "node",
+          "node_id": "n_ar_goodbye"
+        },
+        "condition": {
+          "type": "llm",
+          "prompt": "The caller has nothing else or said goodbye."
+        }
+      },
+      {
+        "id": "e_narc_5",
+        "start_node_id": "n_ar_confirm",
+        "target": {
+          "type": "node",
+          "node_id": "n_ar_triage"
+        },
+        "condition": {
+          "type": "llm",
+          "prompt": "The caller reported another problem."
+        }
+      },
+      {
+        "id": "e_narc_3",
+        "start_node_id": "n_ar_confirm",
+        "target": {
+          "type": "node",
+          "node_id": "n_ar_handover"
+        },
+        "condition": {
+          "type": "expression",
+          "expression": {
+            "type": "bool_op",
+            "op": "and",
+            "operands": [
+              {
+                "type": "comparison",
+                "op": ">=",
+                "left": {
+                  "type": "variable",
+                  "name": "telnyx_conversation_duration_secs"
+                },
+                "right": {
+                  "type": "number_literal",
+                  "value": 300
+                }
+              },
+              {
+                "type": "comparison",
+                "op": "!=",
+                "left": {
+                  "type": "variable",
+                  "name": "escalated"
+                },
+                "right": {
+                  "type": "string_literal",
+                  "value": "true"
+                }
+              }
+            ]
+          }
+        }
+      },
+      {
+        "id": "e_tarc_1",
+        "start_node_id": "t_ar_callback",
+        "target": {
+          "type": "node",
+          "node_id": "n_ar_goodbye"
+        },
+        "condition": {
+          "type": "default"
+        }
+      },
+      {
+        "id": "e_narh_1",
+        "start_node_id": "n_ar_handover",
+        "target": {
+          "type": "node",
+          "node_id": "t_ar_transfer"
+        },
+        "condition": {
+          "type": "llm",
+          "prompt": "The caller replied in any way (acknowledged, agreed, asked something or said anything)."
+        }
+      },
+      {
+        "id": "e_tart_1",
+        "start_node_id": "t_ar_transfer",
+        "target": {
+          "type": "node",
+          "node_id": "n_ar_take_message"
+        },
+        "condition": {
+          "type": "default"
+        }
+      },
+      {
+        "id": "e_narm_1",
+        "start_node_id": "n_ar_take_message",
+        "target": {
+          "type": "node",
+          "node_id": "t_ar_callback"
+        },
+        "condition": {
+          "type": "expression",
+          "expression": {
+            "type": "comparison",
+            "op": "!=",
+            "left": {
+              "type": "variable",
+              "name": "callback_note"
+            },
+            "right": {
+              "type": "string_literal",
+              "value": "none"
+            }
+          }
+        }
+      },
+      {
+        "id": "e_narm_2",
+        "start_node_id": "n_ar_take_message",
+        "target": {
+          "type": "node",
+          "node_id": "n_ar_goodbye"
+        },
+        "condition": {
+          "type": "llm",
+          "prompt": "The caller declined to leave a message or wants to end the call."
+        }
+      }
+    ]
+  }
+}

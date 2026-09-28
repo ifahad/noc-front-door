@@ -62,6 +62,27 @@ test('resolvePlaceholders keeps non-strings and allows full-value replacement', 
   });
 });
 
+test('resolvePlaceholders resolves ASSISTANT_AR_ID inside edge targets', () => {
+  assert.deepEqual(
+    resolvePlaceholders(
+      {
+        edges: [{ target: { type: 'assistant', assistant_id: '${ASSISTANT_AR_ID}' } }],
+      },
+      { ASSISTANT_AR_ID: 'asst-ar-1' },
+    ),
+    { edges: [{ target: { type: 'assistant', assistant_id: 'asst-ar-1' } }] },
+  );
+});
+
+test('resolvePlaceholders throws when ASSISTANT_AR_ID is missing', () => {
+  assert.throws(
+    () => resolvePlaceholders({ t: '${ASSISTANT_AR_ID}' }, { OTHER: 'y' }),
+    (err) =>
+      err instanceof Error &&
+      err.message === 'unresolved placeholder ${ASSISTANT_AR_ID}',
+  );
+});
+
 test('unwrap returns .data when present, else the object itself', () => {
   assert.deepEqual(unwrap({ data: { id: '1' } }), { id: '1' });
   assert.deepEqual(unwrap({ id: '2' }), { id: '2' });

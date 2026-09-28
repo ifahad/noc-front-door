@@ -42,6 +42,7 @@ export function validateFlow(
       'n_ar_take_message',
       'n_ar_goodbye',
     ],
+    allowAssistantTargets = true,
   } = {},
 ) {
   const errors = [];
@@ -92,6 +93,39 @@ export function validateFlow(
       errors.push(
         `edge "${edge.id}" references unknown target node "${edge.target?.node_id}"`,
       );
+    } else if (
+      edge.target !== undefined &&
+      edge.target !== null &&
+      edge.target.type !== 'node' &&
+      edge.target.type !== 'assistant'
+    ) {
+      errors.push(
+        `edge "${edge.id}" target type "${String(edge.target.type)}" must be "node" or "assistant"`,
+      );
+    }
+    if (edge.target?.type === 'assistant') {
+      if (!allowAssistantTargets) {
+        errors.push(
+          `edge "${edge.id}" must not target an assistant; assistant targets are not allowed in this flow`,
+        );
+      }
+      if (
+        typeof edge.target.assistant_id !== 'string' ||
+        edge.target.assistant_id.length === 0
+      ) {
+        errors.push(
+          `edge "${edge.id}" assistant target needs a non-empty assistant_id`,
+        );
+      }
+      if (
+        edge.target.voice_mode !== undefined &&
+        edge.target.voice_mode !== 'unified' &&
+        edge.target.voice_mode !== 'distinct'
+      ) {
+        errors.push(
+          `edge "${edge.id}" assistant target voice_mode must be "unified" or "distinct", got "${String(edge.target.voice_mode)}"`,
+        );
+      }
     }
     if (edge.condition?.type === 'expression') {
       walkExpression(edge.id, edge.condition.expression, errors);
