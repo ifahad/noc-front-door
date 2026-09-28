@@ -702,7 +702,7 @@ describe("router /demo page", () => {
     return base.env;
   }
 
-  it("serves the live NOC wall with the pinned widget and the scenario titles", async () => {
+  it("serves the production front page with the pinned widget and the hidden console", async () => {
     const { env } = await makeEnv();
     const res = await route(new Request(demoUrl()), env);
     expect(res.status).toBe(200);
@@ -711,16 +711,15 @@ describe("router /demo page", () => {
     expect(res.headers.get("x-content-type-options")).toBe("nosniff");
     expect(res.headers.get("referrer-policy")).toBe("no-referrer");
     const html = await res.text();
-    expect(html).toContain("<title>NOC Front Door — Live NOC wall</title>");
+    expect(html).toContain("<title>Najd Networks NOC — Report an outage, 24/7</title>");
     expect(html).toContain(`agent-id="${AGENT_ID}"`);
     expect(html).toContain(WIDGET_URL);
-    expect(html).toContain("noc front door");
-    expect(html).toContain("Najd Networks · 24/7 AI fault line");
+    expect(html).toContain("Report a network outage");
+    expect(html).toContain("Network status");
+    expect(html).toContain("Operator console");
     expect(html).toContain("Join the incident");
     expect(html).toContain("Open a new ticket");
     expect(html).toContain("Lockout &amp; human");
-    expect(html).toContain("<mark>AI fault line</mark>");
-    expect(html).toContain("Live board");
     expect(html).toContain("Event feed");
     expect(html).toContain("How it works");
     expect(html).toContain("Stateful Actors + KV");

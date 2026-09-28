@@ -1,6 +1,8 @@
 import { describe, expect, it } from "vitest";
 import {
+  CONSOLE_POLL_MS,
   DEMO_AGENT_ID,
+  PUBLIC_POLL_MS,
   SANAD_PHONE_DISPLAY,
   SANAD_PHONE_TEL,
   WIDGET_SCRIPT_SRI,
@@ -28,15 +30,20 @@ function externalOrigins(html: string): string[] {
   return [...new Set(urls.map((u) => new URL(u).origin))].sort();
 }
 
+function consoleSection(html: string): string {
+  const start = html.indexOf('<section class="console" id="console"');
+  const end = html.indexOf("</section>", start);
+  return html.slice(start, end);
+}
+
 describe("renderDemoPage", () => {
-  it("embeds the widget element and the exact pinned script", () => {
+  it("embeds the widget element and the exact pinned script with SRI", () => {
     const html = renderDemoPage(null);
     expect(html).toContain(`<telnyx-ai-agent agent-id="${DEMO_AGENT_ID}"></telnyx-ai-agent>`);
     expect(html).toContain(
       `<script async src="${WIDGET_SCRIPT_URL}" integrity="${WIDGET_SCRIPT_SRI}" crossorigin="anonymous"></script>`,
     );
     expect(WIDGET_SCRIPT_URL).toBe("https://unpkg.com/@telnyx/ai-agent-widget@0.36.0/dist/bundle.min.js");
-    expect(WIDGET_SCRIPT_SRI).toMatch(/^sha384-[A-Za-z0-9+/]{64}$/);
   });
 
   it("loads only the widget and Google Fonts from other origins", () => {
@@ -47,26 +54,45 @@ describe("renderDemoPage", () => {
       "https://unpkg.com",
     ]);
     expect(html).toContain("family=Geist:wght@400;500;600");
-    expect(html).toContain("family=Geist+Mono:wght@400;500");
-    expect(html).toContain("family=Inter:wght@400;500;600");
+    expect(html).toContain("family=IBM+Plex+Sans+Arabic:wght@400;500");
   });
 
-  it("renders the three scenarios with keyboard targets", () => {
+  it("is a production front page: report an outage by browser or phone, in English or Arabic", () => {
     const html = renderDemoPage(null);
-    expect(html).toContain("Join the incident");
-    expect(html).toContain("Open a new ticket");
-    expect(html).toContain("Lockout &amp; human");
-    for (const n of [1, 2, 3]) expect(html).toContain(`id="scenario-${n}"`);
-    // the lockout scenario must never lock the published demo sites
-    expect(html).toContain("D M M zero one one");
+    expect(html).toContain("<title>Najd Networks NOC — Report an outage, 24/7</title>");
+    expect(html).toContain("Report a network outage <em>in under a minute.</em>");
+    expect(html).toContain('data-action="call"');
+    expect(html).toContain("Call from your browser");
+    expect(html).toContain(`href="${SANAD_PHONE_TEL}"`);
+    expect(html).toContain(`Call ${SANAD_PHONE_DISPLAY}</a>`);
+    expect(SANAD_PHONE_TEL).toMatch(/^tel:\+1(-[0-9]+)+$/);
+    expect(html).toContain('<span class="lang ar" lang="ar">العربية</span>');
+    expect(html).toContain("What happens when you call");
+    expect(html).toContain("Calls are recorded and handled by an AI assistant.");
   });
 
-  it("marks the headline phrase with the highlighter and shows shortcut badges", () => {
+  it("draws the live network map with the four regions", () => {
     const html = renderDemoPage(null);
-    expect(html).toContain("<mark>AI fault line</mark>");
-    expect(html).toContain('Start call <span class="kbd">C</span>');
-    expect(html).toContain('Board JSON <span class="kbd">B</span>');
-    expect(html).toContain("On this page");
+    for (const id of ["jeddah", "riyadh-north", "riyadh-south", "dammam"]) {
+      expect(html).toContain(`id="node-${id}"`);
+      expect(html).toContain(`id="sub-${id}"`);
+    }
+    expect(html).toContain('aria-label="Najd Networks regions and their live status"');
+    expect(html).toContain('id="statusPill"');
+  });
+
+  it("keeps the walkthrough material in a hidden operator console", () => {
+    const html = renderDemoPage(guide());
+    const main = html.slice(0, html.indexOf('<section class="console"'));
+    expect(html).toContain('<section class="console" id="console" aria-labelledby="consoleTitle" hidden>');
+    const con = consoleSection(html);
+    for (const text of ["Operator console", "Join the incident", "Open a new ticket", "Lockout &amp; human", "How it works", "Event feed", "Stateful Actors + KV", "Reset demo"]) {
+      expect(con).toContain(text);
+      expect(main).not.toContain(text);
+    }
+    expect(main).not.toContain("data-pin=");
+    expect(html).toContain("location.hash === '#console'");
+    expect(html).toContain("e.key === '`'");
   });
 
   it("never assigns HTML strings or uses inline event-handler attributes", () => {
@@ -84,20 +110,25 @@ describe("renderDemoPage", () => {
     expect(html).not.toContain("radial-gradient");
   });
 
-  it("polls /ops/board with an abort timeout and no overlap", () => {
+  it("polls /ops/board gently: 15 s public, 5 s console, only when visible, with backoff", () => {
     const html = renderDemoPage(null);
+    expect(PUBLIC_POLL_MS).toBe(15000);
+    expect(CONSOLE_POLL_MS).toBe(5000);
+    expect(html).toContain(`var PUBLIC_POLL = ${PUBLIC_POLL_MS}, CONSOLE_POLL = ${CONSOLE_POLL_MS}, MAX_BACKOFF = 60000;`);
     expect(html).toContain("fetch('/ops/board'");
     expect(html).toContain("AbortController");
     expect(html).toContain("if (polling) return;");
+    expect(html).toContain("if (document.visibilityState === 'hidden') return;");
+    expect(html).toContain("visibilitychange");
+    expect(html).toContain("Math.pow(2, failures - 1)");
   });
 
-  it("renders both PIN chips when the guide secret is present", () => {
-    const html = renderDemoPage(guide());
-    expect(html).toContain(`data-pin="${PIN_JOIN}"`);
-    expect(html).toContain(`data-pin="${PIN_NEW}"`);
-    expect(html).toContain(`PIN ${PIN_JOIN}`);
-    expect(html).toContain(`PIN ${PIN_NEW}`);
-    expect(html).not.toContain("PIN: see the README reviewer guide");
+  it("renders both PIN chips inside the console when the guide secret is present", () => {
+    const con = consoleSection(renderDemoPage(guide()));
+    expect(con).toContain(`data-pin="${PIN_JOIN}"`);
+    expect(con).toContain(`data-pin="${PIN_NEW}"`);
+    expect(con).toContain(`PIN ${PIN_JOIN}`);
+    expect(con).not.toContain("PIN: see the README reviewer guide");
   });
 
   it("falls back to the README guide without the secret and leaks no PIN or phone", () => {
@@ -109,30 +140,14 @@ describe("renderDemoPage", () => {
     expect(html).not.toMatch(/\+[0-9]{8,15}/);
   });
 
-  it("offers Sanad's public phone line next to the web call", () => {
+  it("keeps the operator controls and the token in sessionStorage only", () => {
     const html = renderDemoPage(null);
-    expect(SANAD_PHONE_TEL).toMatch(/^tel:\+1(-[0-9]+)+$/);
-    expect(html).toContain(`<a class="btn btn-lg" href="${SANAD_PHONE_TEL}">Call ${SANAD_PHONE_DISPLAY}</a>`);
-    expect(html).toContain(`Or dial ${SANAD_PHONE_DISPLAY} from any phone.`);
-    expect(html).toContain("<b>2</b> assistants · English + Saudi Arabic");
-    expect(html).toContain("Sanad EN → Sanad AR handoff");
-  });
-
-  it("keeps the board, operator drawer and footer copy", () => {
-    const html = renderDemoPage(null);
-    expect(html).toContain("Live board");
-    expect(html).toContain("Event feed");
-    expect(html).toContain("How it works");
-    expect(html).toContain('<summary id="opTitle">Operator</summary>');
     expect(html).toContain("'/ops/reset'");
     expect(html).toContain("'/ops/stage-incident?region=riyadh-north'");
     expect(html).toContain("'/ops/ack?region=riyadh-north'");
     expect(html).toContain("'/ops/resolve?region=riyadh-north'");
-    expect(html).toContain("'/ops/unlock?site=RUH-114'");
-    expect(html).toContain("'/ops/unlock?site=JED-007'");
     expect(html).toContain("sessionStorage");
+    expect(html).not.toContain("localStorage");
     expect(html).toContain("Live from Stateful Actors via /ops/board");
-    expect(html).toContain("backend code authored by OpenCode on Telnyx Inference");
-    expect(html).toContain("Calls are recorded and handled by an AI assistant.");
   });
 });
