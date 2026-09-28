@@ -199,7 +199,7 @@ test('n_ar_triage tells the model a carried verified caller needs no re-verifica
 });
 
 test('the Arabic assistant has no MCP server while the English one keeps it', () => {
-  assert.equal('mcp_servers' in ar, false);
+  assert.deepEqual(ar.mcp_servers, []);
   assert.deepEqual(en.mcp_servers, [
     {
       id: '${MCP_ID}',
