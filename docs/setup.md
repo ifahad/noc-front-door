@@ -21,26 +21,27 @@ Prerequisites: a Telnyx account + API key (a Trial is fine), the [`telnyx-edge` 
    - `ONCALL_NUMBER` — the verified on-call number Sanad transfers to.
    - `SANAD_NUMBER` — Sanad's own verified number, the transfer caller ID (apply-time `.env` value; not an edge secret).
    - `SEED_LOCAL` — JSON with the demo PINs and contact phone numbers; the committed seed carries no secrets, PINs live only here.
-   - `DEMO_GUIDE` — the scenario copy + PIN chips served on `/demo`, so no PIN literal exists in code.
+   - `DEMO_GUIDE` — the scenario copy + PIN chips served on the page (site root / `/demo` console), so no PIN literal exists in code.
 5. **Telnyx Cloud Storage** — create an S3-compatible **bucket in `us-central-1`** (this deployment: `noc-reports-fb8131`) and set `bucket_name` + `region` under `[storage.cloudstorage.REPORTS]` in `edge/noc-edge/telnyx.toml`.
 6. **Ship the functions** in order owner → mux host → edge: run `telnyx-edge ship` inside `edge/noc-actors`, then `edge/noc-actor-host`, then `edge/noc-edge`. Each deploy builds client-side and takes **15–35 min**.
 7. **Set the mux flag** on accounts affected by DEBUGLOG #4 (new actor instances cannot activate): `telnyx-edge storage kv key put "$KV_ID" flag/actor_mode mux` (`$KV_ID` is the namespace id from step 3; verify with `node scripts/ops.mjs GET '/ops/actor-ping?site=TST-001'` → `mode`).
-8. **Apply the assistant** (config-as-code; `sanad-noc` is PATCHed in place, never deleted): dry-run first, then apply —
+8. **Apply the assistants** (config-as-code; both are upserted by name and updated in place, never deleted — `sanad-noc-ar` first, then `sanad-noc` with the Arabic id, so the English workflow's `assistant-target` edges reference the right assistant): dry-run first, then apply —
    ```sh
    EDGE_URL=<origin> node scripts/apply.mjs --dry-run
    EDGE_URL=<origin> node scripts/apply.mjs
    ```
-   It creates the `noc_mcp_token` integration secret, the `noc-mcp` MCP server and the 5 tools, then PATCHes the assistant and prints read-back `DRIFT` lines (empty output = clean).
-9. **Start the prober** — it is the heal loop and the paging driver, so keep it running: `node scripts/prober.mjs` (or `nohup node scripts/prober.mjs > prober.log 2>&1 &`).
-10. **Pre-flight**: `node scripts/ops.mjs POST /ops/reset`, then `node scripts/ops.mjs POST '/ops/stage-incident?region=riyadh-north'` — the board shows the staged P2 with escalation due in 5 min. `RegionState` ignores reports older than 6 h, so stage right before the demo. Scenario 1 is **one-shot per staging** — once RUH-114 has joined and the incident is P1, later callers only attach to the existing incident; re-stage before each fresh run-through. Calls are recorded and handled by an AI assistant.
+   It creates the `noc_mcp_token` integration secret, the `noc-mcp` MCP server and the 5 tools, then upserts both assistants and prints read-back `DRIFT` lines (empty output = clean). It sends `mcp_servers: []` for the Arabic assistant explicitly — an omitted key keeps the platform's previous value (DEBUGLOG #18).
+9. **Outbound voice profile — whitelist the on-call country for the warm transfer.** The transfer to on-call fails with `403 D13 "not in whitelisted countries"` unless the outbound voice profile whitelists the on-call number's country. This deployment PATCHed the "Default" profile's `whitelisted_destinations` from `[US, CA]` to `[CA, SA, US]` (the on-call number is Saudi) — check it before the first live transfer.
+10. **Start the prober** — it is the heal loop and the paging driver, so keep it running: `node scripts/prober.mjs` (or `nohup node scripts/prober.mjs > prober.log 2>&1 &`).
+11. **Pre-flight**: `node scripts/ops.mjs POST /ops/reset`, then `node scripts/ops.mjs POST '/ops/stage-incident?region=riyadh-north'` — the board shows the staged P2 with escalation due in 5 min. `RegionState` ignores reports older than 6 h, so stage right before the demo. Scenario 1 is **one-shot per staging** — once RUH-114 has joined and the incident is P1, later callers only attach to the existing incident; re-stage before each fresh run-through. Calls are recorded and handled by an AI assistant.
 
 ## Run the tests
 
 ```sh
-npm test                              # root: apply/flow-validate/prober/ops/secret-scan (139 tests)
+npm test                              # root: apply/flow-validate/prober/ops/secret-scan (193 tests)
 npm --prefix edge/shared test         # 161
 npm --prefix edge/noc-actors test     # 65
-npm --prefix edge/noc-edge test       # 406
+npm --prefix edge/noc-edge test       # 423
 npm --prefix edge/noc-actor-host test # 28
 ```
 
@@ -49,7 +50,7 @@ npm --prefix edge/noc-actor-host test # 28
 ```sh
 # edge functions, one ship per function (builds client-side, 15–35 min deploy):
 telnyx-edge ship    # run in edge/noc-edge, edge/noc-actors, edge/noc-actor-host
-# assistant config-as-code — PATCH in place, the assistant is never deleted:
+# assistant config-as-code — both assistants upserted by name, never deleted:
 EDGE_URL=https://noc-edge-41d2a334-7.telnyxcompute.com node scripts/apply.mjs
 ```
 
@@ -66,11 +67,12 @@ curl -sS -X POST https://noc-edge-41d2a334-7.telnyxcompute.com/mcp \
 
 ## Troubleshooting & known platform issues
 
-- **DEBUGLOG #1** — no phone number can be ordered on the Trial account (KSA origin, no local coverage): demos are web calls from `/demo`.
+- **DEBUGLOG #1** — until the account was verified (2026-09-28) no phone number could be ordered (KSA origin, no local coverage), so demos were web calls. The public line `+1 512 980 6105` (a US number, international from KSA) is live now; browser calls still work.
 - **DEBUGLOG #4** — new actor instances cannot activate: all actor state runs in the mux host behind `flag/actor_mode=mux`; `/ops/actor-ping` shows the active mode. Do **not** use `telnyx-edge actors instances` — it times out on this account.
-- **DEBUGLOG #5** — every flag read costs a burst of KV gets (~1–2 s each); flags are memoised ~60 s, so a flag change takes up to ~60 s to propagate.
+- **DEBUGLOG #5** — every flag read costs a burst of KV gets (~1–2 s each); flags are memoised ~60 s, so a flag change takes up to ~60 s to propagate (a failed read now cools down 30 s and fails fast).
 - **DEBUGLOG #6** — KV reads cost ~1.1–2.0 s per op: routes are latency-shaped, `/ops/health/deep` may report `degraded` with `slow:["kv"]`, which is not an outage.
 - **DEBUGLOG #11** — the KV incident projection expires after its 2 h TTL; the prober's deep-health sync is the heal loop → **keep the prober running** ([runbook](runbook.md) §6).
 - **DEBUGLOG #12** — actor alarms **do work** on this account although new instances cannot be created: the host's own (pre-existing) alarm fires and is fanned out to entities ([evidence](evidence/alarms-live.md)).
+- **DEBUGLOG #15** — Telnyx platform incident 2026-09-28/29 (actor runtime + KV data plane): amplifiers fixed edge-side, detection semantics hardened (a hang is down after two probes); read the [runbook](runbook.md) §10 before touching anything during a platform incident.
 
 For fault-injection drills, paging drills, PIN unlock and the full diagnostic order, see the [runbook](runbook.md).

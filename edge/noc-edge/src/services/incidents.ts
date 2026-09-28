@@ -66,7 +66,7 @@ export interface SyncResult {
   projected: boolean;
 }
 
-// The canary syncs every ~10 s, so incident.sync is logged only when the
+// The canary syncs at most every 30 s, so incident.sync is logged only when the
 // projection actually changes (spec §11.1 quiet canary). This isolate's last
 // write per (kv, region) is the change detector; syncProjection is the single
 // writer of incident/active/<region> (spec §6.3), so the memo is authoritative

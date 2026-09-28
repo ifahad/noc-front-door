@@ -23,6 +23,7 @@ node scripts/prober.mjs --interval 5   # tighter loop
 
 - External probe on the dev box, outside the failure domain; the same loop keeps the edge function warm (spec §11.4).
 - Every 10 s: `GET $EDGE_URL/ops/health/deep` with `Authorization: Bearer $OPS_TOKEN` and an 8 s abort timeout. 2 consecutive failures → console banner + `notify-send` (if installed).
+- An actor **hang** that outlives two consecutive probes is a **failure** (`actor_hung` in the health body) — during the 2026-09-28 platform incident the actor runtime failed as 30 s hangs, which the old "slow is not down" branches counted as healthy for hours (DEBUGLOG #15).
 - `degraded:true` with `slow:["kv"]` in the body is **not** a failure: it appears in the minute summary (`slow=[kv]`) and does not raise an alert (DEBUGLOG #6).
 - Why the 8 s timeout (not 3 s): deep health runs its checks concurrently, but each check has a 4 s deadline of its own (Task 12b) and one KV op costs ~1–2 s on this account, so a full pass takes seconds when KV is slow (DEBUGLOG #6).
 - Cross-checks: `telnyx-edge metrics` (5xx/error rate) and `dv.late` events in the logs — `dv.late` means the platform gave up on the webhook and spoke the greeting with defaults (fail-open by design, spec §5.4).
@@ -34,6 +35,8 @@ telnyx-edge logs noc-edge --tail --type invocations
 ```
 
 Per-invocation records: `method`, `path`, `status_code`, `duration_ms`. Look for: which route is failing (`/dv`, `/tools/*`, `/mcp`, `/ops/*`), 4xx vs 5xx, and outlier durations.
+
+`telnyx-edge logs` reads a window and caps a single pull at 250 lines (`--last`, max 250) — during an incident the runtime stream runs ~200 lines/min, so **count events by paging the logs API with narrow start/end windows** (`--since`), never from one page (the first count of the 2026-09-28 incident was off by ~4–5× that way; DEBUGLOG #15).
 
 ## 3. Then: the per-call trace
 
@@ -70,22 +73,22 @@ nohup node scripts/prober.mjs > ~/code/telnyx-fde/ops-logs/prober.log 2>&1 &
 
 What the single process does, on two independent timers:
 
-- **Every 10 s — deep health + projection heal.** `GET /ops/health/deep` runs the KV, actor and MCP checks plus `syncCheck`, which re-syncs each region's incident projection **from actor truth** (the KV projection only has a 2 h TTL — `PROJECTION_TTL_SECONDS = 7200`). This is what keeps `/ops/status` and the NOC wall board accurate, and it keeps the edge warm. Alert after 2 consecutive failures (worst case ≈ 30 s); `degraded` is not an outage.
+- **Every 10 s — deep health + projection heal.** `GET /ops/health/deep` runs the KV, actor and MCP checks plus `syncCheck`, which re-syncs each region's incident projection **from actor truth** (the sync check runs at most every 30 s; the KV projection only has a 2 h TTL — `PROJECTION_TTL_SECONDS = 7200`). This is what keeps `/ops/status` and the front page board accurate, and it keeps the edge warm. Alert after 2 consecutive failures (worst case ≈ 30 s); `degraded` is not an outage, but a hang that survives two probes is **down** (`actor_hung`).
 - **Every 30 s — escalation tick fallback + paging.** `POST /ops/tick` drives the SLA escalation ladder in `RegionState` as a fallback for the platform alarm (on this account the platform alarm does fire — DEBUGLOG #12 — so `fired:0` per tick is normal); then `GET /ops/pages/pending` → `POST /ops/pages/claim` → **PAGE banner** + `notify-send` + `page.sent` log line → `POST /ops/pages/sent`. Claim is exclusive (one claimer wins) and a page is never sent twice; the claimer id is `hostname:pid`. Non-2xx answers (401/5xx) throw and are logged as `paging.*_failed` warns; a failed sent-mark is retried in the same cycle (initial try + up to 3 retries) and again on later cycles, so a page is never silently dropped; `paging.stalled` warns after 3 consecutive failed cycles.
 
 If the board shows nothing or pages never fire, the first suspect is **the prober is not running**.
 
 ## 7. Paging drill
 
-1. Stage an incident: `node scripts/ops.mjs POST /ops/reset`, then `node scripts/ops.mjs POST '/ops/stage-incident?region=riyadh-north'` (or the NOC wall operator drawer). The staged P2 incident gets an escalation due time **5 min** out (P1: **2 min** — `P2_ACK_WINDOW_MS`/`P1_ACK_WINDOW_MS`).
+1. Stage an incident: `node scripts/ops.mjs POST /ops/reset`, then `node scripts/ops.mjs POST '/ops/stage-incident?region=riyadh-north'` (or the operator console — `#console` or the backtick key). The staged P2 incident gets an escalation due time **5 min** out (P1: **2 min** — `P2_ACK_WINDOW_MS`/`P1_ACK_WINDOW_MS`).
 2. Do nothing. When the due time passes without an acknowledgement, the ladder escalates (L1, L2, … up to L3) and mints a page (`INC-<n>:p<k>` — a monotonic per-incident counter, so an upgrade after a sent page never collides, DEBUGLOG #14).
 3. Within ~30 s the prober's paging cycle claims the page: a loud **PAGE banner** in the prober log, a desktop notification (`notify-send`), and a `page.sent` JSON line; the pending queue returns to 0.
-4. Stop the ladder: **Acknowledge** from the NOC wall operator drawer, or `node scripts/ops.mjs POST '/ops/ack?region=riyadh-north'`. The escalation column on the board flips to `ACKED`.
+4. Stop the ladder: **Acknowledge** from the operator console (`#console` or the backtick key), or `node scripts/ops.mjs POST '/ops/ack?region=riyadh-north'`. The escalation column on the board flips to `ACKED`.
 5. Recovery: if a demo site reports locked (the site-wide PIN lock after 6 failures from 2 calls), clear it with `node scripts/ops.mjs POST '/ops/unlock?site=RUH-114'` — note this also resets that site's ticket and call history.
 
 ## 8. Reading incident reports
 
-On `resolve` (via `node scripts/ops.mjs POST '/ops/resolve?region=<region>'` or the operator drawer — only `/ops/resolve` writes reports), `RegionState`/the edge writes a JSON incident report to Telnyx Cloud Storage (bucket `noc-reports-fb8131`) — no presigned URLs (an API key cannot live in the function), so reports are read back through the ops-token routes:
+On `resolve` (via `node scripts/ops.mjs POST '/ops/resolve?region=<region>'` or the operator console — only `/ops/resolve` writes reports), `RegionState`/the edge writes a JSON incident report to Telnyx Cloud Storage (bucket `noc-reports-fb8131`) — no presigned URLs (an API key cannot live in the function), so reports are read back through the ops-token routes:
 
 ```sh
 # list (newest first):
@@ -94,10 +97,25 @@ node scripts/ops.mjs GET /ops/reports
 node scripts/ops.mjs GET /ops/reports/<key>
 ```
 
-The NOC wall board carries the `last_report` pointer for the most recently resolved region.
+The front page board carries the `last_report` pointer for the most recently resolved region.
+
+## 9. The operator console
+
+The public page (site root `/` and `/demo`) is the production front page; its **operator console is hidden**: append `#console` to the URL or press the backtick key. The console holds the demo scenarios with the two PIN chips, the detailed board, the event feed, the how-it-works copy and the presenter controls (stage/reset/ack/unlock/resolve, reports). It polls `/ops/board` every 10 s while open (the public map polls every 15 s, visible-only, pausing after 10 min idle). The ops token is pasted into the console once and stays in that tab's `sessionStorage`, sent only to this site's `/ops` routes.
+
+## 10. During a platform incident
+
+When the platform (not our code) is failing — the reference case is the 2026-09-28/29 actor + KV incident (DEBUGLOG #15):
+
+- **Close idle tabs.** A forgotten board tab was ~60% of KV traffic during the incident; the page now pauses polling after 10 min idle, but old revisions and other clients may not.
+- **Freeze host deploys.** Do not re-ship the actor host mid-incident — the same-code host redeploy at ~12:00Z on 2026-09-28 changed nothing. Ship edge/assistant fixes only.
+- **Read logs through the logs API with narrow start/end windows.** `telnyx-edge logs` caps a single pull at 250 lines; during the incident the runtime stream ran ~200 lines/min, and a single-page count undercounted failures by ~4–5×.
+- **Rollback — and know it can time out.** `telnyx-edge rollback <function> <revision-id>` retargets traffic to an existing immutable revision instantly (no rebuild; find revision ids with `telnyx-edge deployments <function>`). On 2026-09-28 the rollback API timed out twice against the degraded compute API; the fallback is a **revert-forward** — revert the change in git, re-run the tests, ship (commit `a94722c`, DEBUGLOG #17).
+- Expect flapping: since 21:00:03Z on 09-28, 30–47% of actor calls failed while the rest succeeded — a green probe does not mean the platform is healthy; a red one does not mean our code broke.
 
 ## Known platform issues (this Trial account)
 
+- **DEBUGLOG #15 — Telnyx platform incident 2026-09-28/29:** the actor runtime (Dapr scheduler, placement, actor directory, state store) failed from 06:14:44Z and the KV data plane from 19:06Z (hard down 20:45:33Z); it reproduces on paths our code cannot touch. Edge-side amplifiers were fixed (hang = down after two probes; 30 s sync; board 30 s from settle; flags cooldown; page polling pauses when idle) — nothing we ship ends a platform outage.
 - **DEBUGLOG #4 — actor instances cannot be created:** every actor RPC from a second owner failed with `502` after ~30 s; the one working instance is the mux host. Contingency: set the KV flag `flag/actor_mode` = `mux` (all actor calls route through the single working instance, which multiplexes `SiteState`/`RegionState`). Check the active mode with `GET /ops/actor-ping` (`mode` field).
 - **DEBUGLOG #5 — flag read budget:** every flag read costs a burst of KV gets (~1–2 s each). Flags are memoised (60 s after the Task 12b recalibration), so a flag change takes up to ~60 s to propagate — do not expect instant effect after `kv key put`.
 - **DEBUGLOG #6 — KV reads cost ~1–2 s:** any route touching KV is slow; `/ops/health/deep` may answer `degraded` with `slow:["kv"]`. That is expected, not an outage. The prober does not alert on degraded.
