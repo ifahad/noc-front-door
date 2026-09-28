@@ -12,6 +12,12 @@ export type SecretsLike = Pick<Env, "SECRETS">;
 
 const secretGetters = new WeakMap<SecretsLike, Map<string, SecretGetter>>();
 
+const SECRET_ATTEMPTS = 3;
+
+function sleep(ms: number): Promise<void> {
+  return new Promise<void>((resolve) => setTimeout(resolve, ms));
+}
+
 export function getSecret(
   env: SecretsLike,
   name: SecretName,
@@ -24,12 +30,37 @@ export function getSecret(
   let get = byName.get(name);
   if (get === undefined) {
     get = makeTokenCache(async () => {
-      try {
-        const raw = await env.SECRETS.get(name);
-        return typeof raw === "string" && raw.length > 0 ? raw : null;
-      } catch {
-        return null;
+      for (let attempt = 1; attempt <= SECRET_ATTEMPTS; attempt += 1) {
+        let error = "empty";
+        try {
+          const raw = await env.SECRETS.get(name);
+          if (typeof raw === "string" && raw.length > 0) {
+            if (attempt > 1) {
+              logEvent("secret.read_recovered", {
+                hop: "env",
+                secret: name,
+                attempts: attempt,
+              });
+            }
+            return raw;
+          }
+        } catch (err) {
+          error =
+            err instanceof Error && err.message.length > 0
+              ? err.message
+              : "error";
+        }
+        logEvent("secret.read_failed", {
+          hop: "env",
+          lvl: "warn",
+          secret: name,
+          attempt,
+          outcome: "error",
+          error,
+        });
+        if (attempt < SECRET_ATTEMPTS) await sleep(attempt === 1 ? 50 : 150);
       }
+      return null;
     });
     byName.set(name, get);
   }

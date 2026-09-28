@@ -18,6 +18,8 @@ export const SESSION_FALLBACK =
   "I can't reach our network systems right now, but I can still log your ticket.";
 const NOT_YOUR_SITE = "I can only look up your own site.";
 const NOT_FOUND = "I couldn't find that branch for your organisation.";
+const NEED_VERIFY =
+  "I can look up branches only after you're verified with your site ID and PIN.";
 const INCIDENT_LOOKUP_FAIL = "I can't check incidents right now.";
 const NO_TICKET = "I don't see an open ticket for that branch.";
 const WRITE_NOT_ALLOWED = "I can only add notes to tickets for your own site.";
@@ -320,6 +322,9 @@ export function registerMcpTools(server: McpServer, base: ToolCtx): void {
       }
       const scope = ctx.scope;
       const customerId = scope === "session" ? (sessionOf(ctx) as Session).customer_id : null;
+      if (scope === "session" && customerId === null) {
+        return spoken({ speech: NEED_VERIFY, outcome: "fallback" });
+      }
       const site =
         scope === "ops"
           ? await ctx.adapter.resolveSiteGlobal(args.description)

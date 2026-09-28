@@ -1,7 +1,11 @@
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import type { Env } from "@telnyx/edge-runtime";
 import { getSecret, loadSeedLocal, makeAdapter } from "../src/env";
 import type { SeedLocalConfig } from "../../shared/src/itsm";
+
+afterEach(() => {
+  vi.useRealTimers();
+});
 
 const PEPPER = ["p", "e", "pp", "er"].join("");
 const PHONE = ["+", "1", "312", "555", "0101"].join("");
@@ -20,6 +24,44 @@ const SEED_JSON = JSON.stringify({
 });
 
 type SecretMap = Record<string, string | null>;
+
+type SecretStep = string | null | Error;
+
+interface ScriptedEnv {
+  env: Env;
+  calls: { name: string }[];
+}
+
+function makeScriptedEnv(steps: SecretStep[]): ScriptedEnv {
+  const calls: { name: string }[] = [];
+  const script = [...steps];
+  const env = {
+    SECRETS: {
+      get: async (name: string) => {
+        calls.push({ name });
+        const step = script.shift();
+        if (step === undefined) throw new Error("script_exhausted");
+        if (step instanceof Error) throw step;
+        return step;
+      },
+    },
+  } as unknown as Env;
+  return { env, calls };
+}
+
+function eventsOf(logs: string[], evt: string): Record<string, unknown>[] {
+  return logs
+    .map((l) => JSON.parse(l) as Record<string, unknown>)
+    .filter((l) => l.evt === evt);
+}
+
+function captureLogs(): string[] {
+  const logs: string[] = [];
+  vi.spyOn(console, "log").mockImplementation((line: unknown) => {
+    logs.push(String(line));
+  });
+  return logs;
+}
 
 function makeEnv(values: SecretMap): Env {
   return {
@@ -65,6 +107,91 @@ describe("getSecret", () => {
     const env = makeEnv({ PIN_PEPPER: PEPPER, MCP_TOKEN: "mcp-token-value" });
     expect(await getSecret(env, "PIN_PEPPER")).toBe(PEPPER);
     expect(await getSecret(env, "MCP_TOKEN")).toBe("mcp-token-value");
+  });
+
+  describe("retries a failing read and explains itself", () => {
+    it("succeeds on the second attempt after a throw and logs read_failed then read_recovered", async () => {
+      vi.useFakeTimers();
+      const logs = captureLogs();
+      try {
+        const { env, calls } = makeScriptedEnv([
+          new Error("secret_store_down"),
+          PEPPER,
+        ]);
+        const pending = getSecret(env, "PIN_PEPPER");
+        await vi.runAllTimersAsync();
+        expect(await pending).toBe(PEPPER);
+        expect(calls).toHaveLength(2);
+        const failed = eventsOf(logs, "secret.read_failed");
+        expect(failed).toHaveLength(1);
+        expect(failed[0]).toMatchObject({
+          hop: "env",
+          attempt: 1,
+          outcome: "error",
+          error: "secret_store_down",
+        });
+        expect(failed[0]?.lvl).toBe("warn");
+        const recovered = eventsOf(logs, "secret.read_recovered");
+        expect(recovered).toHaveLength(1);
+        expect(recovered[0]).toMatchObject({ hop: "env", attempts: 2 });
+      } finally {
+        vi.restoreAllMocks();
+        vi.useRealTimers();
+      }
+    });
+
+    it("returns null after three empty reads and logs three failures", async () => {
+      vi.useFakeTimers();
+      const logs = captureLogs();
+      try {
+        const { env, calls } = makeScriptedEnv(["", "", ""]);
+        const pending = getSecret(env, "PIN_PEPPER");
+        await vi.runAllTimersAsync();
+        expect(await pending).toBeNull();
+        expect(calls).toHaveLength(3);
+        const failed = eventsOf(logs, "secret.read_failed");
+        expect(failed.map((f) => f.attempt)).toEqual([1, 2, 3]);
+        expect(failed.map((f) => f.error)).toEqual(["empty", "empty", "empty"]);
+        expect(failed.map((f) => f.lvl)).toEqual(["warn", "warn", "warn"]);
+        expect(failed.map((f) => f.outcome)).toEqual(["error", "error", "error"]);
+        expect(eventsOf(logs, "secret.read_recovered")).toHaveLength(0);
+      } finally {
+        vi.restoreAllMocks();
+        vi.useRealTimers();
+      }
+    });
+
+    it("never logs the secret value", async () => {
+      vi.useFakeTimers();
+      const logs = captureLogs();
+      try {
+        const recovering = makeScriptedEnv([
+          new Error("secret_store_down"),
+          "",
+          PEPPER,
+        ]);
+        const recoveredRead = getSecret(recovering.env, "PIN_PEPPER");
+        await vi.runAllTimersAsync();
+        expect(await recoveredRead).toBe(PEPPER);
+        const failing = makeScriptedEnv(["", "", ""]);
+        const failingRead = getSecret(failing.env, "MCP_TOKEN");
+        await vi.runAllTimersAsync();
+        expect(await failingRead).toBeNull();
+        expect(logs.join("\n")).not.toContain(PEPPER);
+        expect(eventsOf(logs, "secret.read_failed")).toHaveLength(5);
+        expect(eventsOf(logs, "secret.read_recovered")).toHaveLength(1);
+      } finally {
+        vi.restoreAllMocks();
+        vi.useRealTimers();
+      }
+    });
+
+    it("returns a cached good value without calling SECRETS again", async () => {
+      const { env, calls } = makeScriptedEnv([PEPPER]);
+      expect(await getSecret(env, "PIN_PEPPER")).toBe(PEPPER);
+      expect(await getSecret(env, "PIN_PEPPER")).toBe(PEPPER);
+      expect(calls).toHaveLength(1);
+    });
   });
 });
 

@@ -280,6 +280,21 @@ describe("MCP session scope", () => {
     expect(textOf(result)).toBe("I couldn't find that branch for your organisation.");
   });
 
+  it("asks for verification when the linked session has no organisation", async () => {
+    deps = makeDeps();
+    startLogs();
+    await deps.kv.put(kvKey("conv", CONV), "kunscoped00000001");
+    client = await connectClient(deps, MCP_TOKEN);
+    const result = await callTool(client, "find_site", {
+      description: "JED zero zero seven",
+    });
+    expect(result.isError).not.toBe(true);
+    expect(textOf(result)).toBe(
+      "I can look up branches only after you're verified with your site ID and PIN.",
+    );
+    expect(eventsWith("mcp.tool")[0]?.outcome).toBe("fallback");
+  });
+
   it("refuses another tenant's site and logs auth.denied", async () => {
     deps = makeDeps();
     startLogs();
