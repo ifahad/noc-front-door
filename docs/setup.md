@@ -15,9 +15,11 @@ Prerequisites: a Telnyx account + API key (a Trial is fine), the [`telnyx-edge` 
    - `TELNYX_PUBLIC_KEY` — the account public key used to verify Ed25519 webhook signatures (fetched by setup-edge.sh if empty).
    - `EDGE_URL` — the deployed `noc-edge` origin; every script (prober, ops.mjs, apply, race-test) reads it.
    - `ONCALL_NUMBER` — the on-call engineer's E.164 transfer destination; required by `scripts/apply.mjs` (empty is fine for `--dry-run`).
+   - `SANAD_NUMBER` — Sanad's own Telnyx number (E.164), the caller ID presented when Sanad transfers to on-call; required by `scripts/apply.mjs` (empty is fine for `--dry-run`).
 3. **`bash scripts/setup-edge.sh`** — idempotent: creates/verifies the **KV namespace `noc-kv`** (polls readiness, prints `KV_NAMESPACE_ID`), generates `MCP_TOKEN`/`OPS_TOKEN`/`PIN_PEPPER` if missing, fetches `TELNYX_PUBLIC_KEY`, writes the generated values back to `.env`, and pushes the four Edge secrets.
 4. **Per-function secrets** — `edge/noc-edge/telnyx.toml` declares seven `[[secrets]]` bindings; setup-edge.sh pushes `TELNYX_PUBLIC_KEY`, `MCP_TOKEN`, `OPS_TOKEN`, `PIN_PEPPER` (account-scoped; `OPS_TOKEN` is also bound in `edge/noc-actor-host/telnyx.toml`). Add the remaining three with `telnyx-edge secrets add <NAME> <value>`:
    - `ONCALL_NUMBER` — the verified on-call number Sanad transfers to.
+   - `SANAD_NUMBER` — Sanad's own verified number, the transfer caller ID (apply-time `.env` value; not an edge secret).
    - `SEED_LOCAL` — JSON with the demo PINs and contact phone numbers; the committed seed carries no secrets, PINs live only here.
    - `DEMO_GUIDE` — the scenario copy + PIN chips served on `/demo`, so no PIN literal exists in code.
 5. **Telnyx Cloud Storage** — create an S3-compatible **bucket in `us-central-1`** (this deployment: `noc-reports-fb8131`) and set `bucket_name` + `region` under `[storage.cloudstorage.REPORTS]` in `edge/noc-edge/telnyx.toml`.

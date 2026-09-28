@@ -187,7 +187,7 @@
           "to": "${ONCALL_NUMBER}"
         }
       ],
-      "from": "{{telnyx_agent_target}}",
+      "from": "${SANAD_NUMBER}",
       "voicemail_detection": {
         "detection_mode": "premium",
         "on_voicemail_detected": {

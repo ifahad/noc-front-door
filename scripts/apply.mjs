@@ -70,6 +70,10 @@ async function main() {
     console.error('ONCALL_NUMBER is required');
     process.exit(1);
   }
+  if (!DRY_RUN && !process.env.SANAD_NUMBER) {
+    console.error('SANAD_NUMBER is required');
+    process.exit(1);
+  }
 
   const tools = await readJson('assistant/tools.json');
   const mcp = await readJson('assistant/mcp.json');
@@ -82,6 +86,7 @@ async function main() {
   const dryVars = {
     EDGE_URL,
     ONCALL_NUMBER: process.env.ONCALL_NUMBER ?? 'DRYRUN_ONCALL_NUMBER',
+    SANAD_NUMBER: process.env.SANAD_NUMBER ?? 'DRYRUN_SANAD_NUMBER',
     MCP_ID: 'DRYRUN_noc-mcp',
     ASSISTANT_AR_ID: 'DRYRUN_sanad-noc-ar',
   };
@@ -133,7 +138,11 @@ async function main() {
     return;
   }
 
-  const vars = { EDGE_URL, ONCALL_NUMBER: process.env.ONCALL_NUMBER };
+  const vars = {
+    EDGE_URL,
+    ONCALL_NUMBER: process.env.ONCALL_NUMBER,
+    SANAD_NUMBER: process.env.SANAD_NUMBER,
+  };
   const state = {};
   let exitCode = 0;
 
