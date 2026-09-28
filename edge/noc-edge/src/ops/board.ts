@@ -30,14 +30,17 @@ export interface BoardDeps {
 
 // Viewer protection: the board is the demo page's public read path, so the
 // single actor instance must not see one build per viewer. Callers join an
-// in-flight build regardless of its age; once a build settles successfully the
-// reuse window runs for BOARD_TTL_MS from the settle time observed by the
-// latest joiner (or the building request itself when nobody joins); a rejected
-// build is dropped so the next request rebuilds.
-const BOARD_TTL_MS = 8_000;
+// in-flight build; once a build settles successfully the reuse window runs
+// for BOARD_TTL_MS (DEGRADED_TTL_MS when the build was degraded) measured
+// from the real settle time, not the request start, so a slow build is not
+// thrown away the moment it lands and a 5 s poller amortises one build; a
+// rejected build is dropped so the next request rebuilds.
+const BOARD_TTL_MS = 30_000;
+const DEGRADED_TTL_MS = 10_000;
 
 interface BoardCacheEntry {
   settledAt: number | undefined;
+  degraded: boolean;
   promise: Promise<BoardPayload>;
 }
 
@@ -46,25 +49,18 @@ const boardCaches = new WeakMap<object, BoardCacheEntry>();
 export function getBoard(cacheKey: object, deps: BoardDeps): Promise<BoardPayload> {
   const existing = boardCaches.get(cacheKey);
   if (existing !== undefined) {
-    if (existing.settledAt === undefined || deps.now - existing.settledAt < BOARD_TTL_MS) {
-      if (existing.settledAt === undefined) {
-        const observedAt = deps.now;
-        existing.promise.then(
-          () => {
-            existing.settledAt = observedAt;
-          },
-          () => {},
-        );
-      }
+    const ttl = existing.degraded ? DEGRADED_TTL_MS : BOARD_TTL_MS;
+    if (existing.settledAt === undefined || Date.now() - existing.settledAt < ttl) {
       return existing.promise;
     }
   }
   const promise = buildBoard(deps);
-  const entry: BoardCacheEntry = { settledAt: undefined, promise };
+  const entry: BoardCacheEntry = { settledAt: undefined, degraded: false, promise };
   boardCaches.set(cacheKey, entry);
   promise.then(
-    () => {
-      entry.settledAt = deps.now;
+    (payload) => {
+      entry.settledAt = Date.now();
+      entry.degraded = payload.degraded === true;
     },
     () => {
       if (boardCaches.get(cacheKey) === entry) boardCaches.delete(cacheKey);

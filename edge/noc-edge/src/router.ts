@@ -321,7 +321,7 @@ async function readJsonBody(request: Request): Promise<unknown> {
 }
 
 // Public viewer route. It rides the same single-flight board cache as
-// /ops/board (one build per ~8 s window per isolate), so a curl loop or an
+// /ops/board (one build per ~30 s window per isolate), so a curl loop or an
 // auto-refreshing tab cannot load the single mux actor through /ops/status
 // (final review F2).
 async function routeOpsStatus(request: Request, env: NocEdgeEnv): Promise<Response> {
@@ -382,6 +382,19 @@ async function routeOpsHealth(env: NocEdgeEnv, opsToken: string): Promise<Respon
   return Response.json(result);
 }
 
+// The demo page, served identically at / and /demo: same render, same
+// headers, same 405 for every other method.
+async function routeDemo(request: Request, env: NocEdgeEnv): Promise<Response> {
+  const headers = {
+    "content-type": "text/html; charset=utf-8",
+    "cache-control": "no-store",
+    "x-content-type-options": "nosniff",
+    "referrer-policy": "no-referrer",
+  };
+  if (request.method === "HEAD") return new Response(null, { status: 200, headers });
+  return new Response(renderDemoPage(await loadDemoGuide(env)), { status: 200, headers });
+}
+
 export async function route(
   request: Request,
   env: NocEdgeEnv,
@@ -430,20 +443,11 @@ export async function route(
     }
     return withErrorHandling("ops/board", () => routeOpsBoard(request, env));
   }
-  if (url.pathname === "/demo") {
+  if (url.pathname === "/" || url.pathname === "/demo") {
     if (request.method !== "GET" && request.method !== "HEAD") {
       return Response.json({ error: "method_not_allowed" }, { status: 405 });
     }
-    return withErrorHandling("demo", async () => {
-      const headers = {
-        "content-type": "text/html; charset=utf-8",
-        "cache-control": "no-store",
-        "x-content-type-options": "nosniff",
-        "referrer-policy": "no-referrer",
-      };
-      if (request.method === "HEAD") return new Response(null, { status: 200, headers });
-      return new Response(renderDemoPage(await loadDemoGuide(env)), { status: 200, headers });
-    });
+    return withErrorHandling("demo", () => routeDemo(request, env));
   }
   if (request.method === "GET" && url.pathname === "/ops/health/deep") {
     return routeOps(request, env, "ops/health", async () => {

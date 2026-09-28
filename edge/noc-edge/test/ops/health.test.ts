@@ -4,6 +4,7 @@ import type { SeedLocalConfig } from "../../../shared/src/itsm";
 import { SITES } from "../../../shared/src/seed";
 import { kvKey } from "../../../shared/src/kvkeys";
 import type { KvPort } from "../../src/services/kvPort";
+import type { ActorPort, SiteStateApi } from "../../src/services/actorPort";
 import { resetCanaryCounters, runDeepHealth, type HealthDeps } from "../../src/ops/health";
 import { FakeActorPort } from "../fakes/actors";
 import { FakeKv, slowKv } from "../fakes/kv";
@@ -41,7 +42,7 @@ function eventsWith(evt: string): LogLine[] {
 
 interface DepsOpts {
   kv?: KvPort;
-  actors?: FakeActorPort;
+  actors?: ActorPort;
   now?: number;
   opsToken?: string;
   mcpToken?: string;
@@ -307,5 +308,136 @@ describe("ops health deep", () => {
     await runDeepHealth(makeDeps({ kv, now: T0 + 1000 }));
     const more = kv.calls.filter((c) => c.op === "get" && c.key.startsWith("flag/")).length;
     expect(more).toBe(flagGets);
+  });
+});
+
+// An actor port whose site getTicket calls hang forever without rejecting,
+// like the platform actor runtime did during the 2026-09-28 outage. Every
+// other call goes through to the inner fake, so only the site canary check
+// (and not the sync check's region calls) hangs.
+function hangSiteGetTickets(inner: ActorPort): ActorPort {
+  return {
+    site: (siteId: string) => {
+      const api = inner.site(siteId);
+      return new Proxy(api, {
+        get(target, prop) {
+          if (prop === "getTicket") {
+            return () => new Promise<never>(() => undefined);
+          }
+          const value = Reflect.get(target, prop, target);
+          return typeof value === "function"
+            ? (value as (...args: unknown[]) => unknown).bind(target)
+            : value;
+        },
+      }) as SiteStateApi;
+    },
+    region: (region: string) => inner.region(region),
+  };
+}
+
+describe("ops health actor-hang streak and sync throttle", () => {
+  it("stays ok with one hung actor probe and reports it as timed out", { timeout: 15000 }, async () => {
+    const result = await runDeepHealth(makeDeps({ actors: hangSiteGetTickets(new FakeActorPort()) }));
+    expect(result.ok).toBe(true);
+    expect(result.actor_hung).toBe(false);
+    expect(result.timed_out).toContain("actor");
+    const checks = eventsWith("canary.check");
+    expect(checks).toHaveLength(1);
+    expect(checks[0].actor_hung).toBe(false);
+  });
+
+  it("marks the actor hung after two consecutive hung probes and resets on a healthy probe", { timeout: 20000 }, async () => {
+    const actors = hangSiteGetTickets(new FakeActorPort());
+    const deps = makeDeps({ actors });
+    const first = await runDeepHealth(deps);
+    expect(first.ok).toBe(true);
+    const second = await runDeepHealth(deps);
+    expect(second.ok).toBe(false);
+    expect(second.actor_hung).toBe(true);
+    const checks = eventsWith("canary.check");
+    expect(checks).toHaveLength(2);
+    expect(checks[1].ok).toBe(false);
+    expect(checks[1].actor_hung).toBe(true);
+
+    const healthy = await runDeepHealth(makeDeps());
+    expect(healthy.ok).toBe(true);
+    expect(healthy.actor_hung).toBe(false);
+    const after = eventsWith("canary.check");
+    expect(after).toHaveLength(3);
+    expect(after[2].actor_hung).toBe(false);
+  });
+
+  it("resetCanaryCounters clears the hang streak and the sync clock", { timeout: 20000 }, async () => {
+    const actors = hangSiteGetTickets(new FakeActorPort());
+    const deps = makeDeps({ actors });
+    await runDeepHealth(deps);
+    expect((await runDeepHealth(deps)).ok).toBe(false);
+    resetCanaryCounters();
+    const third = await runDeepHealth(deps);
+    expect(third.ok).toBe(true);
+    expect(third.actor_hung).toBe(false);
+  });
+
+  it("runs the sync check at most once per 30 s and skips it as ok and not slow in between", async () => {
+    const kv = new FakeKv();
+    const actors = new FakeActorPort();
+    const ruh121 = await actors.site("RUH-121").openOrAttach({
+      k: "s1",
+      trace_id: "t-1",
+      callerRef: "none",
+      symptom: "WAN link down",
+      impact: "site_down",
+      serviceAffecting: true,
+      priority: "P2",
+      at: T0,
+      siteCode: "21",
+    });
+    const ruh133 = await actors.site("RUH-133").openOrAttach({
+      k: "s2",
+      trace_id: "t-2",
+      callerRef: "none",
+      symptom: "WAN link down",
+      impact: "site_down",
+      serviceAffecting: true,
+      priority: "P2",
+      at: T0,
+      siteCode: "33",
+    });
+    await actors.region("riyadh-north").reportSite({
+      siteId: "RUH-121",
+      ticketId: ruh121.ticket.id,
+      regionCode: "1",
+      trace_id: "t-1",
+      at: T0,
+    });
+    await actors.region("riyadh-north").reportSite({
+      siteId: "RUH-133",
+      ticketId: ruh133.ticket.id,
+      regionCode: "1",
+      trace_id: "t-2",
+      at: T0,
+    });
+    const key = kvKey("incident", "active", "riyadh-north");
+    const syncWrites = () =>
+      kv.calls.filter((c) => (c.op === "put" || c.op === "delete") && c.key === key).length;
+
+    const first = await runDeepHealth(makeDeps({ kv, actors }));
+    expect(first.checks.sync_skipped).toBeUndefined();
+    const afterFirst = syncWrites();
+    expect(afterFirst).toBeGreaterThan(0);
+
+    const second = await runDeepHealth(makeDeps({ kv, actors, now: T0 + 1_000 }));
+    expect(second.checks.sync_skipped).toBe(true);
+    expect(second.checks.sync_ms).toBe(0);
+    expect(second.ok).toBe(true);
+    expect(second.degraded).toBe(false);
+    expect(second.slow).not.toContain("sync");
+    expect(second.timed_out).not.toContain("sync");
+    expect(syncWrites()).toBe(afterFirst);
+
+    const third = await runDeepHealth(makeDeps({ kv, actors, now: T0 + 30_000 }));
+    expect(third.checks.sync_skipped).toBeUndefined();
+    expect(third.ok).toBe(true);
+    expect(syncWrites()).toBeGreaterThan(afterFirst);
   });
 });

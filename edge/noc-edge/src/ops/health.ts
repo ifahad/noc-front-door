@@ -13,11 +13,14 @@ import { handleMcp } from "../mcp/server";
 // KV on this account takes ~1.5 s per read from the edge binding (LIVE
 // EVIDENCE, DEBUGLOG #6). Each check gets a deadline of 4 s; hitting the
 // deadline means the check is SLOW, not broken — slow is not down (README:91),
-// so a timeout keeps ok true and is reported separately. Per-check slow
-// thresholds sit just under the deadline at the measured baseline: kvCheck
-// runs a put and a get back to back (~2–4 s), syncProjection runs one actor
-// call plus one KV write per region (~2–3 s), one actor call is ~1–2 s, and
-// the in-process MCP tools/list carries the same platform jitter budget.
+// so a timeout keeps ok true and is reported separately. The one exception is
+// the actor check: a hang that outlives two probes is down (actor_hung),
+// because the 2026-09-28 platform actor outage showed up exactly as hangs
+// while the canary still reported ok. Per-check slow thresholds sit just
+// under the deadline at the measured baseline: kvCheck runs a put and a get
+// back to back (~2–4 s), syncProjection runs one actor call plus one KV write
+// per region (~2–3 s), one actor call is ~1–2 s, and the in-process MCP
+// tools/list carries the same platform jitter budget.
 const CHECK_DEADLINE_MS = 4000;
 const CHECK_NAMES = ["kv", "actor", "mcp", "sync"] as const;
 type CheckName = (typeof CHECK_NAMES)[number];
@@ -28,16 +31,19 @@ const SLOW_THRESHOLD_MS: Record<CheckName, number> = {
   sync: 3000,
 };
 const SUMMARY_INTERVAL_MS = 60_000;
+const SYNC_INTERVAL_MS = 30_000;
 
 export interface HealthChecks {
   kv_ms: number;
   actor_ms: number;
   mcp_ms: number;
   sync_ms: number;
+  sync_skipped?: boolean;
 }
 
 export interface DeepHealth {
   ok: boolean;
+  actor_hung: boolean;
   degraded: boolean;
   slow: string[];
   timed_out: string[];
@@ -59,10 +65,14 @@ export interface HealthDeps {
 
 let lastOutcome: boolean | null = null;
 let lastSummaryAt = 0;
+let actorHangStreak = 0;
+let lastSyncAt = 0;
 
 export function resetCanaryCounters(): void {
   lastOutcome = null;
   lastSummaryAt = 0;
+  actorHangStreak = 0;
+  lastSyncAt = 0;
 }
 
 interface CheckResult {
@@ -177,6 +187,18 @@ async function mcpCheck(deps: HealthDeps): Promise<CheckResult> {
   return { ms: Date.now() - started, ok, timed_out: false };
 }
 
+// A skipped sync check reports as healthy and free, so a 10 s probe does not
+// pay the 4 region actor calls and KV writes on every tick; healing now takes
+// at most 30 s, and the direct writers that sync on change are unchanged.
+const SYNC_SKIPPED: CheckResult = { ms: 0, ok: true, timed_out: false };
+
+// lastSyncAt is the deps.now of the probe that last ran the sync check; a
+// probe within 30 s of it reports the skipped result instead.
+function runSyncCheck(deps: HealthDeps): Promise<CheckResult> {
+  lastSyncAt = deps.now;
+  return syncCheck(deps);
+}
+
 async function syncCheck(deps: HealthDeps): Promise<CheckResult> {
   const started = Date.now();
   const raced = await Promise.all(
@@ -232,14 +254,27 @@ export async function runDeepHealth(deps: HealthDeps): Promise<DeepHealth> {
   // Keep-warm for the flags memo (spec §11.4): the external prober hits this
   // endpoint every 10 s, so its read keeps flags hot for /dv. Value ignored.
   const warmP = deadline(readFlags(deps.kv, deps.now), CHECK_DEADLINE_MS, "health.warm");
+  const syncDue = deps.now - lastSyncAt >= SYNC_INTERVAL_MS;
   const [kv, actor, mcp, sync, warm] = await Promise.all([
     kvCheck(deps.kv, deps.now),
     actorCheck(deps.actors),
     mcpCheck(deps),
-    syncCheck(deps),
+    syncDue ? runSyncCheck(deps) : SYNC_SKIPPED,
     warmP,
   ]);
   void warm;
+  // A hang is not a failure but it is not health either: one probe that times
+  // out on an actor call keeps ok (reported in timed_out), while two probes
+  // in a row flip the canary down with actor_hung, so a platform outage that
+  // only manifests as hangs is visible. Either check timing out counts — a
+  // hang on the region path (sync) is the same actor runtime. A skipped sync
+  // check reports timed_out false, so it can never feed the streak.
+  if (actor.timed_out || sync.timed_out) {
+    actorHangStreak += 1;
+  } else {
+    actorHangStreak = 0;
+  }
+  const actorHung = actorHangStreak >= 2;
   const config = configCheck(deps);
   if (!config.ok) {
     logEvent("config.invalid", {
@@ -257,12 +292,13 @@ export async function runDeepHealth(deps: HealthDeps): Promise<DeepHealth> {
     ["sync", sync],
   ];
   const ok =
-    results.every(([, c]) => c.ok) && config.ok;
+    results.every(([, c]) => c.ok) && config.ok && !actorHung;
   const checks: HealthChecks = {
     kv_ms: kv.ms,
     actor_ms: actor.ms,
     mcp_ms: mcp.ms,
     sync_ms: sync.ms,
+    ...(syncDue ? {} : { sync_skipped: true }),
   };
   const timedOut = results.filter(([, c]) => c.timed_out).map(([name]) => name);
   // A timed-out check is definitionally slow; the rest are slow only past
@@ -276,9 +312,10 @@ export async function runDeepHealth(deps: HealthDeps): Promise<DeepHealth> {
   // The heartbeat write must not sit on the response path when KV is slow:
   // it is fired through deadline (which attaches .catch) and left running.
   deadline(writeHeartbeat(deps, ok, checks), CHECK_DEADLINE_MS, "health.heartbeat");
-  logCanary(ok, checks, deps, Date.now() - started);
+  logCanary(ok, checks, deps, Date.now() - started, actorHung);
   return {
     ok,
+    actor_hung: actorHung,
     degraded: slow.length > 0,
     slow,
     timed_out: timedOut,
@@ -313,6 +350,7 @@ function logCanary(
   checks: HealthChecks,
   deps: HealthDeps,
   total_ms: number,
+  actor_hung: boolean,
 ): void {
   if (ok !== lastOutcome) {
     lastOutcome = ok;
@@ -321,6 +359,7 @@ function logCanary(
       trace_id: deps.trace_id,
       outcome: ok ? "ok" : "error",
       ok,
+      actor_hung,
       total_ms,
     });
   }
@@ -331,6 +370,7 @@ function logCanary(
       trace_id: deps.trace_id,
       outcome: ok ? "ok" : "error",
       ok,
+      actor_hung,
       ...checks,
       total_ms,
     });

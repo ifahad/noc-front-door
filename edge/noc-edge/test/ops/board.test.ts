@@ -17,6 +17,7 @@ beforeEach(() => {
 });
 afterEach(() => {
   vi.restoreAllMocks();
+  vi.useRealTimers();
 });
 
 const regionOf = new Map(SITES.map((s) => [s.site_id, s.region]));
@@ -74,21 +75,36 @@ describe("ops board cache", () => {
     expect(third).toBe(a);
   });
 
-  it("starts a second build when the cached board is 9 s old", async () => {
+  it("starts a second build once the cached board is 30 s past settle", async () => {
     const kv = new FakeKv();
     const actors = new FakeActorPort();
     const counters: Counters = { builds: 0 };
     const deps = makeDeps(kv, actors, counters);
     const cacheKey = {};
+    vi.useFakeTimers();
+    try {
+      vi.setSystemTime(T0);
+      const first = await getBoard(cacheKey, deps(T0));
+      expect(first.sites.find((s) => s.site_id === "RUH-121")?.open_ticket).toBeNull();
 
-    const first = await getBoard(cacheKey, deps(T0));
-    expect(first.sites.find((s) => s.site_id === "RUH-121")?.open_ticket).toBeNull();
+      await openSiteTicket(actors, "RUH-121", "21", "bb22cc33dd44ee55", T0 + 6_000);
+      vi.setSystemTime(T0 + 5_000);
+      const poll = await getBoard(cacheKey, deps(T0 + 5_000));
+      expect(counters.builds).toBe(1);
+      expect(poll).toBe(first);
+      vi.setSystemTime(T0 + 29_999);
+      const near = await getBoard(cacheKey, deps(T0 + 29_999));
+      expect(counters.builds).toBe(1);
+      expect(near).toBe(first);
 
-    await openSiteTicket(actors, "RUH-121", "21", "bb22cc33dd44ee55", T0 + 6_000);
-    const second = await getBoard(cacheKey, deps(T0 + 9_000));
-    expect(counters.builds).toBe(2);
-    expect(second.sites.find((s) => s.site_id === "RUH-121")?.open_ticket).not.toBeNull();
-    expect(second).not.toBe(first);
+      vi.setSystemTime(T0 + 30_000);
+      const fresh = await getBoard(cacheKey, deps(T0 + 30_000));
+      expect(counters.builds).toBe(2);
+      expect(fresh.sites.find((s) => s.site_id === "RUH-121")?.open_ticket).not.toBeNull();
+      expect(fresh).not.toBe(first);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it("rebuilds on the next request after a failed build", async () => {
@@ -121,7 +137,7 @@ describe("ops board cache", () => {
     }
   });
 
-  it("joins an in-flight build past the TTL and reuses it for 8 s after settle observation", async () => {
+  it("reuses a slow build for the full 30 s measured from settle, not from the start", async () => {
     const kv = new FakeKv();
     const actors = new FakeActorPort();
     await openSiteTicket(actors, "RUH-114", "14", "aa11bb22cc33dd44", T0);
@@ -132,24 +148,61 @@ describe("ops board cache", () => {
     });
     const deps = makeDeps(kv, actors, counters, { gate });
     const cacheKey = {};
+    vi.useFakeTimers();
+    try {
+      vi.setSystemTime(T0);
+      const first = getBoard(cacheKey, deps(T0));
+      vi.setSystemTime(T0 + 10_000);
+      const joined = getBoard(cacheKey, deps(T0 + 10_000));
+      expect(counters.builds).toBe(1);
 
-    const first = getBoard(cacheKey, deps(T0));
-    const joined = getBoard(cacheKey, deps(T0 + 9_000));
-    expect(counters.builds).toBe(1);
+      release();
+      const boards = await Promise.all([first, joined]);
+      expect(boards[1]).toBe(boards[0]);
 
-    release();
-    const boards = await Promise.all([first, joined]);
+      const rightAfterSettle = await getBoard(cacheKey, deps(T0 + 10_500));
+      expect(counters.builds).toBe(1);
+      expect(rightAfterSettle).toBe(boards[0]);
 
-    const observed = await getBoard(cacheKey, deps(T0 + 10_000));
-    expect(counters.builds).toBe(1);
-    expect(observed).toBe(boards[0]);
+      vi.setSystemTime(T0 + 39_999);
+      const near = await getBoard(cacheKey, deps(T0 + 39_999));
+      expect(counters.builds).toBe(1);
+      expect(near).toBe(boards[0]);
 
-    const stillFresh = await getBoard(cacheKey, deps(T0 + 16_999));
-    expect(counters.builds).toBe(1);
-    expect(stillFresh).toBe(boards[0]);
+      vi.setSystemTime(T0 + 40_000);
+      const expired = await getBoard(cacheKey, deps(T0 + 40_000));
+      expect(counters.builds).toBe(2);
+      expect(expired).not.toBe(boards[0]);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
 
-    await getBoard(cacheKey, deps(T0 + 17_000));
-    expect(counters.builds).toBe(2);
+  it("rebuilds a degraded board after 10 s while a healthy board stays for 30 s", async () => {
+    const kv = new FakeKv();
+    const actors = new FakeActorPort();
+    const counters: Counters = { builds: 0 };
+    const deps = makeDeps(kv, actors, counters);
+    const cacheKey = {};
+    vi.useFakeTimers();
+    try {
+      vi.setSystemTime(T0);
+      actors.failNextGetTicket("RUH-114", 1);
+      const degraded = await getBoard(cacheKey, deps(T0));
+      expect(degraded.degraded).toBe(true);
+      expect(counters.builds).toBe(1);
+
+      const withinTen = await getBoard(cacheKey, deps(T0 + 9_999));
+      expect(counters.builds).toBe(1);
+      expect(withinTen.degraded).toBe(true);
+
+      vi.setSystemTime(T0 + 10_000);
+      const rebuilt = await getBoard(cacheKey, deps(T0 + 10_000));
+      expect(counters.builds).toBe(2);
+      expect(rebuilt.degraded).toBeUndefined();
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it("keeps a slow in-flight build out of the actor path of later concurrent viewers", async () => {

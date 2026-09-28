@@ -312,16 +312,26 @@ describe("router actor-mode selection", () => {
     const { env, cache, pings } = await makePingEnv();
     await cache.put(kvKey("flag", "actor_mode"), "mux");
     (env as unknown as { CACHE: unknown }).CACHE = withSlowGet(cache, 400);
-    const res = await actorPing(env);
-    expect(res.status).toBe(200);
-    const out = (await res.json()) as { mode: string };
-    expect(out.mode).toBe("mux");
-    expect(pings.map((p) => p.method)).toEqual(["ping", "ping"]);
-    const reads = eventsWith("actor_mode.read");
-    expect(reads).toHaveLength(1);
-    expect(reads[0].lvl).toBe("info");
-    expect(reads[0].mode).toBe("mux");
-    expect(reads[0].total_ms).toBeGreaterThanOrEqual(400);
+    // Fake timers make the 400 ms sleep and the 2000 ms flags budget a race
+    // the read always wins, however loaded the CI box is; a real 400 ms sleep
+    // can overrun the budget under full-suite load and fall back instead.
+    vi.useFakeTimers();
+    try {
+      const pending = actorPing(env);
+      await vi.advanceTimersByTimeAsync(400);
+      const res = await pending;
+      expect(res.status).toBe(200);
+      const out = (await res.json()) as { mode: string };
+      expect(out.mode).toBe("mux");
+      expect(pings.map((p) => p.method)).toEqual(["ping", "ping"]);
+      const reads = eventsWith("actor_mode.read");
+      expect(reads).toHaveLength(1);
+      expect(reads[0].lvl).toBe("info");
+      expect(reads[0].mode).toBe("mux");
+      expect(reads[0].total_ms).toBeGreaterThanOrEqual(400);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it("picks the mux port on /dv from the same flags read when the read takes 400 ms", async () => {
@@ -778,5 +788,45 @@ describe("router /demo page", () => {
     expect(post.status).toBe(405);
     const del = await route(new Request(demoUrl(), { method: "DELETE" }), env);
     expect(del.status).toBe(405);
+  });
+});
+
+describe("router / root page", () => {
+  function rootUrl(): string {
+    return "https://noc-edge.telnyxcompute.com/";
+  }
+
+  it("serves the same page and headers at / as at /demo", async () => {
+    const { env } = await makeEnv();
+    const root = await route(new Request(rootUrl()), env);
+    const demo = await route(new Request("https://noc-edge.telnyxcompute.com/demo"), env);
+    expect(root.status).toBe(200);
+    expect(demo.status).toBe(200);
+    for (const header of ["content-type", "cache-control", "x-content-type-options", "referrer-policy"]) {
+      expect(root.headers.get(header)).toBe(demo.headers.get(header));
+    }
+    expect(root.headers.get("content-type")).toBe("text/html; charset=utf-8");
+    const rootHtml = await root.text();
+    expect(rootHtml).toBe(await demo.text());
+    expect(rootHtml).toContain("<title>Najd Networks NOC — Report an outage, 24/7</title>");
+    expect(rootHtml).toContain('agent-id="');
+  });
+
+  it("answers HEAD / with the same headers and an empty body", async () => {
+    const { env } = await makeEnv();
+    const res = await route(new Request(rootUrl(), { method: "HEAD" }), env);
+    expect(res.status).toBe(200);
+    expect(res.headers.get("content-type")).toBe("text/html; charset=utf-8");
+    expect(res.headers.get("cache-control")).toBe("no-store");
+    expect(await res.text()).toBe("");
+  });
+
+  it("rejects other methods on / with 405", async () => {
+    const { env } = await makeEnv();
+    for (const method of ["POST", "PUT", "DELETE", "PATCH"] as const) {
+      const res = await route(new Request(rootUrl(), { method }), env);
+      expect(res.status).toBe(405);
+      expect(await res.json()).toEqual({ error: "method_not_allowed" });
+    }
   });
 });
