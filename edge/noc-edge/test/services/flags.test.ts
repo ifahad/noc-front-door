@@ -1,5 +1,11 @@
 import { describe, expect, it } from "vitest";
-import { read } from "../../src/services/flags";
+import {
+  ACTOR_MODE_DEFAULT,
+  FALLBACK_FLAGS,
+  NEG_MEMO_MS,
+  __setNegJitterForTests,
+  read,
+} from "../../src/services/flags";
 import { kvKey } from "../../../shared/src/kvkeys";
 import { FakeKv } from "../fakes/kv";
 
@@ -118,22 +124,89 @@ describe("flags.read", () => {
     }
   });
 
-  it("a failed read does not poison the memo: the next call retries", async () => {
+  it("neg-memoises a failed read for 30 s: the next read returns FALLBACK_FLAGS without KV calls", async () => {
     const kv = kvFor();
     const slow = slowKv(kv, 20, { failGets: true });
+    __setNegJitterForTests(() => 0);
     await expect(read(slow, T0)).rejects.toThrow("injected_slow_error");
-    slow.failGets = false;
-    const flags = await read(slow, T0 + 10);
-    expect(flags).toEqual({
+    expect(await read(slow, T0 + 1000)).toEqual({
       deflection_enabled: true,
-      require_pin: false,
+      require_pin: true,
       demo_caller: null,
       fault_open_ticket: null,
       fault_dv_delay_ms: null,
-      actor_mode: "per-entity",
+      actor_mode: "mux",
     });
+    expect(await read(slow, T0 + 1000)).toBe(FALLBACK_FLAGS);
+    for (const key of FLAG_KEYS) {
+      expect(slow.getCalls(key)).toBe(1);
+    }
+  });
+
+  it("never serves actor_mode per-entity from the fallback", async () => {
+    const kv = kvFor();
+    const slow = slowKv(kv, 20, { failGets: true });
+    __setNegJitterForTests(() => 0);
+    await expect(read(slow, T0)).rejects.toThrow("injected_slow_error");
+    const flags = await read(slow, T0 + 1000);
+    expect(flags.actor_mode).toBe(ACTOR_MODE_DEFAULT);
+    expect(flags.actor_mode).not.toBe("per-entity");
+  });
+
+  it("the negative memo serves the last successful flags", async () => {
+    const kv = kvFor();
+    const slow = slowKv(kv, 20);
+    __setNegJitterForTests(() => 0);
+    await kv.put(kvKey("flag", "require_pin"), "true");
+    await kv.put(kvKey("flag", "actor_mode"), "per-entity");
+    expect((await read(slow, T0)).require_pin).toBe(true);
+    slow.failGets = true;
+    await expect(read(slow, T0 + 61_000)).rejects.toThrow("injected_slow_error");
+    const flags = await read(slow, T0 + 61_500);
+    expect(flags.require_pin).toBe(true);
+    expect(flags.actor_mode).toBe("per-entity");
     for (const key of FLAG_KEYS) {
       expect(slow.getCalls(key)).toBe(2);
+    }
+  });
+
+  it("retries KV after the negative memo expires", async () => {
+    const kv = kvFor();
+    const slow = slowKv(kv, 20, { failGets: true });
+    __setNegJitterForTests(() => 1234);
+    await expect(read(slow, T0)).rejects.toThrow("injected_slow_error");
+    expect(await read(slow, T0 + NEG_MEMO_MS - 1)).toEqual(FALLBACK_FLAGS);
+    expect(await read(slow, T0 + NEG_MEMO_MS + 1233)).toEqual(FALLBACK_FLAGS);
+    for (const key of FLAG_KEYS) {
+      expect(slow.getCalls(key)).toBe(1);
+    }
+    await expect(read(slow, T0 + NEG_MEMO_MS + 1234)).rejects.toThrow(
+      "injected_slow_error",
+    );
+    for (const key of FLAG_KEYS) {
+      expect(slow.getCalls(key)).toBe(2);
+    }
+    expect(await read(slow, T0 + NEG_MEMO_MS + 1235)).toEqual(FALLBACK_FLAGS);
+    for (const key of FLAG_KEYS) {
+      expect(slow.getCalls(key)).toBe(2);
+    }
+  });
+
+  it("a success after a failure restores the normal 60 s memo", async () => {
+    const kv = kvFor();
+    const slow = slowKv(kv, 20, { failGets: true });
+    __setNegJitterForTests(() => 0);
+    await expect(read(slow, T0)).rejects.toThrow("injected_slow_error");
+    expect(await read(slow, T0 + 1000)).toEqual(FALLBACK_FLAGS);
+    slow.failGets = false;
+    await kv.put(kvKey("flag", "require_pin"), "true");
+    const at = T0 + NEG_MEMO_MS;
+    expect((await read(slow, at)).require_pin).toBe(true);
+    await kv.put(kvKey("flag", "require_pin"), "false");
+    expect((await read(slow, at + 59_999)).require_pin).toBe(true);
+    expect((await read(slow, at + 60_000)).require_pin).toBe(false);
+    for (const key of FLAG_KEYS) {
+      expect(slow.getCalls(key)).toBe(3);
     }
   });
 });
