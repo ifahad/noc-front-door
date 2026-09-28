@@ -410,6 +410,23 @@ test('validateAssistant rejects a keyterm array', async () => {
   assert.ok(errs.some((e) => e.includes('keyterm') && e.includes('string')));
 });
 
+test('validateAssistant accepts the platform readback with a null keyterm', async () => {
+  const assistant = await realAssistant();
+  assistant.transcription = {
+    model: 'soniox/stt-rt-v5',
+    language: 'auto',
+    settings: { keyterm: null, smart_format: null },
+  };
+  assert.deepEqual(validateAssistant(assistant), []);
+});
+
+test('validateAssistant still rejects an empty keyterm', async () => {
+  const assistant = await realAssistant();
+  assistant.transcription = { settings: { keyterm: '' } };
+  const errs = validateAssistant(assistant);
+  assert.ok(errs.some((e) => e.includes('keyterm') && e.includes('non-empty')));
+});
+
 test('validateAssistant accepts a comma-separated keyterm string', async () => {
   const assistant = await realAssistant();
   assistant.transcription = {

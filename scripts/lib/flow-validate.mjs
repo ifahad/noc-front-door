@@ -267,7 +267,7 @@ export function validateAssistant(
   }
   const declared = new Set(Object.keys(assistant.dynamic_variables ?? {}));
   const keyterm = assistant.transcription?.settings?.keyterm;
-  if (keyterm !== undefined) {
+  if (keyterm !== undefined && keyterm !== null) {
     if (typeof keyterm !== 'string' || keyterm.length === 0) {
       errors.push(
         'transcription.settings.keyterm must be a non-empty comma-separated string',
