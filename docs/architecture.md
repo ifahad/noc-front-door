@@ -12,7 +12,7 @@ flowchart LR
   edge["Edge Function noc-edge<br/>/dv · /tools/* · /mcp · /ops/* · /demo"]
   mcp["MCP server noc-mcp<br/>5 tools, stateless<br/>(runs in-process in noc-edge)"]
   kv[("KV noc-kv<br/>flags · sessions · projections")]
-  actors["Stateful Actors<br/>SiteState per site · RegionState per region<br/>mux mode: both inside Counter/demo on noc-actor-canary")]
+  actors["Stateful Actors<br/>SiteState per site · RegionState per region<br/>mux mode: both inside Counter/demo on noc-actor-canary"]
   tcs[("Telnyx Cloud Storage<br/>bucket noc-reports-fb8131, us-central-1<br/>incident report JSON on resolve")]
   prober["External prober<br/>(dev box, outside the failure domain)"]
 
