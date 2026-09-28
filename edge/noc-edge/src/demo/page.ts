@@ -13,6 +13,11 @@ import type { DemoGuide, GuideScenario } from "./guide";
 //   source; without the secret the page points at the README instead.
 
 export const DEMO_AGENT_ID = "assistant-a2d301b3-f112-48f6-84c8-9e4d052cf3b7";
+// Sanad's public test line (a US Telnyx number on the verified account).
+// Written with visual separators: it is a published business line, not a
+// personal number, and the RFC 3966 separators keep tel: dialable.
+export const SANAD_PHONE_DISPLAY = "+1 512 980 6105";
+export const SANAD_PHONE_TEL = "tel:+1-512-980-6105";
 export const WIDGET_SCRIPT_URL = "https://unpkg.com/@telnyx/ai-agent-widget@0.36.0/dist/bundle.min.js";
 // Subresource Integrity for the pinned bundle: the browser refuses to run the
 // widget if unpkg ever serves different bytes for this version.
@@ -629,15 +634,16 @@ export function renderDemoPage(guide: DemoGuide | null): string {
     <section id="call" aria-labelledby="heroTitle">
       <div class="frame">
         <span class="crop tl"></span><span class="crop tr"></span><span class="crop bl"></span><span class="crop br"></span>
-        <div class="strip"><span><b>24-node</b> conversation workflow</span><span class="sep">·</span><span><b>5</b> MCP tools</span><span class="sep">·</span><span><b>4</b> regions on the live board</span></div>
+        <div class="strip"><span><b>2</b> assistants · English + Saudi Arabic</span><span class="sep">·</span><span><b>5</b> MCP tools</span><span class="sep">·</span><span><b>4</b> regions on the live board</span></div>
         <div class="hero-body">
           <h1 id="heroTitle">The 24/7 <mark>AI fault line</mark> for Najd Networks</h1>
           <p class="sub">Sanad takes outage calls for a Saudi managed-services provider: it verifies the site by PIN, recognises an ongoing regional incident, opens or joins the ticket, and escalates P2 → P1 when a third branch goes down — on Telnyx Voice AI, Edge Functions, KV, Stateful Actors and MCP.</p>
           <div class="cta">
             <button type="button" class="btn btn-primary btn-lg" data-action="call">Start call <span class="kbd">C</span></button>
+            <a class="btn btn-lg" href="${SANAD_PHONE_TEL}">Call ${SANAD_PHONE_DISPLAY}</a>
             <a class="btn btn-lg" href="#scenarios">Scenarios <span class="kbd">1</span></a>
           </div>
-          <p class="callstate"><span class="dot" id="callDot"></span><span id="callText">Ready — the call runs in your browser; allow the microphone. The Telnyx call panel opens bottom-right.</span></p>
+          <p class="callstate"><span class="dot" id="callDot"></span><span id="callText">Ready — the call runs in your browser; allow the microphone. Or dial ${SANAD_PHONE_DISPLAY} from any phone.</span></p>
         </div>
         <div class="hero-foot">
           <div><b>Verified callers</b>Site ID + PIN over voice; identity rides the signed webhook body.</div>
@@ -685,8 +691,8 @@ export function renderDemoPage(guide: DemoGuide | null): string {
       <div class="sec-head"><h2 id="howTitle">How it works</h2></div>
       <p class="lede">Every call carries one trace id from the greeting webhook through the tools, MCP and the actors.</p>
       <div class="flow hatch">
-        <div class="node"><b>Caller</b><span>web call · this page</span></div>
-        <div class="node"><b>Telnyx Voice AI</b><span>Sanad · 24-node workflow</span></div>
+        <div class="node"><b>Caller</b><span>phone · or web call here</span></div>
+        <div class="node"><b>Telnyx Voice AI</b><span>Sanad EN → Sanad AR handoff</span></div>
         <div class="node"><b>Edge Function</b><span>/dv · tools · MCP</span></div>
         <div class="node"><b>Stateful Actors + KV</b><span>tickets · incidents · flags</span></div>
         <div class="node"><b>Live board</b><span>/ops/board · masked</span></div>

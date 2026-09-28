@@ -1,5 +1,12 @@
 import { describe, expect, it } from "vitest";
-import { DEMO_AGENT_ID, WIDGET_SCRIPT_SRI, WIDGET_SCRIPT_URL, renderDemoPage } from "../../src/demo/page";
+import {
+  DEMO_AGENT_ID,
+  SANAD_PHONE_DISPLAY,
+  SANAD_PHONE_TEL,
+  WIDGET_SCRIPT_SRI,
+  WIDGET_SCRIPT_URL,
+  renderDemoPage,
+} from "../../src/demo/page";
 import type { DemoGuide } from "../../src/demo/guide";
 
 // PINs are secrets: assemble them at runtime so no literal PIN-shaped
@@ -100,6 +107,15 @@ describe("renderDemoPage", () => {
     expect(html).not.toContain(PIN_JOIN);
     expect(html).not.toContain(PIN_NEW);
     expect(html).not.toMatch(/\+[0-9]{8,15}/);
+  });
+
+  it("offers Sanad's public phone line next to the web call", () => {
+    const html = renderDemoPage(null);
+    expect(SANAD_PHONE_TEL).toMatch(/^tel:\+1(-[0-9]+)+$/);
+    expect(html).toContain(`<a class="btn btn-lg" href="${SANAD_PHONE_TEL}">Call ${SANAD_PHONE_DISPLAY}</a>`);
+    expect(html).toContain(`Or dial ${SANAD_PHONE_DISPLAY} from any phone.`);
+    expect(html).toContain("<b>2</b> assistants · English + Saudi Arabic");
+    expect(html).toContain("Sanad EN → Sanad AR handoff");
   });
 
   it("keeps the board, operator drawer and footer copy", () => {
