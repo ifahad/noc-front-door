@@ -47,11 +47,35 @@ test('exactly the 5 entry edges hand off to the Arabic assistant with voice_mode
 test('the Arabic flow starts at n_ar_intake and has only Arabic nodes', () => {
   const flow = ar.conversation_flow;
   assert.equal(flow.start_node_id, 'n_ar_intake');
-  assert.equal(flow.nodes.length, 13);
+  assert.equal(flow.nodes.length, 14);
   for (const n of flow.nodes) {
     assert.ok(/^(n_ar_|t_ar_)/.test(n.id), `unexpected node id ${n.id}`);
   }
-  assert.equal(flow.edges.length, 31);
+  assert.equal(flow.edges.length, 32);
+});
+
+test('n_ar_goodbye hands off to the Arabic end_call tool node', () => {
+  const flow = ar.conversation_flow;
+  const goodbyeEdge = flow.edges.find((e) => e.start_node_id === 'n_ar_goodbye');
+  assert.ok(goodbyeEdge, 'n_ar_goodbye has no outgoing edge');
+  const hangup = flow.nodes.find(
+    (n) => n.id === goodbyeEdge.target?.node_id,
+  );
+  assert.equal(hangup?.type, 'tool');
+  assert.equal(hangup?.shared_tool_id, '${TOOL_end_call}');
+});
+
+test('every Arabic edge stays inside the Arabic flow (one-way handoff)', () => {
+  const isArabic = (id) => /^(n_ar_|t_ar_)/.test(id);
+  for (const e of ar.conversation_flow.edges) {
+    assert.notEqual(e.target?.type, 'assistant', `edge ${e.id} is an assistant target`);
+    if (e.target?.type === 'node') {
+      assert.ok(
+        isArabic(e.target.node_id),
+        `edge ${e.id} targets English node ${e.target.node_id}`,
+      );
+    }
+  }
 });
 
 test('the Arabic flow passes validateFlow with assistant targets forbidden', () => {

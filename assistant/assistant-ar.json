@@ -161,6 +161,12 @@
         "tools_mode": "replace"
       },
       {
+        "id": "t_ar_hangup",
+        "type": "tool",
+        "name": "end call",
+        "shared_tool_id": "${TOOL_end_call}"
+      },
+      {
         "id": "t_ar_transfer",
         "type": "tool",
         "name": "arabic transfer oncall",
@@ -1016,6 +1022,18 @@
         "condition": {
           "type": "llm",
           "prompt": "The caller declined to leave a message or wants to end the call."
+        }
+      },
+      {
+        "id": "e_narg_1",
+        "start_node_id": "n_ar_goodbye",
+        "target": {
+          "type": "node",
+          "node_id": "t_ar_hangup"
+        },
+        "condition": {
+          "type": "llm",
+          "prompt": "The caller replied in any way or said goodbye."
         }
       }
     ]
