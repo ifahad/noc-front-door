@@ -42,6 +42,9 @@ export function validateFlow(
       'n_ar_take_message',
       'n_ar_goodbye',
     ],
+    requireArabicExits = false,
+    arabicExitExemptions = [],
+    arabicAssistantId = '${ASSISTANT_AR_ID}',
     allowAssistantTargets = true,
   } = {},
 ) {
@@ -210,6 +213,27 @@ export function validateFlow(
             `prompt node "${node.id}" has no human-request exit (no llm edge mentioning a human engineer or a person)`,
           );
         }
+      }
+    }
+  }
+  if (requireArabicExits) {
+    for (const node of nodes) {
+      if (!node?.id || !nodeIds.has(node.id)) continue;
+      if (node.type !== 'prompt') continue;
+      if (arabicExitExemptions.includes(node.id)) continue;
+      const hasArabicExit = edges.some(
+        (e) =>
+          e?.start_node_id === node.id &&
+          e.condition?.type === 'llm' &&
+          /\bArabic\b/i.test(String(e.condition?.prompt ?? '')) &&
+          e.target?.type === 'assistant' &&
+          e.target?.assistant_id === arabicAssistantId &&
+          e.target?.voice_mode === 'distinct',
+      );
+      if (!hasArabicExit) {
+        errors.push(
+          `prompt node "${node.id}" has no Arabic exit (needs an llm edge mentioning Arabic that hands off to ${arabicAssistantId} with voice_mode distinct)`,
+        );
       }
     }
   }

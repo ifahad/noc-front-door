@@ -21,7 +21,15 @@
     }
   },
   "interruption_settings": {
-    "disable_greeting_interruption": true
+    "disable_greeting_interruption": true,
+    "start_speaking_plan": {
+      "wait_seconds": 0.6,
+      "transcription_endpointing_plan": {
+        "on_punctuation_seconds": 0.3,
+        "on_no_punctuation_seconds": 2.0,
+        "on_number_seconds": 1.0
+      }
+    }
   },
   "telephony_settings": {
     "time_limit_secs": 600,
@@ -118,7 +126,7 @@
         "id": "n_verify",
         "type": "prompt",
         "name": "verify caller",
-        "instructions": "The caller is {{caller_name}} from {{customer_name}}; their site is {{site_label}} ({{site_id}}). If site_id is \"unknown\", ask which site. Ask for the site ID and the 4-digit site PIN. Call capture_details with site_id (normalised, e.g. RUH-114) and pin (digits). Never repeat the PIN.",
+        "instructions": "The caller is {{caller_name}} from {{customer_name}}; their site is {{site_label}} ({{site_id}}). If site_id is \"unknown\", ask which site. Ask for the site ID and the 4-digit site PIN. Call capture_details with site_id (normalised, e.g. RUH-114) and pin (digits). Never repeat the PIN. You do not need find_site here: turn the spoken ID into the RUH-114 form yourself (\"R U H one one four\" is RUH-114) and pass it to capture_details.",
         "instructions_mode": "append",
         "shared_tool_ids": [
           "${TOOL_capture_details}"
@@ -207,7 +215,7 @@
         "id": "n_wrapup",
         "type": "prompt",
         "name": "wrapup",
-        "instructions": "The caller is {{caller_name}} from {{customer_name}}; their site is {{site_label}} ({{site_id}}). If site_id is \"unknown\", ask which site. Ask if there is anything else. If {{ticket_id}} is not \"none\", restate it.",
+        "instructions": "The caller is {{caller_name}} from {{customer_name}}; their site is {{site_label}} ({{site_id}}). If site_id is \"unknown\", ask which site. Ask if there is anything else. If {{ticket_id}} is not \"none\", restate it. If {{route_hint}} is \"unverified\" and the caller asks for a lookup, say once that you cannot look up sites or tickets until they are verified, then ask if there is anything else.",
         "instructions_mode": "append",
         "shared_tool_ids": [],
         "tools_mode": "replace"
@@ -393,7 +401,7 @@
         },
         "condition": {
           "type": "llm",
-          "prompt": "The caller asked to continue in Arabic or is speaking Arabic."
+          "prompt": "The caller just asked to switch to Arabic or just spoke in Arabic."
         }
       },
       {
@@ -604,7 +612,7 @@
         },
         "condition": {
           "type": "llm",
-          "prompt": "The caller asked to continue in Arabic or is speaking Arabic."
+          "prompt": "The caller just asked to switch to Arabic or just spoke in Arabic."
         }
       },
       {
@@ -986,7 +994,7 @@
         },
         "condition": {
           "type": "llm",
-          "prompt": "The caller asked to continue in Arabic or is speaking Arabic."
+          "prompt": "The caller just asked to switch to Arabic or just spoke in Arabic."
         }
       },
       {
@@ -1076,7 +1084,7 @@
         },
         "condition": {
           "type": "llm",
-          "prompt": "The caller asked to continue in Arabic or is speaking Arabic."
+          "prompt": "The caller just asked to switch to Arabic or just spoke in Arabic."
         }
       },
       {
@@ -1289,6 +1297,19 @@
         }
       },
       {
+        "id": "e_ntf_ar",
+        "start_node_id": "n_ticket_failed",
+        "target": {
+          "type": "assistant",
+          "assistant_id": "${ASSISTANT_AR_ID}",
+          "voice_mode": "distinct"
+        },
+        "condition": {
+          "type": "llm",
+          "prompt": "The caller just asked to switch to Arabic or just spoke in Arabic."
+        }
+      },
+      {
         "id": "e_ntf_2",
         "start_node_id": "n_ticket_failed",
         "target": {
@@ -1322,6 +1343,19 @@
         "condition": {
           "type": "llm",
           "prompt": "The caller asked to speak to a human engineer."
+        }
+      },
+      {
+        "id": "e_nstat_ar",
+        "start_node_id": "n_status",
+        "target": {
+          "type": "assistant",
+          "assistant_id": "${ASSISTANT_AR_ID}",
+          "voice_mode": "distinct"
+        },
+        "condition": {
+          "type": "llm",
+          "prompt": "The caller just asked to switch to Arabic or just spoke in Arabic."
         }
       },
       {
@@ -1375,6 +1409,19 @@
               }
             ]
           }
+        }
+      },
+      {
+        "id": "e_nwrap_ar",
+        "start_node_id": "n_wrapup",
+        "target": {
+          "type": "assistant",
+          "assistant_id": "${ASSISTANT_AR_ID}",
+          "voice_mode": "distinct"
+        },
+        "condition": {
+          "type": "llm",
+          "prompt": "The caller just asked to switch to Arabic or just spoke in Arabic."
         }
       },
       {
@@ -1455,6 +1502,19 @@
               "value": "none"
             }
           }
+        }
+      },
+      {
+        "id": "e_ntake_ar",
+        "start_node_id": "n_take_message",
+        "target": {
+          "type": "assistant",
+          "assistant_id": "${ASSISTANT_AR_ID}",
+          "voice_mode": "distinct"
+        },
+        "condition": {
+          "type": "llm",
+          "prompt": "The caller just asked to switch to Arabic or just spoke in Arabic."
         }
       },
       {

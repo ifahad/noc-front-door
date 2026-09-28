@@ -3,7 +3,15 @@
   "model": "moonshotai/Kimi-K2.6",
   "greeting": "<assistant-speaks-first-with-model-generated-message>",
   "interruption_settings": {
-    "disable_greeting_interruption": true
+    "disable_greeting_interruption": true,
+    "start_speaking_plan": {
+      "wait_seconds": 0.6,
+      "transcription_endpointing_plan": {
+        "on_punctuation_seconds": 0.3,
+        "on_no_punctuation_seconds": 2.0,
+        "on_number_seconds": 1.0
+      }
+    }
   },
   "telephony_settings": {
     "time_limit_secs": 600,

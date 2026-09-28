@@ -11,6 +11,22 @@ const assistantDir = join(dir, '..', 'assistant');
 const en = JSON.parse(await readFile(join(assistantDir, 'assistant.json'), 'utf8'));
 const ar = JSON.parse(await readFile(join(assistantDir, 'assistant-ar.json'), 'utf8'));
 ar.instructions = await readFile(join(assistantDir, 'instructions-ar.md'), 'utf8');
+const enInstructions = await readFile(join(assistantDir, 'instructions.md'), 'utf8');
+
+const AR_HANDOFF_PROMPT =
+  'The caller just asked to switch to Arabic or just spoke in Arabic.';
+const ARABIC_SCRIPT_RE = /[\u0600-\u06FF]/;
+const INTERRUPTION_SETTINGS = {
+  disable_greeting_interruption: true,
+  start_speaking_plan: {
+    wait_seconds: 0.6,
+    transcription_endpointing_plan: {
+      on_punctuation_seconds: 0.3,
+      on_no_punctuation_seconds: 2.0,
+      on_number_seconds: 1.0,
+    },
+  },
+};
 
 const toolNames = JSON.parse(await readFile(join(assistantDir, 'tools.json'), 'utf8')).map(
   (t) => t.display_name,
@@ -28,20 +44,71 @@ test('the English flow has no Arabic nodes or Arabic-start edges left', () => {
   );
 });
 
-test('exactly the 5 entry edges hand off to the Arabic assistant with voice_mode distinct', () => {
+test('exactly the 9 entry edges hand off to the Arabic assistant with voice_mode distinct', () => {
   const handoffs = en.conversation_flow.edges.filter((e) => e.target?.type === 'assistant');
   assert.deepEqual(
     handoffs.map((e) => e.id).sort(),
-    ['e_naf_ar', 'e_ncoll_ar', 'e_ntri_ar', 'e_nverify_ar', 'e_sopen_ar'],
+    [
+      'e_naf_ar',
+      'e_ncoll_ar',
+      'e_nstat_ar',
+      'e_ntake_ar',
+      'e_ntf_ar',
+      'e_ntri_ar',
+      'e_nverify_ar',
+      'e_nwrap_ar',
+      'e_sopen_ar',
+    ],
   );
   for (const e of handoffs) {
     assert.equal(e.target.assistant_id, '${ASSISTANT_AR_ID}');
     assert.equal(e.target.voice_mode, 'distinct');
   }
-  assert.equal(en.conversation_flow.edges.length, 56);
+  assert.equal(en.conversation_flow.edges.length, 60);
   assert.equal(en.conversation_flow.nodes.length, 24);
-  assert.deepEqual(validateFlow(en.conversation_flow, { requireHumanExits: true }), []);
+  assert.deepEqual(
+    validateFlow(en.conversation_flow, { requireHumanExits: true, requireArabicExits: true }),
+    [],
+  );
   assert.deepEqual(validateAssistant(en, { toolNames }), []);
+});
+
+test('every llm Arabic handoff edge carries the canonical Arabic-switch prompt', () => {
+  const llmHandoffs = en.conversation_flow.edges.filter(
+    (e) => e.target?.type === 'assistant' && e.condition?.type === 'llm',
+  );
+  assert.equal(llmHandoffs.length, 8);
+  for (const e of llmHandoffs) {
+    assert.equal(e.condition.prompt, AR_HANDOFF_PROMPT);
+  }
+  assert.equal(
+    en.conversation_flow.edges.find((e) => e.id === 'e_sopen_ar').condition.type,
+    'expression',
+  );
+});
+
+test('the English assistant config and instructions contain no Arabic script', () => {
+  assert.equal(
+    ARABIC_SCRIPT_RE.test(enInstructions),
+    false,
+    'instructions.md contains Arabic script',
+  );
+  assert.equal(
+    ARABIC_SCRIPT_RE.test(JSON.stringify(en)),
+    false,
+    'assistant.json contains Arabic script',
+  );
+});
+
+test('instructions.md points the caller to the Arabic handoff instead of switching', () => {
+  assert.equal(enInstructions.includes('continue in Arabic'), false);
+  assert.ok(enInstructions.includes('Sure. Please go ahead in Arabic.'));
+  assert.ok(enInstructions.includes('the transition whose description mentions Arabic'));
+});
+
+test('both assistants share the calmer turn-taking interruption settings', () => {
+  assert.deepEqual(en.interruption_settings, INTERRUPTION_SETTINGS);
+  assert.deepEqual(ar.interruption_settings, INTERRUPTION_SETTINGS);
 });
 
 test('the Arabic flow starts at n_ar_intake and has only Arabic nodes', () => {

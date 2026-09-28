@@ -96,6 +96,7 @@ async function main() {
 
   const flowErrors = validateFlow(assistant.conversation_flow, {
     requireHumanExits: true,
+    requireArabicExits: true,
   });
   const assistantErrors = validateAssistant(assistant);
   const arFlowErrors = validateFlow(assistantAr.conversation_flow, {

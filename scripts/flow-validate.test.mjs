@@ -240,9 +240,12 @@ const realAssistant = async () => {
 test('validateFlow with human exits accepts the split English assistant flow', async () => {
   const assistant = await realAssistant();
   assert.equal(assistant.conversation_flow.nodes.length, 24);
-  assert.equal(assistant.conversation_flow.edges.length, 56);
+  assert.equal(assistant.conversation_flow.edges.length, 60);
   assert.deepEqual(
-    validateFlow(assistant.conversation_flow, { requireHumanExits: true }),
+    validateFlow(assistant.conversation_flow, {
+      requireHumanExits: true,
+      requireArabicExits: true,
+    }),
     [],
   );
 });
@@ -527,4 +530,102 @@ test('a node-target edge to an unknown node is still rejected', () => {
   flow.edges[3] = edge('e4', 'n1', llm_('x'), 'ghost');
   const errs = validateFlow(flow, { allowAssistantTargets: true });
   assert.ok(errs.some((e) => e.includes('e4') && e.includes('target node')));
+});
+
+const AR_EXIT_PROMPT = 'The caller just asked to switch to Arabic or just spoke in Arabic.';
+
+const arExitEdge = (id, from, { target = {}, prompt = AR_EXIT_PROMPT } = {}) => ({
+  id,
+  start_node_id: from,
+  target: {
+    type: 'assistant',
+    assistant_id: '${ASSISTANT_AR_ID}',
+    voice_mode: 'distinct',
+    ...target,
+  },
+  condition: { type: 'llm', prompt },
+});
+
+test('requireArabicExits passes when every prompt node hands off to the Arabic assistant', () => {
+  const flow = promptFlow(
+    [promptNode('n1'), promptNode('n2')],
+    [arExitEdge('e_ar1', 'n1'), arExitEdge('e_ar2', 'n2')],
+  );
+  assert.deepEqual(validateFlow(flow, { requireArabicExits: true }), []);
+});
+
+test('requireArabicExits rejects a prompt node whose llm edges never mention Arabic', () => {
+  const flow = promptFlow(
+    [promptNode('n1'), promptNode('n2')],
+    [
+      edge('e1', 'n1', llm_('The caller said go on.'), 'n2'),
+      arExitEdge('e_ar2', 'n2'),
+    ],
+  );
+  const errs = validateFlow(flow, { requireArabicExits: true });
+  assert.ok(errs.some((e) => e.includes('n1') && e.includes('Arabic exit')));
+});
+
+test('requireArabicExits rejects an Arabic llm edge that targets a node', () => {
+  const flow = promptFlow(
+    [promptNode('n1'), promptNode('n2')],
+    [
+      edge('e_ar1', 'n1', llm_(AR_EXIT_PROMPT), 'n2'),
+      arExitEdge('e_ar2', 'n2'),
+    ],
+  );
+  const errs = validateFlow(flow, { requireArabicExits: true });
+  assert.ok(errs.some((e) => e.includes('n1') && e.includes('Arabic exit')));
+});
+
+test('requireArabicExits rejects an Arabic exit with voice_mode unified', () => {
+  const flow = promptFlow(
+    [promptNode('n1'), promptNode('n2')],
+    [
+      arExitEdge('e_ar1', 'n1', { target: { voice_mode: 'unified' } }),
+      arExitEdge('e_ar2', 'n2'),
+    ],
+  );
+  const errs = validateFlow(flow, { requireArabicExits: true });
+  assert.ok(errs.some((e) => e.includes('n1') && e.includes('Arabic exit')));
+});
+
+test('requireArabicExits rejects an Arabic exit to a different assistant', () => {
+  const flow = promptFlow(
+    [promptNode('n1'), promptNode('n2')],
+    [
+      arExitEdge('e_ar1', 'n1', { target: { assistant_id: 'asst-other' } }),
+      arExitEdge('e_ar2', 'n2'),
+    ],
+  );
+  const errs = validateFlow(flow, { requireArabicExits: true });
+  assert.ok(errs.some((e) => e.includes('n1') && e.includes('Arabic exit')));
+});
+
+test('requireArabicExits rejects a prompt node with no outgoing edges', () => {
+  const flow = promptFlow(
+    [promptNode('n1'), promptNode('n2')],
+    [arExitEdge('e_ar2', 'n2')],
+  );
+  const errs = validateFlow(flow, { requireArabicExits: true });
+  assert.ok(errs.some((e) => e.includes('n1') && e.includes('Arabic exit')));
+});
+
+test('requireArabicExits honours arabicExitExemptions', () => {
+  const flow = promptFlow(
+    [promptNode('n1'), promptNode('n2')],
+    [arExitEdge('e_ar2', 'n2')],
+  );
+  assert.deepEqual(
+    validateFlow(flow, { requireArabicExits: true, arabicExitExemptions: ['n1'] }),
+    [],
+  );
+});
+
+test('requireArabicExits accepts the real English flow Arabic handoffs', async () => {
+  const assistant = await realAssistant();
+  const errors = validateFlow(assistant.conversation_flow, {
+    requireArabicExits: true,
+  });
+  assert.deepEqual(errors, []);
 });
