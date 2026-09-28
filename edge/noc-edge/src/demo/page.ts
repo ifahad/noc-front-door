@@ -20,8 +20,9 @@ import type { DemoGuide, GuideScenario } from "./guide";
 //   source; without the secret the console points at the README instead.
 //
 // Load contract: the public map polls /ops/board every 15 s and only while the
-// tab is visible; the console polls every 5 s while open; failures back off to
-// 60 s. Every board build fans out to the Stateful Actors.
+// tab is visible; the console polls every 10 s while open; failures back off to
+// 60 s; after 10 min without any input the page stops polling until the viewer
+// interacts again. Every board build fans out to the Stateful Actors.
 
 export const DEMO_AGENT_ID = "assistant-a2d301b3-f112-48f6-84c8-9e4d052cf3b7";
 // Sanad's public line (a US Telnyx number on the verified account). Written
@@ -34,7 +35,8 @@ export const WIDGET_SCRIPT_URL = "https://unpkg.com/@telnyx/ai-agent-widget@0.36
 // widget if unpkg ever serves different bytes for this version.
 export const WIDGET_SCRIPT_SRI = "sha384-HpQCPH/+U7KWqJp+MLUc/a2uw01ta4Mytbb0NxHShFezMnrsao9SpxjPm7H+7Se6";
 export const PUBLIC_POLL_MS = 15000;
-export const CONSOLE_POLL_MS = 5000;
+export const CONSOLE_POLL_MS = 10000;
+export const IDLE_PAUSE_MS = 600000;
 const FONTS_URL =
   "https://fonts.googleapis.com/css2?family=Geist:wght@400;500;600&family=Geist+Mono:wght@400;500&family=Inter:wght@400;500;600&family=IBM+Plex+Sans+Arabic:wght@400;500&display=swap";
 
@@ -251,7 +253,7 @@ tr.flash td{animation:flash 1.6s ease-out}
 const JS = `
 (function () {
   'use strict';
-  var PUBLIC_POLL = ${PUBLIC_POLL_MS}, CONSOLE_POLL = ${CONSOLE_POLL_MS}, MAX_BACKOFF = 60000;
+  var PUBLIC_POLL = ${PUBLIC_POLL_MS}, CONSOLE_POLL = ${CONSOLE_POLL_MS}, MAX_BACKOFF = 60000, IDLE_PAUSE = ${IDLE_PAUSE_MS};
   function $(id) { return document.getElementById(id); }
   function el(tag, cls, text) {
     var n = document.createElement(tag);
@@ -316,6 +318,7 @@ const JS = `
   /* ---- live status ---- */
   var ORDER = ['riyadh-north', 'riyadh-south', 'jeddah', 'dammam'];
   var last = null, lastOk = 0, polling = false, timer = null, failures = 0;
+  var lastInput = Date.now(), paused = false;
   var events = [];
   function rtime(ms) {
     var s = Math.max(0, Math.round((Date.now() - ms) / 1000));
@@ -453,7 +456,7 @@ const JS = `
     flashKeys = {};
   }
   function ageTick() {
-    var txt = lastOk ? 'updated ' + rtime(lastOk) : 'connecting…';
+    var txt = paused ? 'paused while idle — move the mouse to resume' : lastOk ? 'updated ' + rtime(lastOk) : 'connecting…';
     $('mapUpdated').textContent = txt;
     $('conUpdated').textContent = txt;
     $('staleChip').hidden = !(lastOk && Date.now() - lastOk > 45000);
@@ -471,6 +474,7 @@ const JS = `
   function poll() {
     timer = null;
     if (document.visibilityState === 'hidden') return;
+    if (Date.now() - lastInput > IDLE_PAUSE) { paused = true; ageTick(); return; }
     if (polling) return;
     polling = true;
     var ctl = new AbortController();
@@ -487,6 +491,13 @@ const JS = `
       .catch(function () { failures++; if (!last) setUnknown(); })
       .then(function () { clearTimeout(abort); polling = false; schedule(interval()); });
   }
+  function onInput() {
+    lastInput = Date.now();
+    if (paused) { paused = false; ageTick(); schedule(0); }
+  }
+  ['pointerdown', 'pointermove', 'keydown', 'scroll', 'touchstart'].forEach(function (t) {
+    window.addEventListener(t, onInput, { passive: true });
+  });
   document.addEventListener('visibilitychange', function () {
     if (document.visibilityState === 'visible') schedule(0);
     else if (timer) { clearTimeout(timer); timer = null; }

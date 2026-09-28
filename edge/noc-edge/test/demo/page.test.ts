@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   CONSOLE_POLL_MS,
   DEMO_AGENT_ID,
+  IDLE_PAUSE_MS,
   PUBLIC_POLL_MS,
   SANAD_PHONE_DISPLAY,
   SANAD_PHONE_TEL,
@@ -110,11 +111,16 @@ describe("renderDemoPage", () => {
     expect(html).not.toContain("radial-gradient");
   });
 
-  it("polls /ops/board gently: 15 s public, 5 s console, only when visible, with backoff", () => {
+  it("polls /ops/board gently: 15 s public, 10 s console, only when visible, with backoff and an idle pause", () => {
     const html = renderDemoPage(null);
     expect(PUBLIC_POLL_MS).toBe(15000);
-    expect(CONSOLE_POLL_MS).toBe(5000);
-    expect(html).toContain(`var PUBLIC_POLL = ${PUBLIC_POLL_MS}, CONSOLE_POLL = ${CONSOLE_POLL_MS}, MAX_BACKOFF = 60000;`);
+    expect(CONSOLE_POLL_MS).toBe(10000);
+    expect(IDLE_PAUSE_MS).toBe(600000);
+    expect(html).toContain(
+      `var PUBLIC_POLL = ${PUBLIC_POLL_MS}, CONSOLE_POLL = ${CONSOLE_POLL_MS}, MAX_BACKOFF = 60000, IDLE_PAUSE = ${IDLE_PAUSE_MS};`,
+    );
+    expect(html).toContain("if (Date.now() - lastInput > IDLE_PAUSE) { paused = true; ageTick(); return; }");
+    expect(html).toContain("if (paused) { paused = false; ageTick(); schedule(0); }");
     expect(html).toContain("fetch('/ops/board'");
     expect(html).toContain("AbortController");
     expect(html).toContain("if (polling) return;");
