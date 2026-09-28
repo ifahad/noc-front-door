@@ -12,30 +12,6 @@ export type SecretsLike = Pick<Env, "SECRETS">;
 
 const secretGetters = new WeakMap<SecretsLike, Map<string, SecretGetter>>();
 
-const SECRET_ATTEMPTS = 3;
-const SECRET_ATTEMPT_TIMEOUT_MS = 150;
-const SECRET_BACKOFF_MS = [50, 100] as const;
-
-function sleep(ms: number): Promise<void> {
-  return new Promise<void>((resolve) => setTimeout(resolve, ms));
-}
-
-function attemptTimeout<T>(p: Promise<T>, ms: number): Promise<T> {
-  return new Promise<T>((resolve, reject) => {
-    const timer = setTimeout(() => reject(new Error("timeout")), ms);
-    p.then(
-      (value: T) => {
-        clearTimeout(timer);
-        resolve(value);
-      },
-      (err: unknown) => {
-        clearTimeout(timer);
-        reject(err);
-      },
-    );
-  });
-}
-
 export function getSecret(
   env: SecretsLike,
   name: SecretName,
@@ -47,52 +23,12 @@ export function getSecret(
   }
   let get = byName.get(name);
   if (get === undefined) {
-    let inFlight: Promise<string | null> | null = null;
     get = makeTokenCache(async () => {
-      if (inFlight !== null) return inFlight;
-      const pending = (async () => {
-        for (let attempt = 1; attempt <= SECRET_ATTEMPTS; attempt += 1) {
-          let error = "empty";
-          try {
-            const raw = await attemptTimeout(
-              env.SECRETS.get(name),
-              SECRET_ATTEMPT_TIMEOUT_MS,
-            );
-            if (typeof raw === "string" && raw.length > 0) {
-              if (attempt > 1) {
-                logEvent("secret.read_recovered", {
-                  hop: "env",
-                  secret_name: name,
-                  attempts: attempt,
-                });
-              }
-              return raw;
-            }
-          } catch (err) {
-            error =
-              err instanceof Error && err.message.length > 0
-                ? err.message
-                : "error";
-          }
-          logEvent("secret.read_failed", {
-            hop: "env",
-            lvl: "warn",
-            secret_name: name,
-            attempt,
-            outcome: "error",
-            error,
-          });
-          if (attempt < SECRET_ATTEMPTS) {
-            await sleep(SECRET_BACKOFF_MS[attempt - 1] ?? SECRET_ATTEMPT_TIMEOUT_MS);
-          }
-        }
-        return null;
-      })();
-      inFlight = pending;
       try {
-        return await pending;
-      } finally {
-        inFlight = null;
+        const raw = await env.SECRETS.get(name);
+        return typeof raw === "string" && raw.length > 0 ? raw : null;
+      } catch {
+        return null;
       }
     });
     byName.set(name, get);
