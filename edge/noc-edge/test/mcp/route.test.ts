@@ -86,6 +86,26 @@ describe("MCP route wiring", () => {
     await client.close();
   });
 
+  it("survives one transient secrets failure per name", async () => {
+    const failedOnce = new Set<string>();
+    const env = makeEnv(async (name) => {
+      if (!failedOnce.has(name)) {
+        failedOnce.add(name);
+        throw new Error("cold_instance_read");
+      }
+      if (name === "MCP_TOKEN") return MCP_TOKEN;
+      if (name === "OPS_TOKEN") return OPS_TOKEN;
+      if (name === "PIN_PEPPER") return ["p", "e", "pp", "er"].join("");
+      if (name === "SEED_LOCAL") return "{}";
+      throw new Error(`unknown_secret_${name}`);
+    });
+    const { client, transport } = clientFor(env, MCP_TOKEN);
+    await client.connect(transport);
+    const tools = await client.listTools();
+    expect(tools.tools).toHaveLength(5);
+    await client.close();
+  });
+
   it("rejects ops requests that carry _meta with 403", async () => {
     const env = makeEnvWithTokens();
     const response = await route(

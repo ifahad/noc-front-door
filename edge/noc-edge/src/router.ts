@@ -1,4 +1,4 @@
-import { bearerOk, makeTokenCache, type SecretGetter } from "./auth";
+import { bearerOk, type SecretGetter } from "./auth";
 import { logEvent } from "./log";
 import { type NocEdgeEnv } from "./actors";
 import { bindingKvPort, type KvPort } from "./services/kvPort";
@@ -110,13 +110,7 @@ async function selectActorPort(
 export function makeOpsTokenGetter(env: NocEdgeEnv): SecretGetter {
   let getter = opsTokenGetters.get(env);
   if (getter === undefined) {
-    getter = makeTokenCache(async () => {
-      try {
-        return await env.SECRETS.get("OPS_TOKEN");
-      } catch {
-        return null;
-      }
-    });
+    getter = () => getSecret(env, "OPS_TOKEN");
     opsTokenGetters.set(env, getter);
   }
   return getter;

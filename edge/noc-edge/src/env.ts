@@ -11,6 +11,85 @@ export type SecretName = Parameters<Env["SECRETS"]["get"]>[0];
 export type SecretsLike = Pick<Env, "SECRETS">;
 
 const secretGetters = new WeakMap<SecretsLike, Map<string, SecretGetter>>();
+const inFlightReads = new WeakMap<
+  SecretsLike,
+  Map<string, Promise<string | null>>
+>();
+
+const SECRET_ATTEMPTS = 3;
+const SECRET_BACKOFF_MS = [50, 100] as const;
+
+function sleep(ms: number): Promise<void> {
+  return new Promise<void>((resolve) => setTimeout(resolve, ms));
+}
+
+// One retry loop per (env, secret name): concurrent callers await the same
+// in-flight read instead of hammering the store, and it is cleared when it
+// settles. A read fails when SECRETS.get throws or returns an empty or
+// non-string value; it is retried up to SECRET_ATTEMPTS times with 50 ms
+// then 100 ms backoff. There is deliberately no per-attempt timeout: a
+// normal SECRETS.get on this platform takes longer than 150 ms. The final
+// error is rethrown so callers can still tell a failed store from a
+// missing secret.
+async function readSecretWithRetry(
+  env: SecretsLike,
+  name: SecretName,
+): Promise<string | null> {
+  let byName = inFlightReads.get(env);
+  if (byName === undefined) {
+    byName = new Map<string, Promise<string | null>>();
+    inFlightReads.set(env, byName);
+  }
+  const existing = byName.get(name);
+  if (existing !== undefined) return existing;
+  const pending = (async () => {
+    let lastError: unknown = null;
+    for (let attempt = 1; attempt <= SECRET_ATTEMPTS; attempt += 1) {
+      let error = "empty";
+      try {
+        const raw = await env.SECRETS.get(name);
+        if (typeof raw === "string" && raw.length > 0) {
+          if (attempt > 1) {
+            logEvent("secret.read_recovered", {
+              hop: "env",
+              secret_name: name,
+              attempts: attempt,
+            });
+          }
+          return raw;
+        }
+      } catch (err) {
+        lastError = err;
+        error =
+          err instanceof Error && err.message.length > 0
+            ? err.message
+            : "error";
+      }
+      logEvent("secret.read_failed", {
+        hop: "env",
+        lvl: "warn",
+        secret_name: name,
+        attempt,
+        outcome: "error",
+        error,
+      });
+      if (attempt < SECRET_ATTEMPTS) {
+        await sleep(
+          SECRET_BACKOFF_MS[attempt - 1] ??
+            SECRET_BACKOFF_MS[SECRET_BACKOFF_MS.length - 1],
+        );
+      }
+    }
+    if (lastError !== null) throw lastError;
+    return null;
+  })();
+  byName.set(name, pending);
+  try {
+    return await pending;
+  } finally {
+    if (byName.get(name) === pending) byName.delete(name);
+  }
+}
 
 export function getSecret(
   env: SecretsLike,
@@ -25,8 +104,7 @@ export function getSecret(
   if (get === undefined) {
     get = makeTokenCache(async () => {
       try {
-        const raw = await env.SECRETS.get(name);
-        return typeof raw === "string" && raw.length > 0 ? raw : null;
+        return await readSecretWithRetry(env, name);
       } catch {
         return null;
       }
@@ -60,8 +138,7 @@ export async function loadSeedLocal(env: SecretsLike): Promise<SeedLocalConfig> 
   if (cached !== undefined) return cached;
   let raw: string | null;
   try {
-    const got = await env.SECRETS.get("SEED_LOCAL");
-    raw = typeof got === "string" && got.length > 0 ? got : null;
+    raw = await readSecretWithRetry(env, "SEED_LOCAL");
   } catch {
     reportSeedLocalInvalid(env, "read_failed");
     return DEFAULT_SEED_LOCAL;

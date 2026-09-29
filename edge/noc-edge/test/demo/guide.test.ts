@@ -1,5 +1,9 @@
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { loadDemoGuide, parseDemoGuide } from "../../src/demo/guide";
+
+afterEach(() => {
+  vi.useRealTimers();
+});
 
 // PIN values are secrets: assemble them at runtime so no literal
 // PIN-shaped string exists in this file.
@@ -96,6 +100,26 @@ describe("loadDemoGuide", () => {
   it("loads and parses the DEMO_GUIDE secret", async () => {
     const guide = await loadDemoGuide(envWith(guideJson()));
     expect(guide?.scenarios).toHaveLength(2);
+  });
+
+  it("survives one transient secret-read failure", async () => {
+    vi.useFakeTimers();
+    let calls = 0;
+    const env = {
+      SECRETS: {
+        get: async (name: string) => {
+          if (name !== "DEMO_GUIDE") return "";
+          calls += 1;
+          if (calls === 1) throw new Error("secret_store_down");
+          return guideJson();
+        },
+      },
+    };
+    const pending = loadDemoGuide(env as Parameters<typeof loadDemoGuide>[0]);
+    await vi.runAllTimersAsync();
+    const guide = await pending;
+    expect(guide?.scenarios).toHaveLength(2);
+    expect(calls).toBe(2);
   });
 
   it("falls back to null when the secret is missing or unreadable", async () => {

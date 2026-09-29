@@ -86,6 +86,28 @@ describe("ops routes auth", () => {
     const res = await opsRequest("POST", "/ops/reset", bearer(OPS_TOKEN), env);
     expect(res.status).toBe(401);
   });
+
+  it("survives one transient OPS_TOKEN read failure", async () => {
+    const bundle = makeRouterEnv(OPS_TOKEN);
+    const base = bundle.env.SECRETS.get.bind(bundle.env);
+    let failedOnce = false;
+    (bundle.env as unknown as { SECRETS: { get: (n: string) => Promise<string | null> } }).SECRETS.get =
+      async (name: string) => {
+        if (name === "OPS_TOKEN" && !failedOnce) {
+          failedOnce = true;
+          throw new Error("cold_instance_read");
+        }
+        return (base as (n: string) => Promise<string | null>)(name);
+      };
+    const res = await opsRequest(
+      "POST",
+      "/ops/reset",
+      bearer(OPS_TOKEN),
+      bundle,
+    );
+    expect(res.status).toBe(200);
+    expect(failedOnce).toBe(true);
+  });
 });
 
 describe("ops routes wired", () => {
