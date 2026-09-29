@@ -14,8 +14,10 @@ ar.instructions = await readFile(join(assistantDir, 'instructions-ar.md'), 'utf8
 const enInstructions = await readFile(join(assistantDir, 'instructions.md'), 'utf8');
 
 const AR_HANDOFF_PROMPT =
-  'The caller just asked to switch to Arabic or just spoke in Arabic.';
+  'The caller explicitly asked to continue the call in Arabic (for example "Arabic please" or "can we speak Arabic"). Spelled site codes such as R U H, J E D or D M M are English letters, not Arabic.';
 const ARABIC_SCRIPT_RE = /[\u0600-\u06FF]/;
+const AR_REPLY_RULE =
+  'ردّ دائماً بالعربي فقط، حتى لو تكلّم المتصل بالإنجليزي أو كان سجل المحادثة بالإنجليزي.';
 const INTERRUPTION_SETTINGS = {
   disable_greeting_interruption: true,
   start_speaking_plan: {
@@ -34,11 +36,11 @@ const toolNames = JSON.parse(await readFile(join(assistantDir, 'tools.json'), 'u
 
 test('the English flow has no Arabic nodes or Arabic-start edges left', () => {
   assert.equal(
-    en.conversation_flow.nodes.filter((n) => /^(n_ar_|t_ar_)/.test(n.id)).length,
+    en.conversation_flow.nodes.filter((n) => /^(n_ar_|t_ar_|s_ar_)/.test(n.id)).length,
     0,
   );
   assert.equal(
-    en.conversation_flow.edges.filter((e) => /^(n_ar_|t_ar_)/.test(e.start_node_id))
+    en.conversation_flow.edges.filter((e) => /^(n_ar_|t_ar_|s_ar_)/.test(e.start_node_id))
       .length,
     0,
   );
@@ -80,6 +82,11 @@ test('every llm Arabic handoff edge carries the canonical Arabic-switch prompt',
   assert.equal(llmHandoffs.length, 8);
   for (const e of llmHandoffs) {
     assert.equal(e.condition.prompt, AR_HANDOFF_PROMPT);
+    assert.equal(
+      e.condition.prompt.includes('just spoke in Arabic'),
+      false,
+      'llm handoff edge still says "just spoke in Arabic"',
+    );
   }
   assert.equal(
     en.conversation_flow.edges.find((e) => e.id === 'e_sopen_ar').condition.type,
@@ -100,10 +107,20 @@ test('the English assistant config and instructions contain no Arabic script', (
   );
 });
 
-test('instructions.md points the caller to the Arabic handoff instead of switching', () => {
+test('instructions.md switches to Arabic only on an explicit Arabic request', () => {
   assert.equal(enInstructions.includes('continue in Arabic'), false);
-  assert.ok(enInstructions.includes('Sure. Please go ahead in Arabic.'));
+  assert.ok(enInstructions.includes('Sure, switching you to Arabic now.'));
+  assert.equal(enInstructions.includes('Please go ahead in Arabic'), false);
   assert.ok(enInstructions.includes('the transition whose description mentions Arabic'));
+});
+
+test('instructions.md keeps the caller spelling until the ID is complete', () => {
+  assert.ok(
+    enInstructions.includes(
+      'While the caller is still spelling, reply only "Go ahead." Once you have three letters and three digits, read the ID back once, spelled, and ask for the 4-digit PIN.',
+    ),
+  );
+  assert.equal(enInstructions.includes('until you have three letters and three digits'), false);
 });
 
 test('both assistants share the calmer turn-taking interruption settings', () => {
@@ -114,11 +131,11 @@ test('both assistants share the calmer turn-taking interruption settings', () =>
 test('the Arabic flow starts at s_ar_open and has only Arabic nodes', () => {
   const flow = ar.conversation_flow;
   assert.equal(flow.start_node_id, 's_ar_open');
-  assert.equal(flow.nodes.length, 15);
+  assert.equal(flow.nodes.length, 16);
   for (const n of flow.nodes) {
     assert.ok(/^(n_ar_|t_ar_|s_ar_)/.test(n.id), `unexpected node id ${n.id}`);
   }
-  assert.equal(flow.edges.length, 36);
+  assert.equal(flow.edges.length, 37);
 });
 
 test('the Arabic opening speaks first and discloses the recording', () => {
@@ -214,10 +231,10 @@ test('the Arabic assistant has no MCP server while the English one keeps it', ()
   ]);
 });
 
-test('n_ar_goodbye hands off to the Arabic end_call tool node', () => {
+test('s_ar_goodbye hands off to the Arabic end_call tool node', () => {
   const flow = ar.conversation_flow;
-  const goodbyeEdge = flow.edges.find((e) => e.start_node_id === 'n_ar_goodbye');
-  assert.ok(goodbyeEdge, 'n_ar_goodbye has no outgoing edge');
+  const goodbyeEdge = flow.edges.find((e) => e.start_node_id === 's_ar_goodbye');
+  assert.ok(goodbyeEdge, 's_ar_goodbye has no outgoing edge');
   const hangup = flow.nodes.find(
     (n) => n.id === goodbyeEdge.target?.node_id,
   );
@@ -225,8 +242,95 @@ test('n_ar_goodbye hands off to the Arabic end_call tool node', () => {
   assert.equal(hangup?.shared_tool_id, '${TOOL_end_call}');
 });
 
+test('the Arabic mandatory lines are fixed speak nodes with one default edge each', () => {
+  const flow = ar.conversation_flow;
+  const expected = [
+    [
+      's_ar_handover',
+      'arabic handover',
+      'أبشر، بحوّلك الحين على المهندس المناوب، خلك معي على الخط.',
+      'e_narh_1',
+      't_ar_transfer',
+    ],
+    [
+      's_ar_goodbye',
+      'arabic goodbye',
+      'شكراً لاتصالك بنجد نتووركس، في أمان الله.',
+      'e_narg_1',
+      't_ar_hangup',
+    ],
+    [
+      's_ar_verify_unavailable',
+      'arabic verify unavailable',
+      'ما قدرت أتحقق من بياناتك الحين، بحوّلك على المهندس المناوب.',
+      'e_sarvu_1',
+      't_ar_transfer',
+    ],
+  ];
+  for (const [id, name, message, edgeId, target] of expected) {
+    const node = flow.nodes.find((n) => n.id === id);
+    assert.ok(node, `${id} is missing`);
+    assert.equal(node.type, 'speak');
+    assert.equal(node.name, name);
+    assert.equal(node.message, message);
+    const outgoing = flow.edges.filter((e) => e.start_node_id === id);
+    assert.equal(outgoing.length, 1, `${id} must have exactly one outgoing edge`);
+    assert.equal(outgoing[0].id, edgeId);
+    assert.deepEqual(outgoing[0].condition, { type: 'default' });
+    assert.equal(outgoing[0].target.node_id, target);
+  }
+});
+
+test('the old Arabic handover and goodbye prompt ids are gone', () => {
+  const flow = ar.conversation_flow;
+  for (const id of ['n_ar_handover', 'n_ar_goodbye']) {
+    assert.equal(
+      flow.nodes.some((n) => n.id === id),
+      false,
+      `${id} still exists as a node`,
+    );
+  }
+  for (const e of flow.edges) {
+    assert.notEqual(e.start_node_id, 'n_ar_handover');
+    assert.notEqual(e.start_node_id, 'n_ar_goodbye');
+    if (e.target?.type === 'node') {
+      assert.notEqual(e.target.node_id, 'n_ar_handover');
+      assert.notEqual(e.target.node_id, 'n_ar_goodbye');
+    }
+  }
+});
+
+test('t_ar_verify falls back to the fixed verify-unavailable speak node', () => {
+  const flow = ar.conversation_flow;
+  const edges = flow.edges.filter((e) => e.start_node_id === 't_ar_verify');
+  assert.equal(edges.length, 5);
+  const def = edges.find((e) => e.condition?.type === 'default');
+  assert.equal(def.id, 'e_tarv_5');
+  assert.equal(def.target.node_id, 's_ar_verify_unavailable');
+  assert.deepEqual(
+    edges
+      .filter((e) => e.condition?.type !== 'default')
+      .map((e) => e.id)
+      .sort(),
+    ['e_tarv_1', 'e_tarv_2', 'e_tarv_3', 'e_tarv_4'],
+  );
+});
+
+test('every Arabic prompt node replies in Arabic only, right before its task', () => {
+  const prompts = ar.conversation_flow.nodes.filter((n) => n.type === 'prompt');
+  assert.equal(prompts.length, 6);
+  for (const n of prompts) {
+    const count = n.instructions.split(AR_REPLY_RULE).length - 1;
+    assert.equal(count, 1, `node ${n.id} carries the reply-in-Arabic rule ${count} times`);
+    assert.ok(
+      n.instructions.includes(`${AR_REPLY_RULE} المهمة:`),
+      `node ${n.id} does not place the reply-in-Arabic rule before المهمة:`,
+    );
+  }
+});
+
 test('every Arabic edge stays inside the Arabic flow (one-way handoff)', () => {
-  const isArabic = (id) => /^(n_ar_|t_ar_)/.test(id);
+  const isArabic = (id) => /^(n_ar_|t_ar_|s_ar_)/.test(id);
   for (const e of ar.conversation_flow.edges) {
     assert.notEqual(e.target?.type, 'assistant', `edge ${e.id} is an assistant target`);
     if (e.target?.type === 'node') {

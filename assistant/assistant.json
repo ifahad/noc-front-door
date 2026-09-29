@@ -401,7 +401,7 @@
         },
         "condition": {
           "type": "llm",
-          "prompt": "The caller just asked to switch to Arabic or just spoke in Arabic."
+          "prompt": "The caller explicitly asked to continue the call in Arabic (for example \"Arabic please\" or \"can we speak Arabic\"). Spelled site codes such as R U H, J E D or D M M are English letters, not Arabic."
         }
       },
       {
@@ -612,7 +612,7 @@
         },
         "condition": {
           "type": "llm",
-          "prompt": "The caller just asked to switch to Arabic or just spoke in Arabic."
+          "prompt": "The caller explicitly asked to continue the call in Arabic (for example \"Arabic please\" or \"can we speak Arabic\"). Spelled site codes such as R U H, J E D or D M M are English letters, not Arabic."
         }
       },
       {
@@ -994,7 +994,7 @@
         },
         "condition": {
           "type": "llm",
-          "prompt": "The caller just asked to switch to Arabic or just spoke in Arabic."
+          "prompt": "The caller explicitly asked to continue the call in Arabic (for example \"Arabic please\" or \"can we speak Arabic\"). Spelled site codes such as R U H, J E D or D M M are English letters, not Arabic."
         }
       },
       {
@@ -1084,7 +1084,7 @@
         },
         "condition": {
           "type": "llm",
-          "prompt": "The caller just asked to switch to Arabic or just spoke in Arabic."
+          "prompt": "The caller explicitly asked to continue the call in Arabic (for example \"Arabic please\" or \"can we speak Arabic\"). Spelled site codes such as R U H, J E D or D M M are English letters, not Arabic."
         }
       },
       {
@@ -1306,7 +1306,7 @@
         },
         "condition": {
           "type": "llm",
-          "prompt": "The caller just asked to switch to Arabic or just spoke in Arabic."
+          "prompt": "The caller explicitly asked to continue the call in Arabic (for example \"Arabic please\" or \"can we speak Arabic\"). Spelled site codes such as R U H, J E D or D M M are English letters, not Arabic."
         }
       },
       {
@@ -1355,7 +1355,7 @@
         },
         "condition": {
           "type": "llm",
-          "prompt": "The caller just asked to switch to Arabic or just spoke in Arabic."
+          "prompt": "The caller explicitly asked to continue the call in Arabic (for example \"Arabic please\" or \"can we speak Arabic\"). Spelled site codes such as R U H, J E D or D M M are English letters, not Arabic."
         }
       },
       {
@@ -1421,7 +1421,7 @@
         },
         "condition": {
           "type": "llm",
-          "prompt": "The caller just asked to switch to Arabic or just spoke in Arabic."
+          "prompt": "The caller explicitly asked to continue the call in Arabic (for example \"Arabic please\" or \"can we speak Arabic\"). Spelled site codes such as R U H, J E D or D M M are English letters, not Arabic."
         }
       },
       {
@@ -1514,7 +1514,7 @@
         },
         "condition": {
           "type": "llm",
-          "prompt": "The caller just asked to switch to Arabic or just spoke in Arabic."
+          "prompt": "The caller explicitly asked to continue the call in Arabic (for example \"Arabic please\" or \"can we speak Arabic\"). Spelled site codes such as R U H, J E D or D M M are English letters, not Arabic."
         }
       },
       {
