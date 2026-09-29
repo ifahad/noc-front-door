@@ -13,15 +13,15 @@ A KSA managed-services provider's NOC takes 24/7 outage calls from branch staff 
 ## Try it
 
 1. Open the production front page: **https://noc-edge-41d2a334-7.telnyxcompute.com/** — **Report an outage**: browser call or dial **+1 512 980 6105** (international from KSA), English or Saudi Arabic; plus the live network status map. `/demo` serves the same page.
-2. Press **Start call** (`C`; `B` board, `1`–`3` scenarios; PIN chips copy on click — from the `DEMO_GUIDE` secret, no PIN literal in code).
+2. Press **Call from your browser**, or dial **+1 512 980 6105**. The scenario cards live in the hidden operator console — append `#console` or press the backtick key; keys `1`–`3` jump to them and the PIN chips copy on click (from the `DEMO_GUIDE` secret, no PIN literal in code).
 3. Run **scenario 1** as RUH-114 and watch the board: verify → advisory → **join** → **P2→P1** when the third branch hits.
 
 | Site | Region | PIN | Scenario |
 |---|---|---|---|
 | RUH-114 — "the Al Yasmin branch" | Riyadh North | 5944 | Join the incident |
-| JED-007 | Jeddah | 7985 | Fresh ticket |
+| JED-007 | Jeddah | 7985 | Open a new ticket |
 
-Scenario 2 — **lockout**: call the reserved **DMM-011** (never RUH-114/JED-007). Scenario 3: ask for a human (transfer; else callback). One-shot per staging — re-stage first ([pre-flight](docs/setup.md)); the **prober must be running** (DEBUGLOG #11). Script: [DEMO.md](DEMO.md).
+Scenario 2 — **open a new ticket**: call as JED-007 and describe the fault. Scenario 3 — **lockout & human**: call the reserved **DMM-011** (never RUH-114/JED-007), give a wrong PIN three times, then ask for a human (transfer; else callback). One-shot per staging — re-stage first ([pre-flight](docs/setup.md)); the **prober must be running** (DEBUGLOG #11). Script: [DEMO.md](DEMO.md).
 
 The **operator console** — scenarios with the two demo PINs, detailed board, event feed, how-it-works, presenter controls — is hidden: append `#console` or press the backtick key.
 
