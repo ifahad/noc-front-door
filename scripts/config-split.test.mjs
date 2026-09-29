@@ -108,9 +108,9 @@ test('the English assistant config and instructions contain no Arabic script', (
 });
 
 test('instructions.md switches to Arabic only on an explicit Arabic request', () => {
-  assert.equal(enInstructions.includes('continue in Arabic'), false);
   assert.ok(enInstructions.includes('Sure, switching you to Arabic now.'));
   assert.equal(enInstructions.includes('Please go ahead in Arabic'), false);
+  assert.equal(enInstructions.includes('or speaks Arabic'), false);
   assert.ok(enInstructions.includes('the transition whose description mentions Arabic'));
 });
 
