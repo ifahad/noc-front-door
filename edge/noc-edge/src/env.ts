@@ -28,9 +28,9 @@ function sleep(ms: number): Promise<void> {
 // settles. A read fails when SECRETS.get throws or returns an empty or
 // non-string value; it is retried up to SECRET_ATTEMPTS times with 50 ms
 // then 100 ms backoff. There is deliberately no per-attempt timeout: a
-// normal SECRETS.get on this platform takes longer than 150 ms. The final
-// error is rethrown so callers can still tell a failed store from a
-// missing secret.
+// normal SECRETS.get on this platform takes longer than 150 ms. Only the
+// last attempt's error is rethrown, so callers can still tell a failed
+// store from a missing or empty secret.
 async function readSecretWithRetry(
   env: SecretsLike,
   name: SecretName,
@@ -43,8 +43,9 @@ async function readSecretWithRetry(
   const existing = byName.get(name);
   if (existing !== undefined) return existing;
   const pending = (async () => {
-    let lastError: unknown = null;
+    let lastAttemptError: unknown = null;
     for (let attempt = 1; attempt <= SECRET_ATTEMPTS; attempt += 1) {
+      lastAttemptError = null;
       let error = "empty";
       try {
         const raw = await env.SECRETS.get(name);
@@ -59,7 +60,7 @@ async function readSecretWithRetry(
           return raw;
         }
       } catch (err) {
-        lastError = err;
+        lastAttemptError = err;
         error =
           err instanceof Error && err.message.length > 0
             ? err.message
@@ -80,7 +81,7 @@ async function readSecretWithRetry(
         );
       }
     }
-    if (lastError !== null) throw lastError;
+    if (lastAttemptError !== null) throw lastAttemptError;
     return null;
   })();
   byName.set(name, pending);

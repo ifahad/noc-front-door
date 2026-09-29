@@ -279,6 +279,50 @@ describe("loadSeedLocal", () => {
     expect(eventsOf(logs, "config.seed_local_invalid")).toHaveLength(0);
   });
 
+  it("reports missing when the last attempt of a read returns an empty value", async () => {
+    vi.useFakeTimers();
+    const logs = captureLogs();
+    const { env } = makeScriptedEnv([new Error("secret_store_down"), "", ""]);
+    const pending = loadSeedLocal(env);
+    await vi.runAllTimersAsync();
+    expect(await pending).toEqual({ pins: {}, contacts: [] });
+    expect(
+      eventsOf(logs, "config.seed_local_invalid").map((l) => l.reason),
+    ).toEqual(["missing"]);
+  });
+
+  it("reports missing when the last attempt returns an empty value after two throws", async () => {
+    vi.useFakeTimers();
+    const logs = captureLogs();
+    const { env } = makeScriptedEnv([
+      new Error("secret_store_down"),
+      new Error("secret_store_down"),
+      "",
+    ]);
+    const pending = loadSeedLocal(env);
+    await vi.runAllTimersAsync();
+    expect(await pending).toEqual({ pins: {}, contacts: [] });
+    expect(
+      eventsOf(logs, "config.seed_local_invalid").map((l) => l.reason),
+    ).toEqual(["missing"]);
+  });
+
+  it("reports read_failed when every attempt throws", async () => {
+    vi.useFakeTimers();
+    const logs = captureLogs();
+    const { env } = makeScriptedEnv([
+      new Error("secret_store_down"),
+      new Error("secret_store_down"),
+      new Error("secret_store_down"),
+    ]);
+    const pending = loadSeedLocal(env);
+    await vi.runAllTimersAsync();
+    expect(await pending).toEqual({ pins: {}, contacts: [] });
+    expect(
+      eventsOf(logs, "config.seed_local_invalid").map((l) => l.reason),
+    ).toEqual(["read_failed"]);
+  });
+
   it("does not memoise a failed read", async () => {
     const values: SecretMap = { SEED_LOCAL: "{not json" };
     const env = makeEnv(values);
