@@ -99,7 +99,7 @@ Stretch goals: actor alarms, live NOC console, object-storage reports, Arabic mo
 
 ## Plan 3 build (2026-09-28 → 29)
 
-The account became **verified**, unlocking the phone line and the second assistant. OpenCode-authored commits on top of Plan 2: **12** (77 total). Same architect/implementer/reviewer split; GLM-5.3 (Flash) implementer lanes.
+The account became **verified**, unlocking the phone line and the second assistant. OpenCode-authored commits on top of Plan 2: **12** (77 total as of c7943f8). Same architect/implementer/reviewer split; GLM-5.3 (Flash) implementer lanes.
 
 - **Verified-account work:** bought the US number (balance 12.45 → 11.35 USD), built `sanad-noc-ar` as a true second assistant reached by a one-way workflow handoff, applied both assistants live, and shipped the production front page with its hidden operator console.
 - **Parallel lanes:** P3-3a (assistant config/validator) and P3-3b (edge) ran concurrently in worktrees `wt-p3-3a`/`wt-p3-3b`; P3-4a/b/c (Arabic opening + prober hang classification / edge throttles / flags cooldown) launched together from `11e7296` — same pattern as Plan 1's R17/R27 and Plan 2's lanes.

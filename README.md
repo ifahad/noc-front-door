@@ -87,7 +87,7 @@ Full rationale: [docs/architecture.md](docs/architecture.md).
 | Stateful Actors, read-modify-write (C11) | 10 opens → 1 ticket ([race test](docs/evidence/race-test.txt)) |
 | Observability — logs, signal, minute answer | ≈ ≤30 s alert ([runbook](docs/runbook.md)) |
 | A real debugging story | Found within a minute (#5) |
-| OpenCode + Telnyx Inference | 77 commits ([DOGFOODING.md](DOGFOODING.md)) |
+| OpenCode + Telnyx Inference | 77 commits as of c7943f8 ([DOGFOODING.md](DOGFOODING.md)) |
 | Public deployment + docs | Live since 2026-09-27 |
 
 Stretch goals (as of 2026-09-28):
@@ -111,7 +111,7 @@ Full detail: [docs/architecture.md](docs/architecture.md) (appendix).
 
 ### Know within a minute
 
-The external prober (dev box, outside the failure domain) probes `GET /ops/health/deep` every 10 s, alerts after **2 consecutive failures** (worst case ≈ 30 s), covering the edge function + KV, actors, MCP; assistant-level failures surface in the Portal + per-call trace. An actor **hang** that outlives two consecutive probes counts as **down** (`actor_hung`), not "slow" — the 2026-09-28 incident showed up exactly as 30 s hangs (DEBUGLOG #15). `degraded` with `slow:["kv"]` is **not** an outage (DEBUGLOG #6). First look: the invocation log, then `scripts/trace.sh t-<trace_id>` — order in [docs/runbook.md](docs/runbook.md).
+The external prober (dev box, outside the failure domain) probes `GET /ops/health/deep` every 10 s, alerts after **2 consecutive failures** (worst case ≈ 30 s), covering the edge function + KV, actors, MCP; assistant-level failures surface in the Portal + per-call trace. An actor **hang** that outlives two consecutive probes counts as **down** (`actor_hung`), not "slow" — the 2026-09-28 incident showed up as 30 s hangs (DEBUGLOG #15). `degraded` with `slow:["kv"]` is **not** an outage (DEBUGLOG #6). First look: the invocation log, then `scripts/trace.sh t-<trace_id>` — order in [docs/runbook.md](docs/runbook.md).
 
 Load discipline ([detail](docs/architecture.md)): board cached **30 s from build completion** (10 s degraded); failed flag reads → **30 s cooldown**; public page polls **15 s, visible-only**, pauses after **10 min idle**.
 
