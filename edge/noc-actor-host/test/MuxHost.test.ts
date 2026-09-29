@@ -102,6 +102,46 @@ describe("MuxHost site muxing", () => {
   });
 });
 
+describe("MuxHost openIfVerified muxing", () => {
+  const K = ["0a", "1b", "2c", "3d", "4e", "5f", "6a", "7b"].join("");
+  const FP = ["9a", "8b", "7c", "6d", "5e", "4f", "3a", "2b"].join("");
+
+  it("routes openIfVerified and sees the proof from recordPinAttempt under the site prefix", async () => {
+    const { host, storage } = makeHost();
+    const attempt = (await host.site("RUH-114", "recordPinAttempt", {
+      k: K,
+      valid: true,
+      fp: FP,
+      trace_id: `t-${K}`,
+      at: T,
+    })) as { result: string };
+    expect(attempt.result).toBe("ok");
+    const opened = (await host.site("RUH-114", "openIfVerified", openInput(K, "RUH"))) as {
+      created: boolean;
+      ticket: { id: string };
+    };
+    expect(opened.created).toBe(true);
+    expect(storage.keys()).toContain("site/RUH-114/pin");
+    expect(storage.keys()).toContain("site/RUH-114/ticket");
+    expect(storage.raw("value")).toBeUndefined();
+  });
+
+  it("a proof on one site does not open another", async () => {
+    const { host } = makeHost();
+    await host.site("RUH-114", "recordPinAttempt", {
+      k: K,
+      valid: true,
+      fp: FP,
+      trace_id: `t-${K}`,
+      at: T,
+    });
+    const other = (await host.site("RUH-115", "openIfVerified", openInput(K, "RUH"))) as {
+      denied?: string;
+    };
+    expect(other.denied).toBe("not_verified");
+  });
+});
+
 describe("MuxHost region muxing", () => {
   it("reportSite across two sites declares one incident", async () => {
     const { host, storage } = makeHost();

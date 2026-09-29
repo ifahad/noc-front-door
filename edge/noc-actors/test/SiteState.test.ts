@@ -18,6 +18,10 @@ function invalid(k: string, fp: string, at: number) {
   return { k, valid: false, fp, trace_id: "t-" + k, at };
 }
 
+function valid(k: string, fp: string, at: number) {
+  return { k, valid: true, fp, trace_id: "t-" + k, at };
+}
+
 function attachInput(overrides: Partial<OpenOrAttachInput> = {}): OpenOrAttachInput {
   return {
     k: k1,
@@ -357,6 +361,100 @@ describe("SiteState", () => {
     expect(again.ticket.id).toBe("NJD-1402");
   });
 
+  it("openIfVerified opens the first ticket once the call's own PIN check passed", async () => {
+    const h = makeSiteState("RUH-114");
+    await h.actor.recordPinAttempt(valid(k1, fpA, T0));
+    const r = await h.actor.openIfVerified(attachInput({ at: T0 + 1000 }));
+    expect("denied" in r).toBe(false);
+    if ("denied" in r) return;
+    expect(r.created).toBe(true);
+    expect(r.ticket.id).toBe("NJD-1401");
+    expect(r.trace_id).toBe("t-1");
+    expect(typeof r.actor_ms).toBe("number");
+    const live = await h.actor.getTicket({ trace_id: "t-2" });
+    expect(live.ticket?.id).toBe("NJD-1401");
+  });
+
+  it("openIfVerified denies a call with no proof and writes nothing", async () => {
+    const h = makeSiteState("RUH-114");
+    const before = h.storage.keys();
+    const r = await h.actor.openIfVerified(attachInput());
+    expect(r).toMatchObject({ denied: "not_verified", trace_id: "t-1" });
+    expect(typeof r.actor_ms).toBe("number");
+    expect(h.storage.keys()).toEqual(before);
+    expect(h.storage.raw("ticket")).toBeUndefined();
+    expect(h.storage.raw("seq")).toBeUndefined();
+    expect(h.storage.raw("ops")).toBeUndefined();
+    expect(h.storage.raw("events")).toBeUndefined();
+  });
+
+  it("invalid and locked attempts mint no proof for openIfVerified", async () => {
+    const h = makeSiteState("RUH-114");
+    await h.actor.recordPinAttempt(invalid(k1, fpA, T0));
+    const deniedInvalid = await h.actor.openIfVerified(attachInput({ at: T0 + 1000 }));
+    expect(deniedInvalid).toMatchObject({ denied: "not_verified" });
+    await h.actor.recordPinAttempt(invalid(k1, fpB, T0 + 2000));
+    await h.actor.recordPinAttempt(invalid(k1, fpC, T0 + 3000));
+    const locked = await h.actor.recordPinAttempt(valid(k1, fpD, T0 + 4000));
+    expect(locked.result).toBe("locked");
+    const deniedLocked = await h.actor.openIfVerified(attachInput({ at: T0 + 5000 }));
+    expect(deniedLocked).toMatchObject({ denied: "not_verified" });
+    expect(h.storage.raw("ticket")).toBeUndefined();
+  });
+
+  it("the proof expires after 30 minutes and never applies before it was minted", async () => {
+    const h = makeSiteState("RUH-114");
+    await h.actor.recordPinAttempt(valid(k1, fpA, T0));
+    const early = await h.actor.openIfVerified(attachInput({ at: T0 - 1 }));
+    expect(early).toMatchObject({ denied: "not_verified" });
+    const atEdge = await h.actor.openIfVerified(attachInput({ at: T0 + 30 * MIN }));
+    expect("denied" in atEdge).toBe(false);
+    const late = await h.actor.openIfVerified(
+      attachInput({ at: T0 + 30 * MIN + 1, symptom: "still down" }),
+    );
+    expect(late).toMatchObject({ denied: "not_verified" });
+  });
+
+  it("the proof is per call", async () => {
+    const h = makeSiteState("RUH-114");
+    await h.actor.recordPinAttempt(valid(k1, fpA, T0));
+    const other = await h.actor.openIfVerified(attachInput({ k: k2, at: T0 + 1000 }));
+    expect(other).toMatchObject({ denied: "not_verified" });
+    expect(h.storage.raw("ticket")).toBeUndefined();
+  });
+
+  it("openIfVerified attaches to the site's existing ticket", async () => {
+    const h = makeSiteState("RUH-114");
+    const first = await h.actor.openOrAttach(attachInput({ k: k2, callerRef: "c-ref-2", at: T0 }));
+    await h.actor.recordPinAttempt(valid(k1, fpA, T0 + 1000));
+    const r = await h.actor.openIfVerified(attachInput({ at: T0 + 2000 }));
+    expect("denied" in r).toBe(false);
+    if ("denied" in r) return;
+    expect(r.created).toBe(false);
+    expect(r.ticket.id).toBe(first.ticket.id);
+    expect(r.ticket.reporters).toHaveLength(2);
+  });
+
+  it("reset clears the PIN record, so openIfVerified is denied", async () => {
+    const h = makeSiteState("RUH-114");
+    await h.actor.recordPinAttempt(valid(k1, fpA, T0));
+    await h.actor.reset({ trace_id: "t-9" });
+    const r = await h.actor.openIfVerified(attachInput({ at: T0 + 1000 }));
+    expect(r).toMatchObject({ denied: "not_verified" });
+  });
+
+  it("openIfVerified fails closed on inherited keys and non-numeric times", async () => {
+    const h = makeSiteState("RUH-114");
+    const inherited = await h.actor.openIfVerified(attachInput({ k: "constructor" }));
+    expect(inherited).toMatchObject({ denied: "not_verified" });
+    await h.actor.recordPinAttempt(valid(k1, fpA, T0));
+    const weirdAt = await h.actor.openIfVerified(
+      attachInput({ at: Number.NaN }),
+    );
+    expect(weirdAt).toMatchObject({ denied: "not_verified" });
+    expect(h.storage.raw("ticket")).toBeUndefined();
+  });
+
   it("no return value or actor event contains the pin fingerprint", async () => {
     const h = makeSiteState("RUH-114");
     const created = await h.actor.openOrAttach(attachInput());
@@ -382,6 +480,8 @@ describe("SiteState", () => {
       await h.actor.markRegionReported({ ticketId: created.ticket.id, trace_id: "t-1" }),
       await h.actor.getTicket({ trace_id: "t-1" }),
       await h.actor.resolveTicket({ trace_id: "t-1", at: T0 }),
+      await h.actor.openIfVerified(attachInput({ at: T0 + 3000 })),
+      await h.actor.openIfVerified(attachInput({ k: k3, at: T0 + 3000 })),
     ];
     for (const result of results) {
       expect(JSON.stringify(result)).not.toContain(fpA);

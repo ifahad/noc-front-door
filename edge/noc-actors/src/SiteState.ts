@@ -3,6 +3,7 @@ import { mintTicketId, sha256Hex } from "../../shared/src/ids";
 import type { Impact, Priority, Ticket } from "../../shared/src/types";
 
 const PIN_WINDOW_MS = 15 * 60 * 1000;
+const VERIFIED_TTL_MS = 30 * 60 * 1000;
 const CALL_TIER_LIMIT = 3;
 const SITE_TIER_FAILURES = 6;
 const SITE_TIER_DISTINCT_K = 2;
@@ -81,6 +82,12 @@ export interface OpenOrAttachInput {
   priority: Priority;
   at: number;
   siteCode: string;
+}
+
+export interface NotVerifiedResult {
+  denied: "not_verified";
+  trace_id: string;
+  actor_ms: number;
 }
 
 export interface MarkRegionReportedInput {
@@ -413,6 +420,44 @@ export class SiteState extends StatefulActor {
       trace_id: input.trace_id,
       actor_ms: Date.now() - started,
     };
+  }
+
+  // The per-call PIN record that recordPinAttempt maintains is the
+  // authoritative proof that this call passed the PIN check (kvfree design,
+  // ruling R-A). openIfVerified gates the one-ticket-per-site write on that
+  // proof in the same actor turn, so the auth decision and the invariant
+  // cannot interleave. A denial returns a value rather than throwing,
+  // because error messages over mux RPC are not proven to survive, and it
+  // writes nothing. The check fails closed: an inherited key, a non-numeric
+  // time or a proof older than VERIFIED_TTL_MS all deny.
+  async openIfVerified(
+    input: OpenOrAttachInput,
+  ): Promise<OpenOrAttachResult | NotVerifiedResult> {
+    const started = Date.now();
+    const pin =
+      (await this.ctx.storage.get<PinState>("pin")) ?? {
+        byCall: {},
+        site: { failures: [], lockedUntil: null },
+      };
+    const call = Object.prototype.hasOwnProperty.call(pin.byCall, input.k)
+      ? pin.byCall[input.k]
+      : undefined;
+    const proven =
+      call !== undefined &&
+      Object.values(call.results).some((r) => {
+        if (r === null || typeof r !== "object" || r.result !== "ok") return false;
+        if (typeof r.at !== "number" || typeof input.at !== "number") return false;
+        const age = input.at - r.at;
+        return age >= 0 && !(age > VERIFIED_TTL_MS);
+      });
+    if (!proven) {
+      return {
+        denied: "not_verified",
+        trace_id: input.trace_id,
+        actor_ms: Date.now() - started,
+      };
+    }
+    return this.openOrAttach(input);
   }
 
   async markRegionReported(
