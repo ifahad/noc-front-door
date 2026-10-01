@@ -857,6 +857,29 @@ describe("MCP Arabic (lang=ar)", () => {
     expect((await response.json()) as Record<string, unknown>).toHaveProperty("error");
   });
 
+  it("names the Yasmin branch in Arabic (فرع …) when found", async () => {
+    deps = makeDeps();
+    await seedSession(deps.kv, {});
+    client = await connectClient(deps, MCP_TOKEN, "?lang=ar");
+    const result = await callTool(client, "find_site", { description: "the Yasmin branch" });
+    expect(result.isError).not.toBe(true);
+    expect(textOf(result)).toBe("هذا فرع Al Yasmin، رقم الموقع R U H, 1 1 4.");
+    expect((result.structuredContent as Record<string, unknown>)?.site_id).toBe("RUH-114");
+  });
+
+  it("names the JED-007 branch in Arabic (فرع …) in a healthy status", async () => {
+    deps = makeDeps({
+      kv: newKv(),
+      actors: new FakeActorPort(),
+      adapter: makeAdapter(),
+    });
+    await seedSession(deps.kv, {});
+    client = await connectClient(deps, MCP_TOKEN, "?lang=ar");
+    const result = await callTool(client, "get_site_status", { site_id: "JED-007" });
+    expect(result.isError).not.toBe(true);
+    expect(textOf(result)).toBe("فرع JED-007 شغّال وسليم من جهتنا.");
+  });
+
   it("keeps the ops write rejection English under lang=ar", async () => {
     deps = makeDeps();
     startLogs();

@@ -82,12 +82,12 @@ const AR_CATALOG: SpokenCatalog = {
   writeFail: "ما أقدر أحدّث التذاكر الحين.",
   defaultDevice: "الراوتر الرئيسي",
   sinceFallback: "قبل شوي",
-  findSiteFound: (site) => `هذا ${site.label}، رقم الموقع ${spellId(site.site_id)}.`,
-  statusUp: (site) => `${site.label} شغّال وسليم من جهتنا.`,
+  findSiteFound: (site) => `هذا ${arSiteLabel(site)}، رقم الموقع ${spellId(site.site_id)}.`,
+  statusUp: (site) => `${arSiteLabel(site)} شغّال وسليم من جهتنا.`,
   statusDegraded: (site, device) =>
-    `${device} في ${site.label} أداؤه ضعيف، وفريقنا يشتغل عليه.`,
+    `${device} في ${arSiteLabel(site)} أداؤه ضعيف، وفريقنا يشتغل عليه.`,
   statusDown: (site, device, since, lteDown) => {
-    let out = `${device} في ${site.label} توقف عن الاستجابة الساعة ${since}`;
+    let out = `${device} في ${arSiteLabel(site)} توقف عن الاستجابة الساعة ${since}`;
     if (lteDown) out += "، وخط الـ LTE الاحتياطي بعد واقف";
     return `${out}.`;
   },
@@ -258,6 +258,14 @@ function siteLabel(site: Site): string {
   return site.label.startsWith("the ")
     ? site.label.slice("the ".length)
     : site.label;
+}
+
+function arSiteLabel(site: Site): string {
+  let name = site.label.replace(/^the /i, "");
+  if (name.endsWith(" branch")) {
+    name = name.slice(0, -" branch".length);
+  }
+  return `فرع ${name}`;
 }
 
 function nmsSpeech(site: Site, status: NmsStatus, s: SpokenCatalog): string {
