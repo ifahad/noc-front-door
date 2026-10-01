@@ -20,7 +20,7 @@ flowchart LR
   caller --> asst
   asst --> wf
   wf -->|"④ one-way assistant-target handoff<br/>(voice_mode distinct)"| ar
-  wf -->|"① POST /dv at call start (signed, fail-open ≤ 2500 ms)"| edge
+  wf -->|"① POST /dv at call start (signed, fail-open ≤ 4500 ms)"| edge
   wf -->|"② POST /tools/* from tool nodes"| edge
   wf -->|"③ POST /mcp from prompt nodes"| mcp
   mcp -.->|"in-process"| edge
@@ -31,7 +31,7 @@ flowchart LR
   prober -.->|"health every 10 s (heals projections)<br/>paging every 30 s (tick, claim, send)"| edge
 ```
 
-- `① POST /dv` at call start returns the dynamic variables (signed, fail-open ≤ 2500 ms) and steers `route_hint`.
+- `① POST /dv` at call start returns the dynamic variables (signed, fail-open ≤ 4500 ms) and steers `route_hint`.
 - `② POST /tools/*` are the tool-node webhooks (`verify-site`, `open-ticket`, `join-incident`, `callback`).
 - `③ POST /mcp` is the assistant's MCP integration calling the 5 tools from prompt nodes; the server runs **in-process** in `noc-edge` (stateless, C4).
 - `④` the English workflow hands off to `sanad-noc-ar` — see "Two assistants" below (facts learned live: DEBUGLOG #18).
@@ -71,7 +71,7 @@ Actor alarms **do work** on this account although new instances cannot be create
 
 ## Fail-open by design + signed identity
 
-`/dv` answers within a hard budget (2500 ms platform timeout); if KV or actors are slow it falls back to safe defaults (`route_hint=unverified` → PIN verification) — the call still works (proven live in DEBUGLOG #8). The webhook that blocks the greeting must never be the reason a call fails (C3). Caller identity comes from the **signed body** (`call_control_id` / `call_key`), never from a header alone and never from LLM-supplied arguments (C13). Signed routes (`/dv`, `/tools/*`) fail closed: unsigned or stale → HTTP 403.
+`/dv` answers within a hard budget (4500 ms platform timeout; the handler's internal budget is 4200 ms, `dv.late` at 4300 ms — raised from 2500/2200 ms by ruling P3-R22, DEBUGLOG #23); if KV or actors are slow it falls back to safe defaults (`route_hint=unverified` → PIN verification) — the call still works (proven live in DEBUGLOG #8). The webhook that blocks the greeting must never be the reason a call fails (C3). Caller identity comes from the **signed body** (`call_control_id` / `call_key`), never from a header alone and never from LLM-supplied arguments (C13). Signed routes (`/dv`, `/tools/*`) fail closed: unsigned or stale → HTTP 403.
 
 The public board is a **projection view**: the front page's board (region cards, incidents, tickets, the escalation column with SLA level + due time / ACKED, KPI tiles, client-side event feed) refreshes every 15 s (visible-only) from the cached public `/ops/board` — single-flight with the 30 s-from-settle reuse above, so viewers cannot load the single mux actor. `/ops/status` is the raw, masked status page. The hidden **operator console** (open with `#console` or the backtick key) runs demo controls from the browser; its ops token stays in that tab's `sessionStorage` and is sent only to this site's `/ops` routes.
 

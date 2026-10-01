@@ -245,3 +245,14 @@ Blocking findings from the build, with evidence. One entry per finding.
 - Lesson: a handoff the platform may drop needs a way around the handoff — the direct Arabic entry is that way around — and when a platform feature (MCP on the target assistant) costs 40–80 s, measure it A/B before shipping it.
 - Links: [voice-calls.md](docs/evidence/voice-calls.md) (#9–#13, direct entry); [docs/decisions.md](docs/decisions.md) #9, #16–#19.
 
+## #23 — 2026-10-01 — DV webhook budget: identified routing never fit the 2.2 s internal budget (timeout 2500→4500 ms)
+
+- Symptom: on live test call T2 (12:19:56Z, web, `flag/demo_caller=c-ahmed`), `/dv` **identified** the caller (site RUH-114) but logged `outcome=fallback`, so `route_hint` fell back to "unverified" and the caller got the anonymous greeting — identified routing had never succeeded on a live call.
+- Signal: the `dv.route` line: total_ms **2201**, `kv_ms` **2053**, `actor_ms` 140, site RUH-114, outcome=fallback — the identification itself worked and the actor was fast; the 2200 ms internal budget was blown by KV alone.
+- Evidence: trace `t-e8a82bf86fe7fcf1` ([voice-calls.md](docs/evidence/voice-calls.md) T2); T1 twelve minutes earlier ran the same build's happy path fine (`dv` unverified 1,225 ms), so the slow step was the identified path's sequential KV work, not the build.
+- Hypothesis: KV costs 1–2 s per op on this account (DEBUGLOG #6), and an identified **web** caller adds a sequential KV step — the flags read and then the session write in sequence; 2200 ms cannot fit both. The 2500 ms timeout had been sized against the warm probe (9–11 ms, [probe-results.md](docs/evidence/probe-results.md)), not against the slowest primitive on the exact path.
+- Fix (ruling P3-R22): `dynamic_variables_webhook_timeout_ms` 2500→**4500 ms** on both assistants and `DV_TIMEOUT_MS` in noc-edge; the handler's internal budget becomes **4200 ms** and `dv.late` fires at 4300 ms. The DV response still fails open (safe defaults) if the budget is exceeded (C3). Cost: an identified caller on slow KV can hear up to ~4.5 s before the greeting.
+- Verification: pending — redeploy and re-test call (personalised greeting + deflection flag).
+- Lesson: a budget must be checked against the slowest primitive on the exact path (web callers add a sequential KV step), not against the warm probe.
+- Links: [docs/decisions.md](docs/decisions.md) #20; [voice-calls.md](docs/evidence/voice-calls.md) (T1/T2).
+

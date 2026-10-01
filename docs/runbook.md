@@ -51,7 +51,7 @@ SINCE=15m scripts/trace.sh t-<call key>    # SINCE defaults to 30m
 ## 4. Then: the Portal
 
 - **Conversation → node labels:** which labelled node did the call reach? A call stuck before `t_open_ticket` vs. after it narrows the failure immediately.
-- **Dynamic Variable Webhook Logs tab:** did `POST /dv` fire, and how long did it take? Absent or over the 2500 ms timeout → the platform used the static defaults; the call still works, degraded (spec §5.4).
+- **Dynamic Variable Webhook Logs tab:** did `POST /dv` fire, and how long did it take? Absent or over the 4500 ms timeout → the platform used the static defaults; the call still works, degraded (spec §5.4).
 
 ## 5. Then: the actor subsystem
 
@@ -136,10 +136,10 @@ Get the namespace id once (`telnyx-edge storage kv list` → the `noc-kv` id, be
 2. **DV delay** (exercises the fail-open greeting):
 
    ```sh
-   telnyx-edge storage kv key put "$KV_ID" flag/fault/dv_delay_ms 3000 --ttl 600s
+   telnyx-edge storage kv key put "$KV_ID" flag/fault/dv_delay_ms 5000 --ttl 600s
    ```
 
-   Any injected delay logs `dv.late` with `fault_injected:true`; ~3000 ms pushes `/dv` past the platform's 2500 ms timeout, so the platform speaks the greeting with static defaults. Verify: the log line `dv.late … fault_injected:true`, and the conversation shows the default `site_id`/`route_hint`. Clear with `0`.
+   Any injected delay logs `dv.late` with `fault_injected:true`; ~5000 ms pushes `/dv` past the platform's 4500 ms timeout (internal budget 4200 ms since ruling P3-R22, DEBUGLOG #23), so the platform speaks the greeting with static defaults. Verify: the log line `dv.late … fault_injected:true`, and the conversation shows the default `site_id`/`route_hint`. Clear with `0`.
 
 3. After each drill, check the prober stayed quiet (or fired and recovered), and reset lab state if the drill created tickets: `node scripts/ops.mjs POST /ops/reset`.
 
