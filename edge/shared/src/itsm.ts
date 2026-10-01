@@ -65,6 +65,19 @@ function compact(description: string): string {
   return wordToDigit.replace(/[^a-z0-9]/g, "");
 }
 
+const ARABIC_INDIC_DIGITS: Record<string, string> = {
+  "٠": "0", "١": "1", "٢": "2", "٣": "3", "٤": "4",
+  "٥": "5", "٦": "6", "٧": "7", "٨": "8", "٩": "9",
+};
+
+function threeDigitRuns(description: string): string[] {
+  const ascii = description.replace(
+    /[٠١٢٣٤٥٦٧٨٩]/g,
+    (d) => ARABIC_INDIC_DIGITS[d],
+  );
+  return (ascii.match(/[0-9]+/g) ?? []).filter((run) => run.length === 3);
+}
+
 function idMatcher(site: Site): RegExp {
   const compactId = site.site_id.toLowerCase().replace(/[^a-z0-9]/g, "");
   return new RegExp(`${compactId}(?![0-9])`);
@@ -184,10 +197,11 @@ export class SeedAdapter implements ItsmAdapter {
       }
     }
     const text = compact(description);
-    if (text === "") return null;
-    for (const site of SITES) {
-      if (site.hidden) continue;
-      if (idMatcher(site).test(text)) return site;
+    if (text !== "") {
+      for (const site of SITES) {
+        if (site.hidden) continue;
+        if (idMatcher(site).test(text)) return site;
+      }
     }
     let match: Site | null = null;
     for (const site of SITES) {
@@ -196,7 +210,17 @@ export class SeedAdapter implements ItsmAdapter {
       if (match !== null) return null;
       match = site;
     }
-    return match;
+    if (match !== null) return match;
+    const runs = threeDigitRuns(description);
+    if (runs.length === 0) return null;
+    let digitMatch: Site | null = null;
+    for (const site of SITES) {
+      if (site.hidden) continue;
+      if (!runs.includes(digitsOf(site.site_id))) continue;
+      if (digitMatch !== null) return null;
+      digitMatch = site;
+    }
+    return digitMatch;
   }
 
   private async hmac(payload: string): Promise<string> {

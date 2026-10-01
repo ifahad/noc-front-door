@@ -141,6 +141,31 @@ describe("resolveSiteGlobal", () => {
     const adapter = makeAdapter();
     expect(await adapter.resolveSiteGlobal("the Lab branch")).toBeNull();
   });
+
+  it.each([
+    ["Are you H114؟"],
+    ["Are you Edge 114"],
+    ["١١٤"],
+  ])("resolves the transcribed mangling %j to RUH-114 from its unique three digits", async (description) => {
+    const adapter = makeAdapter();
+    expect((await adapter.resolveSiteGlobal(description))?.site_id).toBe("RUH-114");
+  });
+
+  it("resolves a lone three-digit run to the only site with that numeric part", async () => {
+    const adapter = makeAdapter();
+    expect((await adapter.resolveSiteGlobal("007"))?.site_id).toBe("JED-007");
+  });
+
+  it("returns null when two three-digit runs match two different sites", async () => {
+    const adapter = makeAdapter();
+    expect(await adapter.resolveSiteGlobal("114 and 121")).toBeNull();
+  });
+
+  it("ignores runs that are not exactly three digits", async () => {
+    const adapter = makeAdapter();
+    expect(await adapter.resolveSiteGlobal("11 4")).toBeNull();
+    expect(await adapter.resolveSiteGlobal(["5", "9", "4", "4"].join(""))).toBeNull();
+  });
 });
 
 describe("checkPin", () => {
