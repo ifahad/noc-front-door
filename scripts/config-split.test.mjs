@@ -180,7 +180,7 @@ test('the Arabic opening speaks first and discloses the recording', () => {
   assert.equal(node.name, 'arabic opening');
   assert.equal(
     node.message,
-    'حيّاك الله، معك سند من نجد نتووركس، وبنكمل معك بالعربي. للعلم، المكالمة مسجّلة.',
+    'حيّاك الله، معك سند من نجد نتووركس. للعلم، المكالمة مسجّلة.',
   );
 });
 
@@ -432,11 +432,25 @@ test('no Arabic node carries per-node voice or transcription overrides', () => {
   }
 });
 
-test('the Arabic assistant config carries the Arabic voice and STT and no widget', () => {
+test('the Arabic assistant config carries the Arabic voice and STT', () => {
   assert.equal(ar.name, 'sanad-noc-ar');
   assert.deepEqual(ar.voice_settings, { voice: 'Telnyx.Bayan.Reem' });
   assert.deepEqual(ar.transcription, { model: 'soniox/stt-rt-v5' });
-  assert.equal('widget_settings' in ar, false);
+});
+
+test('the Arabic call widget carries the English widget keys with Arabic labels', () => {
+  assert.deepEqual(ar.widget_settings, {
+    theme: 'dark',
+    position: 'static',
+    default_state: 'collapsed',
+    start_call_text: 'كلّم سند',
+    agent_thinking_text: 'سند يفكّر…',
+    speak_to_interrupt_text: 'تكلّم إذا تبي تقاطع',
+  });
+  assert.deepEqual(
+    Object.keys(ar.widget_settings).sort(),
+    Object.keys(en.widget_settings).sort(),
+  );
 });
 
 test('the Arabic assistant shares the English assistant settings unchanged', () => {
