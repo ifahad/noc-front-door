@@ -18,6 +18,10 @@ const AR_HANDOFF_PROMPT =
 const ARABIC_SCRIPT_RE = /[\u0600-\u06FF]/;
 const AR_REPLY_RULE =
   'ردّ دائماً بالعربي فقط، حتى لو تكلّم المتصل بالإنجليزي أو كان سجل المحادثة بالإنجليزي.';
+const AR_DISCLOSURE_LINE =
+  'حيّاك الله، معك سند، المساعد الذكي من نجد نتووركس. للعلم، المكالمة مسجّلة.';
+const AR_DISCLOSURE_FALLBACK =
+  'إذا ما فيه في المحادثة جملة افتتاح من سند، فابدأ ردك الأول بهذه الجملة حرفياً: «حيّاك الله، معك سند، المساعد الذكي من نجد نتووركس. للعلم، المكالمة مسجّلة.» ولا تكررها إذا كانت موجودة.';
 const INTERRUPTION_SETTINGS = {
   disable_greeting_interruption: true,
   start_speaking_plan: {
@@ -261,6 +265,25 @@ test('n_ar_intake and n_ar_pin_retry end with the spelled site-code rule', () =>
   }
 });
 
+test('n_ar_intake speaks the disclosure itself if the platform dropped s_ar_open', () => {
+  const intake = ar.conversation_flow.nodes.find((n) => n.id === 'n_ar_intake');
+  const count = intake.instructions.split(AR_DISCLOSURE_FALLBACK).length - 1;
+  assert.equal(count, 1, `n_ar_intake carries the disclosure fallback ${count} times`);
+  assert.ok(
+    intake.instructions.includes(`${AR_DISCLOSURE_FALLBACK} المهمة:`),
+    'the disclosure fallback must sit directly before المهمة:',
+  );
+  assert.ok(
+    intake.instructions.includes(AR_DISCLOSURE_LINE),
+    'the fallback must quote the s_ar_open disclosure line verbatim',
+  );
+});
+
+test('s_ar_open keeps its fixed disclosure message unchanged', () => {
+  const node = ar.conversation_flow.nodes.find((n) => n.id === 's_ar_open');
+  assert.equal(node.message, AR_DISCLOSURE_LINE);
+});
+
 const TRIAGE_APPEND =
   ' إذا كانت قيمة {{ticket_id}} تساوي none فالمتصل متحقَّق منه لفرع {{site_label}} ({{site_id}})، فلا تطلب منه رقم الموقع ولا رقم السر أبداً، ولا تعيد السؤال عن {{symptom}} أو {{impact}} أو {{service_affecting}} إذا كانت قيمتها معروفة (ليست none ولا unknown)؛ اسأل فقط عن الناقص.';
 
@@ -383,8 +406,9 @@ test('every Arabic prompt node replies in Arabic only, right before its task', (
   for (const n of prompts) {
     const count = n.instructions.split(AR_REPLY_RULE).length - 1;
     assert.equal(count, 1, `node ${n.id} carries the reply-in-Arabic rule ${count} times`);
+    const tail = n.id === 'n_ar_intake' ? ` ${AR_DISCLOSURE_FALLBACK} المهمة:` : ' المهمة:';
     assert.ok(
-      n.instructions.includes(`${AR_REPLY_RULE} المهمة:`),
+      n.instructions.includes(`${AR_REPLY_RULE}${tail}`),
       `node ${n.id} does not place the reply-in-Arabic rule directly before المهمة:`,
     );
   }
