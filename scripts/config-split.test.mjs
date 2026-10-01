@@ -173,15 +173,20 @@ test('the Arabic flow starts at s_ar_open and has only Arabic nodes', () => {
   assert.equal(flow.edges.length, 37);
 });
 
-test('the Arabic opening speaks first and discloses the recording', () => {
+test('the Arabic opening speaks first and discloses the AI assistant and the recording', () => {
   const node = ar.conversation_flow.nodes[0];
   assert.equal(node.id, 's_ar_open');
   assert.equal(node.type, 'speak');
   assert.equal(node.name, 'arabic opening');
   assert.equal(
     node.message,
-    'حيّاك الله، معك سند من نجد نتووركس. للعلم، المكالمة مسجّلة.',
+    'حيّاك الله، معك سند، المساعد الذكي من نجد نتووركس. للعلم، المكالمة مسجّلة.',
   );
+  assert.ok(
+    node.message.includes('المساعد الذكي'),
+    's_ar_open must name Sanad as the AI assistant',
+  );
+  assert.ok(node.message.includes('مسجّلة'), 's_ar_open must disclose the recording');
 });
 
 const cmp = (op, name, value) => ({
