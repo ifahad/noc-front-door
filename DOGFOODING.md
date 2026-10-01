@@ -99,7 +99,7 @@ Stretch goals: actor alarms, live NOC console, object-storage reports, Arabic mo
 
 ## Plan 3 build (2026-09-28 → 29)
 
-The account became **verified**, unlocking the phone line and the second assistant. OpenCode-authored commits on top of c7943f8: **12** (89 of 112 total as of `e6c9772`). Same architect/implementer/reviewer split; GLM-5.3 (Flash) implementer lanes, plus one Kimi-K3 lane for the KV-free fix.
+The account became **verified**, unlocking the phone line and the second assistant. OpenCode-authored commits on top of c7943f8: **12** (89 of 112 total as of `e6c9772`). Same architect/implementer/reviewer split; GLM-5.3 (Flash) implementer lanes, plus Kimi-K3, which wrote two commits: the openIfVerified KV-free fix (`bbc2b7b`) and an early NOC-wall page redesign (`85ff075`).
 
 - **Verified-account work:** bought the US number (balance 12.45 → 11.35 USD), built `sanad-noc-ar` as a true second assistant reached by a one-way workflow handoff, applied both assistants live, and shipped the production front page with its hidden operator console.
 - **Parallel lanes:** P3-3a (assistant config/validator) and P3-3b (edge) ran concurrently in worktrees `wt-p3-3a`/`wt-p3-3b`; P3-4a/b/c (Arabic opening + prober hang classification / edge throttles / flags cooldown) launched together from `11e7296` — same pattern as Plan 1's R17/R27 and Plan 2's lanes.
@@ -111,6 +111,17 @@ The account became **verified**, unlocking the phone line and the second assista
   - **The 150 ms regression that came from a review suggestion:** the secret-read review finding ("no per-attempt timeout") was fixed with a **150 ms** cap nobody had measured — `SECRETS.get` really takes > 150 ms, so every secret read failed and the signed routes + MCP auth failed closed for ~1 h (DEBUGLOG #17). Caught within minutes by the new `secret.read_failed` logging; the rollback API timed out twice, so a revert-forward (`a94722c`) shipped.
 - **Multi-agent root-cause analysis:** during the Telnyx platform incident (DEBUGLOG #15) a read-only multi-agent RCA (workflow `wf_9af00a79-9ff`) pulled the full 24 h of logs (20,536 invocations, 109,897 runtime lines), split platform cause (actor runtime + KV data plane) from our amplifiers, and ran a dedicated **challenger lane** whose corrections were folded back in — it caught an undercount of ~4–5× (single 250-record page vs paged windows), a misread host log, and rejected several planned fixes that would have broken the documented detection contract (10 s prober cadence and 30 s paging kept; 60 s sync throttle reduced to 30 s).
 - **Spend — inference is the cost driver** (usage reports): 2026-09-27 inference **13.10 USD**, edge-compute 0.95, ai-voice-assistant 0.70; 2026-09-28 inference **1.06**, edge-compute 0.25, ai-voice-assistant 0.10. The overnight balance drop was OpenCode authoring, **not** the 10 s prober — keep the prober. Latest ledger balance: **11.35 USD** after buying the number.
+
+## 2026-10-01 — live finding → Telnyx-model fix
+
+The morning's live calls (#9–#13, DEBUGLOG #22) found the Arabic voice path's defects, and each finding became a same-day lane authored on a Telnyx-hosted model. Every lane below ran on **GLM-5.3** — prompt-, config- and prose-sensitive work where structure matters, not the Flash default. (Per-lane wall times and step counts live in the gitignored SDD run records, `.superpowers/sdd/2026-09-28-plan-3-verified/*.oclog`; the commits are the repo's own record.)
+
+- **The bridge-node lane** (`9afa938`): the English model kept taking the Arabic transition **without speaking** — ~10 s of dead air on live calls — so the fix is a deterministic speak node, `s_to_ar` ("Sure, switching you to Arabic now. One moment, please."), whose one default edge hands off to the Arabic assistant; the 8 llm "Arabic" edges retarget it (decisions #16). A model behaviour you cannot prompt away reliably becomes graph structure instead.
+- **The digits-resolver lane** (`79f4a2f` first attempt — English-word spelling patterns, superseded; `9b3e950` shipped): `soniox/stt-rt-v5` writes the spoken "آر يو إتش واحد واحد أربعة" as "Are you H114" — the letters never survive Arabic STT — so `resolveSiteGlobal` gained a unique-3-digit fallback (ASCII or Arabic-Indic digits) and the Arabic intake/pin-retry prompts pass what they hear (decisions #17; proven on the 06:54 direct-entry text test).
+
+Today's lanes **P3-14…P3-17**, all on GLM-5.3: P3-14 the direct Arabic entry (`3cf56b0`; the page element itself is the Claude-authored front page, `ae31967`), P3-15 the docs flip (`dedf5c2`, `e3abbf9`), P3-16 the shared widget-settings fix (`8e515c2`), P3-17 the demo-day accuracy lanes — the Arabic AI-disclosure opening (`a4cfb8c`), the per-entity root-cause docs (`2b09eb8`), the `timedApi` wrapper fix for Proxy-shaped stubs (`101dd21`) and this demo-day docs lane.
+
+**Corrected split** (supersedes the stale 89-of-112 snapshot): **98 of 126 commits as of `93e210a` carry an `Assisted-by: OpenCode` trailer — 78 GLM-5.3-Flash · 18 GLM-5.3 · 2 Kimi-K3**; the remaining 28 are architect merges/reviews and the Claude-authored front page (`src/demo/page.ts`). Earlier figures in the per-plan sections were snapshots at their own commits.
 
 ## Cost table, the Kimi-K3 burn, and the credit floor
 
@@ -131,5 +142,5 @@ Where the money actually went (usage reports; total spend since 2026-09-26 is **
 
 - **GLM-5.3-Flash** — the default implementer for mechanical tasks (scaffolds, tests, config, docs): ≈$0.25–0.30 per run, fix rounds $0.02–0.14. The workhorse for Plans 1–2 and most of Plan 3.
 - **GLM-5.3** — design- and prose-sensitive lanes (the NOC wall backend, README v2, this documentation lane): ~10× the Flash price, visibly better structured output.
-- **Kimi-K3** — one lane (the KV-free voice path), chosen by product decision for its reasoning depth; the pricing lesson above came from it.
+- **Kimi-K3** — wrote two commits: the openIfVerified KV-free fix (`bbc2b7b`, chosen by product decision for its reasoning depth) and an early NOC-wall page redesign (`85ff075`); the pricing lesson above came from the KV-free lane.
 - **Voice model** — `moonshotai/Kimi-K2.6` on the assistants is a **platform constraint of this challenge (C10)**, not a coding-model choice; the Arabic line's voice (`Telnyx.Bayan.Reem`) and STT (`soniox/stt-rt-v5`) are picks, and the English TTS/STT A/B is still queued (no credit spent on it).
