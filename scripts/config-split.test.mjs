@@ -470,3 +470,40 @@ test('instructions-ar.md is exactly the n_ar_intake rules preamble', () => {
   const preamble = intake.instructions.slice(0, idx).trim();
   assert.equal(ar.instructions, `${preamble}\n`);
 });
+
+test('n_triage only routes: no shared tools and the tool list is replaced', () => {
+  const triage = en.conversation_flow.nodes.find((n) => n.id === 'n_triage');
+  assert.deepEqual(triage.shared_tool_ids, []);
+  assert.equal(triage.tools_mode, 'replace');
+});
+
+test('n_triage takes the new-fault transition instead of collecting details', () => {
+  const triage = en.conversation_flow.nodes.find((n) => n.id === 'n_triage');
+  assert.ok(triage.instructions.includes('take the transition for a new fault'));
+});
+
+test('the base rules forbid saying a report is logged yourself', () => {
+  assert.ok(
+    enInstructions.includes(
+      'Never say a report is logged or a ticket is opened yourself; only the system\'s read-back confirms a ticket.',
+    ),
+  );
+});
+
+test('n_verify reads the site ID back spelled before asking for the PIN', () => {
+  const verify = en.conversation_flow.nodes.find((n) => n.id === 'n_verify');
+  assert.ok(verify.instructions.includes('Read the site ID back once'));
+  assert.ok(verify.instructions.includes('Never read the PIN back.'));
+});
+
+test('the Arabic no-false-ticket rule appears exactly once in every Arabic prompt node and instructions-ar.md', () => {
+  const rule =
+    'ولا تقول إن البلاغ انسجل أو إن التذكرة انفتحت؛ النظام هو اللي يأكد التذكرة.';
+  const prompts = ar.conversation_flow.nodes.filter((n) => n.type === 'prompt');
+  assert.equal(prompts.length, 6);
+  for (const n of prompts) {
+    const count = n.instructions.split(rule).length - 1;
+    assert.equal(count, 1, `node ${n.id} carries the no-false-ticket rule ${count} times`);
+  }
+  assert.equal(ar.instructions.split(rule).length - 1, 1);
+});
