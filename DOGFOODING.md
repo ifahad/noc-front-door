@@ -99,7 +99,7 @@ Stretch goals: actor alarms, live NOC console, object-storage reports, Arabic mo
 
 ## Plan 3 build (2026-09-28 → 29)
 
-The account became **verified**, unlocking the phone line and the second assistant. OpenCode-authored commits on top of c7943f8: **12** (89 of 112 total as of `e6c9772`). Same architect/implementer/reviewer split; GLM-5.3 (Flash) implementer lanes, plus one Kimi-K3 lane for the KV-free fix.
+The account became **verified**, unlocking the phone line and the second assistant. OpenCode-authored commits on top of c7943f8: **12** (89 of 112 total as of `e6c9772`). Same architect/implementer/reviewer split; GLM-5.3 (Flash) implementer lanes, plus Kimi-K3, which wrote two commits: the openIfVerified KV-free fix (`bbc2b7b`) and an early NOC-wall page redesign (`85ff075`).
 
 - **Verified-account work:** bought the US number (balance 12.45 → 11.35 USD), built `sanad-noc-ar` as a true second assistant reached by a one-way workflow handoff, applied both assistants live, and shipped the production front page with its hidden operator console.
 - **Parallel lanes:** P3-3a (assistant config/validator) and P3-3b (edge) ran concurrently in worktrees `wt-p3-3a`/`wt-p3-3b`; P3-4a/b/c (Arabic opening + prober hang classification / edge throttles / flags cooldown) launched together from `11e7296` — same pattern as Plan 1's R17/R27 and Plan 2's lanes.
@@ -142,5 +142,5 @@ Where the money actually went (usage reports; total spend since 2026-09-26 is **
 
 - **GLM-5.3-Flash** — the default implementer for mechanical tasks (scaffolds, tests, config, docs): ≈$0.25–0.30 per run, fix rounds $0.02–0.14. The workhorse for Plans 1–2 and most of Plan 3.
 - **GLM-5.3** — design- and prose-sensitive lanes (the NOC wall backend, README v2, this documentation lane): ~10× the Flash price, visibly better structured output.
-- **Kimi-K3** — one lane (the KV-free voice path), chosen by product decision for its reasoning depth; the pricing lesson above came from it.
+- **Kimi-K3** — wrote two commits: the openIfVerified KV-free fix (`bbc2b7b`, chosen by product decision for its reasoning depth) and an early NOC-wall page redesign (`85ff075`); the pricing lesson above came from the KV-free lane.
 - **Voice model** — `moonshotai/Kimi-K2.6` on the assistants is a **platform constraint of this challenge (C10)**, not a coding-model choice; the Arabic line's voice (`Telnyx.Bayan.Reem`) and STT (`soniox/stt-rt-v5`) are picks, and the English TTS/STT A/B is still queued (no credit spent on it).
