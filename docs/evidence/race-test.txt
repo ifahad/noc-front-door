@@ -1,5 +1,18 @@
-race-test @ 2026-10-01T05:36:32.417Z
-endpoint: POST https://noc-edge-41d2a334-7.telnyxcompute.com/diag/race (n=10 per mode, after reset/warm-up inside the route)
+Race test — POST https://noc-edge-41d2a334-7.telnyxcompute.com/diag/race?mode=<actor|kv>&n=10
+Lab site TST-001 only (state reset and warm-up inside the route). "actor" = 10 concurrent opens through SiteState.openOrAttach;
+"kv" = the naive get-then-put on KV. The harness counts tickets created; it does not report opens that failed.
+Every run below: actor 1 of 10, KV 10 of 10.
+
+[1] 2026-10-01T07:43Z — actor mode MUX (flag/actor_mode=mux; the live configuration)
+mode=actor: created_count=1 ticket_ids=["NJD-9903"]   (repeat 07:43:24Z: created_count=1 ticket_ids=["NJD-9904"])
+mode=kv: created_count=10 ticket_ids=["NJD-9901","NJD-9902","NJD-9903","NJD-9904","NJD-9905","NJD-9906","NJD-9907","NJD-9908","NJD-9909","NJD-9910"]
+
+[2] 2026-10-01T05:36:32.417Z — actor mode PER-ENTITY (during the 05:34–05:54Z flip, DEBUGLOG #21; the race route uses the raw actor port)
 mode=actor: created_count=1 ticket_ids=["NJD-9901"]
 mode=kv: created_count=10 ticket_ids=["NJD-9901","NJD-9902","NJD-9903","NJD-9904","NJD-9905","NJD-9906","NJD-9907","NJD-9908","NJD-9909","NJD-9910"]
-conclusion: actor mode enforces exactly-once open (1/10 created); naive KV get-then-put races (10/10 created) — spec §13.3 [R:race-test ×5]
+
+[3] 2026-09-27T19:32:26.222Z — actor mode MUX (first recorded run, commit e8e6e6b)
+mode=actor: created_count=1 ticket_ids=["NJD-9902"]
+mode=kv: created_count=10 ticket_ids=["NJD-9901","NJD-9902","NJD-9903","NJD-9904","NJD-9905","NJD-9906","NJD-9907","NJD-9908","NJD-9909","NJD-9910"]
+
+Conclusion: the actor enforces exactly-once open (1 of 10 created) in both modes; naive KV get-then-put races (10 of 10). Spec §13.3.
