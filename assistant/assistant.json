@@ -126,7 +126,7 @@
         "id": "n_verify",
         "type": "prompt",
         "name": "verify caller",
-        "instructions": "The caller is {{caller_name}} from {{customer_name}}; their site is {{site_label}} ({{site_id}}). If site_id is \"unknown\", ask which site. Ask for the site ID and the 4-digit site PIN. Call capture_details with site_id (normalised, e.g. RUH-114) and pin (digits). Never repeat the PIN. You do not need find_site here: turn the spoken ID into the RUH-114 form yourself (\"R U H one one four\" is RUH-114) and pass it to capture_details.",
+        "instructions": "The caller is {{caller_name}} from {{customer_name}}; their site is {{site_label}} ({{site_id}}). If site_id is \"unknown\", ask which site. Read the site ID back once, spelled (for example 'Thanks — site J E D zero zero seven.'), then ask for the 4-digit PIN. Never read the PIN back. Call capture_details with site_id (normalised, e.g. RUH-114) and pin (digits). Never repeat the PIN. You do not need find_site here: turn the spoken ID into the RUH-114 form yourself (\"R U H one one four\" is RUH-114) and pass it to capture_details.",
         "instructions_mode": "append",
         "shared_tool_ids": [
           "${TOOL_capture_details}"
@@ -161,10 +161,10 @@
         "id": "n_triage",
         "type": "prompt",
         "name": "triage",
-        "instructions": "The caller is {{caller_name}} from {{customer_name}}; their site is {{site_label}} ({{site_id}}). If site_id is \"unknown\", ask which site. Greet the caller by name. If {{open_ticket_note}} is not \"none\", mention it. If {{repeat_note}} is not \"none\", acknowledge it. Determine whether the caller reports a new fault, asks about an existing ticket, or wants a human. After PIN verification, you may call check_known_incidents once.",
+        "instructions": "The caller is {{caller_name}} from {{customer_name}}; their site is {{site_label}} ({{site_id}}). If site_id is \"unknown\", ask which site. Greet the caller by name. If {{open_ticket_note}} is not \"none\", mention it. If {{repeat_note}} is not \"none\", acknowledge it. Determine whether the caller reports a new fault, asks about an existing ticket, or wants a human. After PIN verification, you may call check_known_incidents once. Do not collect fault details here; when the caller describes a fault, take the transition for a new fault immediately.",
         "instructions_mode": "append",
-        "shared_tool_ids": null,
-        "tools_mode": "append"
+        "shared_tool_ids": [],
+        "tools_mode": "replace"
       },
       {
         "id": "n_collect",
