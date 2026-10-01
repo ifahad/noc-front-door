@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   CONSOLE_POLL_MS,
+  DEMO_AGENT_AR_ID,
   DEMO_AGENT_ID,
   IDLE_PAUSE_MS,
   PUBLIC_POLL_MS,
@@ -70,6 +71,22 @@ describe("renderDemoPage", () => {
     expect(html).toContain('<span class="lang ar" lang="ar">العربية</span>');
     expect(html).toContain("What happens when you call");
     expect(html).toContain("Calls are recorded and handled by an AI assistant.");
+  });
+
+  it("calls the Saudi-Arabic assistant directly, without the English hand-off", () => {
+    const html = renderDemoPage(null);
+    expect(DEMO_AGENT_AR_ID).toBe("assistant-60f3a28e-5a12-49e3-bce1-1f2136e4aa5a");
+    expect(html).toContain(
+      `<button type="button" class="btn btn-lg ar" data-action="call" data-lang="ar" lang="ar" dir="rtl">`,
+    );
+    expect(html).toContain("اتصل بالعربي</button>");
+    // One widget per assistant; only the one in use is shown, so the two
+    // floating launchers never stack.
+    expect(html).toContain(`<telnyx-ai-agent agent-id="${DEMO_AGENT_ID}"></telnyx-ai-agent>`);
+    expect(html).toContain(`<telnyx-ai-agent agent-id="${DEMO_AGENT_AR_ID}" hidden></telnyx-ai-agent>`);
+    expect(html).toContain("telnyx-ai-agent[hidden]{display:none!important}");
+    expect(html).toContain(`var AGENTS = { en: '${DEMO_AGENT_ID}', ar: '${DEMO_AGENT_AR_ID}' };`);
+    expect(html).toContain("startCall(this.getAttribute('data-lang') === 'ar' ? 'ar' : 'en')");
   });
 
   it("draws the live network map with the four regions", () => {

@@ -5,8 +5,8 @@ import type { DemoGuide, GuideScenario } from "./guide";
 // renders comes from the OpenCode-authored /ops/board endpoint.
 //
 // Two layers:
-// - the production page: call Sanad (browser or phone), live region status on
-//   a network map, how a call goes;
+// - the production page: call Sanad (browser in English or Arabic, or phone),
+//   live region status on a network map, how a call goes;
 // - a hidden operator console (open with #console or the ` key): detailed
 //   board, event feed, walkthrough scenarios with demo PINs, architecture and
 //   presenter controls.
@@ -25,6 +25,9 @@ import type { DemoGuide, GuideScenario } from "./guide";
 // interacts again. Every board build fans out to the Stateful Actors.
 
 export const DEMO_AGENT_ID = "assistant-a2d301b3-f112-48f6-84c8-9e4d052cf3b7";
+// The Saudi-Arabic assistant, called directly so an Arabic call never depends
+// on the platform's English→Arabic voice hand-off.
+export const DEMO_AGENT_AR_ID = "assistant-60f3a28e-5a12-49e3-bce1-1f2136e4aa5a";
 // Sanad's public line (a US Telnyx number on the verified account). Written
 // with visual separators: it is a published business line, not a personal
 // number, and the RFC 3966 separators keep tel: dialable.
@@ -101,6 +104,7 @@ a{color:inherit}
 :focus-visible{outline:2px solid var(--text);outline-offset:2px;border-radius:3px}
 .mono{font-family:var(--mono);font-variant-numeric:tabular-nums}
 .ar{font-family:var(--arabic)}
+telnyx-ai-agent[hidden]{display:none!important}
 .wrap{max-width:1120px;margin:0 auto;padding:0 28px}
 
 /* top bar */
@@ -266,15 +270,23 @@ const JS = `
   /* ---- call ---- */
   var callDot = $('callDot'), callText = $('callText');
   function setCall(wait, text) { callDot.className = wait ? 'dot wait' : 'dot'; callText.textContent = text; }
-  function startCall() {
-    var host = document.querySelector('telnyx-ai-agent');
+  // One widget per assistant; only the one in use is shown, so the two
+  // floating launchers never stack.
+  var AGENTS = { en: '${DEMO_AGENT_ID}', ar: '${DEMO_AGENT_AR_ID}' };
+  function startCall(lang) {
+    var hosts = document.querySelectorAll('telnyx-ai-agent'), host = null;
+    for (var i = 0; i < hosts.length; i++) if (hosts[i].getAttribute('agent-id') === AGENTS[lang]) host = hosts[i];
     var launcher = host && host.shadowRoot ? host.shadowRoot.querySelector('button') : null;
     if (!launcher) { setCall(true, 'Connecting… try again in a moment.'); return; }
-    setCall(true, 'Starting the call — allow your microphone. The call panel opens bottom-right.');
+    for (var j = 0; j < hosts.length; j++) hosts[j].hidden = hosts[j] !== host;
+    setCall(true, (lang === 'ar' ? 'Starting the Arabic call' : 'Starting the call') +
+      ' — allow your microphone. The call panel opens bottom-right.');
     launcher.click();
   }
   var callButtons = document.querySelectorAll('[data-action="call"]');
-  for (var i = 0; i < callButtons.length; i++) callButtons[i].addEventListener('click', startCall);
+  for (var i = 0; i < callButtons.length; i++) callButtons[i].addEventListener('click', function () {
+    startCall(this.getAttribute('data-lang') === 'ar' ? 'ar' : 'en');
+  });
 
   /* ---- hidden console ---- */
   var consoleEl = $('console');
@@ -607,7 +619,7 @@ export function renderDemoPage(guide: DemoGuide | null): string {
       steps: [
         "Say: <q>Our site is J E D zero zero seven in Jeddah.</q> and give the PIN.",
         "Describe the fault: <q>The internet is down and the card machines don't work — customers are affected.</q>",
-        "Any time, say <q>Can we continue in Arabic?</q> — the Saudi-Arabic assistant takes over.",
+        "Any time, say <q>Can we continue in Arabic?</q> — the Saudi-Arabic assistant takes over. Or start in Arabic with <b class=\"ar\" lang=\"ar\">اتصل بالعربي</b>.",
       ],
       watch: "a new Jeddah ticket appear with its priority, read back to you by Sanad.",
       chip: pinChip(byKey.get("new")),
@@ -658,9 +670,10 @@ export function renderDemoPage(guide: DemoGuide | null): string {
         <div class="cta">
           <button type="button" class="btn btn-primary btn-lg" data-action="call">${MIC_ICON}Call from your browser</button>
           <a class="btn btn-lg" href="${SANAD_PHONE_TEL}">${PHONE_ICON}Call ${SANAD_PHONE_DISPLAY}</a>
+          <button type="button" class="btn btn-lg ar" data-action="call" data-lang="ar" lang="ar" dir="rtl">${MIC_ICON}اتصل بالعربي</button>
         </div>
         <p class="callstate"><span class="dot" id="callDot"></span><span id="callText">Have your site ID and 4-digit site PIN ready.</span></p>
-        <div class="langs"><span>Speaks</span><span class="lang">English</span><span class="lang ar" lang="ar">العربية</span><span>— ask for Arabic at any time.</span></div>
+        <div class="langs"><span>Speaks</span><span class="lang">English</span><span class="lang ar" lang="ar">العربية</span><span>— start in Arabic, or ask for it at any time.</span></div>
       </div>
       <figure class="map" aria-labelledby="mapTitle" style="margin:0">
         <div class="map-head"><b id="mapTitle">Network status</b><span class="upd" id="mapUpdated">connecting…</span></div>
@@ -756,6 +769,7 @@ export function renderDemoPage(guide: DemoGuide | null): string {
 </footer>
 
 <telnyx-ai-agent agent-id="${DEMO_AGENT_ID}"></telnyx-ai-agent>
+<telnyx-ai-agent agent-id="${DEMO_AGENT_AR_ID}" hidden></telnyx-ai-agent>
 <script async src="${WIDGET_SCRIPT_URL}" integrity="${WIDGET_SCRIPT_SRI}" crossorigin="anonymous"></script>
 <script>${JS}</script>
 </body>
