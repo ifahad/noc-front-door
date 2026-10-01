@@ -21,6 +21,13 @@ const KEYLESS_ORG = "your organisation";
 const ACTOR_RACE_MS = 400;
 const KEY_LOG_LIMIT = 5;
 
+// The DV webhook budget (2026-10-01 finding): KV costs 1–2 s per op on this
+// account, and an identified web caller needs the flags read and then the
+// session write in sequence, so a 2500 ms timeout could not fit both and the
+// caller fell back to "unverified". handleDv keeps deriving its internal
+// budget as timeoutMs − 300 and flags lateness at timeoutMs − 200.
+export const DV_TIMEOUT_MS = 4500;
+
 export const SAFE_FLAGS: Flags = {
   deflection_enabled: true,
   require_pin: true,

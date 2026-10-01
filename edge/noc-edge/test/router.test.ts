@@ -479,7 +479,7 @@ describe("router /dv fail-open", () => {
     ).toHaveLength(1);
   });
 
-  it("keeps the last-known mux mode for /dv when the flags read hangs, without clobbering it", async () => {
+  it("keeps the last-known mux mode for /dv when the flags read hangs, without clobbering it", { timeout: 30000 }, async () => {
     const { env, priv, cache } = await makeEnv();
     const muxCalls: string[] = [];
     const bindingCalls: string[] = [];

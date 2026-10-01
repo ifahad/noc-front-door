@@ -11,7 +11,7 @@ import {
   type Flags,
 } from "./services/flags";
 import { getSecret, loadSeedLocal, makeAdapter } from "./env";
-import { handleDv, SAFE_FLAGS } from "./dv/handler";
+import { handleDv, DV_TIMEOUT_MS, SAFE_FLAGS } from "./dv/handler";
 import { handleVerifySite } from "./tools/verifySite";
 import { handleOpenTicket } from "./tools/openTicket";
 import { handleJoinIncident } from "./tools/joinIncident";
@@ -199,7 +199,7 @@ async function routeDv(request: Request, env: NocEdgeEnv): Promise<Response> {
     adapter,
     publicKey: publicKey ?? "",
     now: () => Date.now(),
-    timeoutMs: 2500,
+    timeoutMs: DV_TIMEOUT_MS,
   });
 }
 

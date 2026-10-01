@@ -454,6 +454,7 @@ test('the Arabic assistant shares the English assistant settings unchanged', () 
   assert.deepEqual(ar.interruption_settings, en.interruption_settings);
   assert.deepEqual(ar.telephony_settings, en.telephony_settings);
   assert.equal(ar.dynamic_variables_webhook_url, en.dynamic_variables_webhook_url);
+  assert.equal(en.dynamic_variables_webhook_timeout_ms, 4500);
   assert.equal(
     ar.dynamic_variables_webhook_timeout_ms,
     en.dynamic_variables_webhook_timeout_ms,

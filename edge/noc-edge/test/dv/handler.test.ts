@@ -4,7 +4,7 @@ import type { SeedLocalConfig } from "../../../shared/src/itsm";
 import { kvKey } from "../../../shared/src/kvkeys";
 import type { KvPort } from "../../src/services/kvPort";
 import type { ActorPort, SiteStateApi } from "../../src/services/actorPort";
-import { handleDv, type DvDeps } from "../../src/dv/handler";
+import { DV_TIMEOUT_MS, handleDv, type DvDeps } from "../../src/dv/handler";
 import { FakeKv } from "../fakes/kv";
 import { slowKv } from "../fakes/kv";
 import { FakeActorPort } from "../fakes/actors";
@@ -128,7 +128,7 @@ function makeDeps(
     adapter: adapter(),
     publicKey: opts.publicKey ?? keys.pub,
     now: opts.now ?? (() => Date.now()),
-    timeoutMs: opts.timeoutMs ?? 2500,
+    timeoutMs: opts.timeoutMs ?? DV_TIMEOUT_MS,
   };
 }
 
@@ -250,6 +250,42 @@ describe("handleDv", () => {
     expect(inner.has(kvKey("call", out.conversation.metadata.trace_id.slice(2), "dv"))).toBe(true);
     expect(inner.has(kvKey("conv", CONV_ID))).toBe(true);
     expect(inner.has(kvKey("incident", "active", "riyadh-north"))).toBe(true);
+  });
+
+  it("identifies a flagged web caller when every KV op takes 1500 ms, while the old 2500 ms budget fell back", { timeout: 30000 }, async () => {
+    const keys = await makeKeys();
+    const slowWebKv = async (): Promise<KvPort> => {
+      const inner = new FakeKv();
+      inner.setNow(0);
+      await inner.put(kvKey("flag", "demo_caller"), "c-ahmed");
+      await inner.put(kvKey("incident", "active", "riyadh-north"), JSON.stringify(PROJECTION));
+      return slowKv(inner, 1500);
+    };
+    // Live finding 2026-10-01: a flagged web caller waits for the flags read
+    // before the session write, so at 1500 ms per KV op the old internal
+    // budget (timeoutMs - 300 = 2200 ms) could not fit both in sequence and
+    // the identified caller still fell back to "unverified".
+    const fixed = await handleDv(
+      await signedRequest(bodyOf(payloadOf(SIP)), keys),
+      makeDeps(await slowWebKv(), new FakeActorPort(), keys, { timeoutMs: DV_TIMEOUT_MS }),
+    );
+    expect(fixed.status).toBe(200);
+    const out = await jsonOf(fixed);
+    expect(out.dynamic_variables.route_hint).toBe("known_incident");
+    expect(out.dynamic_variables.caller_name).toBe("Ahmed");
+    expect(out.dynamic_variables.site_id).toBe("RUH-114");
+    const regressed = await handleDv(
+      await signedRequest(bodyOf(payloadOf(SIP)), keys),
+      makeDeps(await slowWebKv(), new FakeActorPort(), keys, { timeoutMs: 2500 }),
+    );
+    expect(regressed.status).toBe(200);
+    const outOld = await jsonOf(regressed);
+    expect(outOld.dynamic_variables.route_hint).toBe("unverified");
+    expect(outOld.dynamic_variables.caller_name).toBe("Ahmed");
+    const routes = eventsWith("dv.route");
+    expect(routes).toHaveLength(2);
+    expect(routes[0].outcome).toBe("ok");
+    expect(routes[1].outcome).toBe("fallback");
   });
 
   it("routes to known_incident with the incident variables when the region projection is active", async () => {
