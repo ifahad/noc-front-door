@@ -542,6 +542,45 @@ describe("tickets.joinIncident", () => {
     expect(actors.siteTicket("RUH-133") ?? null).toBeNull();
   });
 
+  it("gives an unproven caller the same 403 for an unknown body site as for a known one", async () => {
+    const kv = new FakeKv();
+    kv.setNow(T0);
+    const actors = new FakeActorPort();
+    const ctx = makeCtx({ kv, actors });
+    await open(ctx, makeSession(), SITE_DOWN);
+    await open(
+      ctx,
+      makeSession({
+        k: ["2b", "3c", "4d", "5e", "6f", "7a", "8b", "9c"].join(""),
+        trace_id: "t-2",
+        contact_id: "c-sara",
+        sites: ["RUH-121"],
+      }),
+      { site_id: "RUH-121", symptom: "WAN link down", impact: "site_down", service_affecting: "true" },
+    );
+    const empty = makeSession({
+      identified: false,
+      verified: false,
+      contact_id: null,
+      customer_id: null,
+      sites: [],
+      region: null,
+    });
+    await expect(joinIncident(ctx, empty, "RUH-133")).rejects.toMatchObject({
+      status: 403,
+      code: "not_identified",
+    });
+    await expect(joinIncident(ctx, empty, "RUH-999")).rejects.toMatchObject({
+      status: 403,
+      code: "not_identified",
+    });
+    const denied = logs
+      .map((l) => JSON.parse(l) as Record<string, unknown>)
+      .filter((l) => l.evt === "auth.denied");
+    expect(denied).toHaveLength(2);
+    expect(actors.siteTicket("RUH-133") ?? null).toBeNull();
+  });
+
   it("joins the active incident with impact site_down and forces region reporting", async () => {
     const kv = new FakeKv();
     kv.setNow(T0);

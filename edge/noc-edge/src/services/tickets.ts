@@ -276,6 +276,18 @@ export async function joinIncident(
   }
   const site = await ctx.adapter.getSite(siteId);
   if (site === null) {
+    if (kvSite === null) {
+      // Site-existence oracle: a caller relying on the body site_id gets the
+      // same denial for an unknown site as for a known one without proof, so
+      // it cannot learn which site IDs exist. 422 stays for callers the KV
+      // session already grants (kvSite !== null).
+      logEvent("auth.denied", {
+        hop: "services/tickets",
+        trace_id: ctx.trace_id,
+        outcome: "denied",
+      });
+      throw new TicketError(403, "not_identified");
+    }
     throw new TicketError(422, "site_unresolvable");
   }
   const { incident } = await ctx.actors

@@ -402,15 +402,15 @@ describe("SiteState", () => {
     expect(h.storage.raw("ticket")).toBeUndefined();
   });
 
-  it("the proof expires after 30 minutes and never applies before it was minted", async () => {
+  it("the proof expires with the 15-minute PIN window and never applies before it was minted", async () => {
     const h = makeSiteState("RUH-114");
     await h.actor.recordPinAttempt(valid(k1, fpA, T0));
     const early = await h.actor.openIfVerified(attachInput({ at: T0 - 1 }));
     expect(early).toMatchObject({ denied: "not_verified" });
-    const atEdge = await h.actor.openIfVerified(attachInput({ at: T0 + 30 * MIN }));
+    const atEdge = await h.actor.openIfVerified(attachInput({ at: T0 + 15 * MIN }));
     expect("denied" in atEdge).toBe(false);
     const late = await h.actor.openIfVerified(
-      attachInput({ at: T0 + 30 * MIN + 1, symptom: "still down" }),
+      attachInput({ at: T0 + 15 * MIN + 1, symptom: "still down" }),
     );
     expect(late).toMatchObject({ denied: "not_verified" });
   });

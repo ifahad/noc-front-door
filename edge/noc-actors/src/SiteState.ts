@@ -3,7 +3,6 @@ import { mintTicketId, sha256Hex } from "../../shared/src/ids";
 import type { Impact, Priority, Ticket } from "../../shared/src/types";
 
 const PIN_WINDOW_MS = 15 * 60 * 1000;
-const VERIFIED_TTL_MS = 30 * 60 * 1000;
 const CALL_TIER_LIMIT = 3;
 const SITE_TIER_FAILURES = 6;
 const SITE_TIER_DISTINCT_K = 2;
@@ -429,7 +428,7 @@ export class SiteState extends StatefulActor {
   // cannot interleave. A denial returns a value rather than throwing,
   // because error messages over mux RPC are not proven to survive, and it
   // writes nothing. The check fails closed: an inherited key, a non-numeric
-  // time or a proof older than VERIFIED_TTL_MS all deny.
+  // time or a proof older than the PIN window all deny.
   async openIfVerified(
     input: OpenOrAttachInput,
   ): Promise<OpenOrAttachResult | NotVerifiedResult> {
@@ -447,8 +446,9 @@ export class SiteState extends StatefulActor {
       Object.values(call.results).some((r) => {
         if (r === null || typeof r !== "object" || r.result !== "ok") return false;
         if (typeof r.at !== "number" || typeof input.at !== "number") return false;
+        // The PIN window is the proof window: prunePin deletes per-call records at this age anyway, and calls are capped at 10 min (assistant time_limit_secs 600).
         const age = input.at - r.at;
-        return age >= 0 && !(age > VERIFIED_TTL_MS);
+        return age >= 0 && !(age > PIN_WINDOW_MS);
       });
     if (!proven) {
       return {
