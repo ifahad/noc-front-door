@@ -2,7 +2,7 @@
 
 **Sanad** is Najd Networks' 24/7 AI fault line: it verifies, de-duplicates, escalates and pages — engineers get one clean ticket instead of a queue of duplicates.
 
-[Live site](https://noc-edge-41d2a334-7.telnyxcompute.com/) · [Live board](https://noc-edge-41d2a334-7.telnyxcompute.com/ops/status?format=html) · [DEMO.md](DEMO.md) · [Architecture](docs/architecture.md) · [Decisions](docs/decisions.md) · [Q&A prep](docs/qa-prep.md) · [Setup](docs/setup.md) · [DEBUGLOG](DEBUGLOG.md)
+[Live site](https://noc-edge-41d2a334-7.telnyxcompute.com/) · [Live board](https://noc-edge-41d2a334-7.telnyxcompute.com/ops/status?format=html) · [DEMO.md](DEMO.md) · [Architecture](docs/architecture.md) · [Decisions](docs/decisions.md) · [Setup](docs/setup.md) · [DEBUGLOG](DEBUGLOG.md)
 
 ## What it is
 
@@ -107,7 +107,7 @@ Stretch goals:
 | Live NOC console | Built & live | Production front page + hidden operator console (`#console` / backtick), live 2026-09-28 |
 | Voice-model upgrade | Evaluation pending | Needs live calls (no credit spent) |
 
-Tradeoffs and the per-node tool matrix: [docs/decisions.md](docs/decisions.md). Panel Q&A prep: [docs/qa-prep.md](docs/qa-prep.md).
+Tradeoffs and the per-node tool matrix: [docs/decisions.md](docs/decisions.md).
 
 ## Observability
 
