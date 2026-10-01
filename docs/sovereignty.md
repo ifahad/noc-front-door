@@ -1,6 +1,6 @@
 # Data residency & PDPL — where the data lives
 
-Najd Networks is a fictional KSA managed-services provider; the demo runs on a Telnyx **Trial** account whose compute, KV and storage regions are US-based. This file states where each class of data lives in the demo as shipped, the PDPL/residency position, and what production changes. Referenced from [README.md](../README.md) ("Production path", "Known limitations") and the spec.
+Najd Networks is a fictional KSA managed-services provider; the demo runs on a Telnyx account with no KSA region configured — Edge Functions run in several regions (our logs show us-east-1 and ap-southeast-2 instances), the reports bucket is us-central-1, and the actor state store answered from an atl1 host during the 09-28 incident. This file states where each class of data lives in the demo as shipped, the PDPL/residency position, and what production changes. Referenced from [README.md](../README.md) ("Production path", "Known limitations") and the spec.
 
 ## Where the data lives (demo as shipped)
 
