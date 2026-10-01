@@ -33,6 +33,7 @@ const INTERRUPTION_SETTINGS = {
 const toolNames = JSON.parse(await readFile(join(assistantDir, 'tools.json'), 'utf8')).map(
   (t) => t.display_name,
 );
+const mcp = JSON.parse(await readFile(join(assistantDir, 'mcp.json'), 'utf8'));
 
 test('the English flow has no Arabic nodes or Arabic-start edges left', () => {
   assert.equal(
@@ -215,20 +216,26 @@ test('n_ar_triage tells the model a carried verified caller needs no re-verifica
   assert.ok(triage.instructions.endsWith(TRIAGE_APPEND));
 });
 
-test('the Arabic assistant has no MCP server while the English one keeps it', () => {
-  assert.deepEqual(ar.mcp_servers, []);
-  assert.deepEqual(en.mcp_servers, [
-    {
-      id: '${MCP_ID}',
-      allowed_tools: [
-        'find_site',
-        'get_site_status',
-        'check_known_incidents',
-        'get_ticket_status',
-        'add_ticket_note',
-      ],
-    },
+test('the Arabic assistant uses the noc-mcp-ar server while the English one keeps noc-mcp', () => {
+  const allowedTools = [
+    'find_site',
+    'get_site_status',
+    'check_known_incidents',
+    'get_ticket_status',
+    'add_ticket_note',
+  ];
+  assert.deepEqual(ar.mcp_servers, [
+    { id: '${MCP_AR_ID}', allowed_tools: allowedTools },
   ]);
+  assert.deepEqual(en.mcp_servers, [
+    { id: '${MCP_ID}', allowed_tools: allowedTools },
+  ]);
+  assert.equal(mcp.server.name, 'noc-mcp');
+  assert.equal(mcp.server.url, '${EDGE_URL}/mcp');
+  assert.equal(mcp.server_ar.name, 'noc-mcp-ar');
+  assert.equal(mcp.server_ar.url, '${EDGE_URL}/mcp?lang=ar');
+  assert.equal(mcp.server_ar.api_key_ref, mcp.server.api_key_ref);
+  assert.deepEqual(mcp.server_ar.allowed_tools, mcp.server.allowed_tools);
 });
 
 test('s_ar_goodbye hands off to the Arabic end_call tool node', () => {
@@ -316,6 +323,9 @@ test('t_ar_verify falls back to the fixed verify-unavailable speak node', () => 
   );
 });
 
+const AR_TOOLS_RULE =
+  'استخدم أدوات البحث والتذاكر فقط بعد ما يتحقق المتصل، وما تضيف ملاحظة على تذكرة إلا إذا طلب المتصل.';
+
 test('every Arabic prompt node replies in Arabic only, right before its task', () => {
   const prompts = ar.conversation_flow.nodes.filter((n) => n.type === 'prompt');
   assert.equal(prompts.length, 6);
@@ -323,8 +333,27 @@ test('every Arabic prompt node replies in Arabic only, right before its task', (
     const count = n.instructions.split(AR_REPLY_RULE).length - 1;
     assert.equal(count, 1, `node ${n.id} carries the reply-in-Arabic rule ${count} times`);
     assert.ok(
-      n.instructions.includes(`${AR_REPLY_RULE} المهمة:`),
-      `node ${n.id} does not place the reply-in-Arabic rule before المهمة:`,
+      n.instructions.includes(`${AR_REPLY_RULE} ${AR_TOOLS_RULE} المهمة:`),
+      `node ${n.id} does not place the reply-in-Arabic rule, then the tools rule, before المهمة:`,
+    );
+  }
+});
+
+test('every Arabic prompt node carries the search-and-ticket tools rule exactly once', () => {
+  const prompts = ar.conversation_flow.nodes.filter((n) => n.type === 'prompt');
+  assert.equal(prompts.length, 6);
+  for (const n of prompts) {
+    const count = n.instructions.split(AR_TOOLS_RULE).length - 1;
+    assert.equal(count, 1, `node ${n.id} carries the tools rule ${count} times`);
+  }
+  const speakAndToolNodes = ar.conversation_flow.nodes.filter(
+    (n) => n.type !== 'prompt',
+  );
+  for (const n of speakAndToolNodes) {
+    assert.equal(
+      typeof n.instructions === 'string' && n.instructions.includes(AR_TOOLS_RULE),
+      false,
+      `node ${n.id} unexpectedly carries the tools rule`,
     );
   }
 });

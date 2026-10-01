@@ -109,9 +109,13 @@ export async function seedSession(kv: KvPort, seed: SessionSeed = {}): Promise<s
   return k;
 }
 
-export async function connectClient(deps: McpDeps, token: string): Promise<Client> {
+export async function connectClient(
+  deps: McpDeps,
+  token: string,
+  search = "",
+): Promise<Client> {
   const transport = new StreamableHTTPClientTransport(
-    new URL("https://noc-edge.telnyxcompute.com/mcp"),
+    new URL(`https://noc-edge.telnyxcompute.com/mcp${search}`),
     {
       fetch: async (url: string | URL, init?: RequestInit) => {
         const { handleMcp } = await import("../../src/mcp/server");

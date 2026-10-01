@@ -4,7 +4,7 @@ import { formatRiyadhTime } from "../../../shared/src/readback";
 import { SITES } from "../../../shared/src/seed";
 import { responseTargetMinutes } from "../../../shared/src/severity";
 import { spellId } from "../../../shared/src/ids";
-import type { Site, Ticket } from "../../../shared/src/types";
+import type { Site } from "../../../shared/src/types";
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import type { SeedAdapter, NmsStatus } from "../../../shared/src/itsm";
 import type { Session } from "../../../shared/src/types";
@@ -14,18 +14,94 @@ import { newTimers, timingActors, timingKv, type Timers } from "../tools/common"
 import type { ActorPort } from "../services/actorPort";
 import type { KvPort } from "../services/kvPort";
 
-export const SESSION_FALLBACK =
-  "I can't reach our network systems right now, but I can still log your ticket.";
-const NOT_YOUR_SITE = "I can only look up your own site.";
-const NOT_FOUND = "I couldn't find that branch for your organisation.";
-const NEED_VERIFY =
-  "I can look up branches only after you're verified with your site ID and PIN.";
-const INCIDENT_LOOKUP_FAIL = "I can't check incidents right now.";
-const NO_TICKET = "I don't see an open ticket for that branch.";
-const WRITE_NOT_ALLOWED = "I can only add notes to tickets for your own site.";
-const WRITE_FAIL = "I can't update tickets right now.";
+export type McpLang = "en" | "ar";
+
 const OPS_WRITE_REJECTED = "add_ticket_note is not available in ops scope.";
 const OPS_ARG_REQUIRED = "This tool needs a site or ticket id in ops scope.";
+
+export interface SpokenCatalog {
+  sessionFallback: string;
+  notYourSite: string;
+  notFound: string;
+  needVerify: string;
+  incidentLookupFail: string;
+  noIncidents: string;
+  noTicket: string;
+  writeNotAllowed: string;
+  writeFail: string;
+  defaultDevice: string;
+  sinceFallback: string;
+  findSiteFound(site: Site): string;
+  statusUp(site: Site): string;
+  statusDegraded(site: Site, device: string): string;
+  statusDown(site: Site, device: string, since: string, lteDown: boolean): string;
+  incident(priority: string, regionLabel: string, siteCount: number, time: string): string;
+  ticket(id: string, priority: string, dueBy: string): string;
+  noteAdded(id: string): string;
+}
+
+const EN_CATALOG: SpokenCatalog = {
+  sessionFallback:
+    "I can't reach our network systems right now, but I can still log your ticket.",
+  notYourSite: "I can only look up your own site.",
+  notFound: "I couldn't find that branch for your organisation.",
+  needVerify:
+    "I can look up branches only after you're verified with your site ID and PIN.",
+  incidentLookupFail: "I can't check incidents right now.",
+  noIncidents: "No known incidents in your area.",
+  noTicket: "I don't see an open ticket for that branch.",
+  writeNotAllowed: "I can only add notes to tickets for your own site.",
+  writeFail: "I can't update tickets right now.",
+  defaultDevice: "edge router",
+  sinceFallback: "just now",
+  findSiteFound: (site) => `That's ${site.label}, site ${spellId(site.site_id)}.`,
+  statusUp: (site) => `The ${siteLabel(site)} looks healthy from our side.`,
+  statusDegraded: (site, device) =>
+    `The ${device} at the ${siteLabel(site)} is degraded; our team is on it.`,
+  statusDown: (site, device, since, lteDown) => {
+    let out = `The ${device} at the ${siteLabel(site)} stopped responding at ${since}`;
+    if (lteDown) out += "; the backup LTE link is also down";
+    return `${out}.`;
+  },
+  incident: (priority, regionLabel, siteCount, time) =>
+    `There's an active priority ${priority} incident in ${regionLabel} affecting ${spokenCount(siteCount)} branches since ${time}.`,
+  ticket: (id, priority, dueBy) =>
+    `Ticket ${id} is priority ${priority}; engineer response due by ${dueBy}.`,
+  noteAdded: (id) => `I've added your update to ticket ${id}.`,
+};
+
+const AR_CATALOG: SpokenCatalog = {
+  sessionFallback: "ما أقدر أوصل لأنظمة الشبكة الحين، بس أقدر أسجّل لك البلاغ.",
+  notYourSite: "أقدر أتحقق من فرعك أنت بس.",
+  notFound: "ما لقيت هالفرع ضمن فروع شركتكم.",
+  needVerify: "أقدر أبحث عن الفروع بعد ما نتحقق منك برقم الموقع ورقم السر.",
+  incidentLookupFail: "ما أقدر أتحقق من الأعطال الحين.",
+  noIncidents: "ما فيه أعطال معروفة في منطقتكم.",
+  noTicket: "ما أشوف تذكرة مفتوحة لهالفرع.",
+  writeNotAllowed: "أقدر أضيف ملاحظات على تذاكر فرعك أنت بس.",
+  writeFail: "ما أقدر أحدّث التذاكر الحين.",
+  defaultDevice: "الراوتر الرئيسي",
+  sinceFallback: "قبل شوي",
+  findSiteFound: (site) => `هذا ${site.label}، رقم الموقع ${spellId(site.site_id)}.`,
+  statusUp: (site) => `${site.label} شغّال وسليم من جهتنا.`,
+  statusDegraded: (site, device) =>
+    `${device} في ${site.label} أداؤه ضعيف، وفريقنا يشتغل عليه.`,
+  statusDown: (site, device, since, lteDown) => {
+    let out = `${device} في ${site.label} توقف عن الاستجابة الساعة ${since}`;
+    if (lteDown) out += "، وخط الـ LTE الاحتياطي بعد واقف";
+    return `${out}.`;
+  },
+  incident: (priority, regionLabel, siteCount, time) =>
+    `فيه عطل أولوية ${priority} نشط في ${regionLabel} مأثّر على ${siteCount} فروع من الساعة ${time}.`,
+  ticket: (id, priority, dueBy) =>
+    `التذكرة ${id} أولويتها ${priority}، ورد المهندس متوقع قبل الساعة ${dueBy}.`,
+  noteAdded: (id) => `أضفت تحديثك على التذكرة ${id}.`,
+};
+
+const CATALOGS: Record<McpLang, SpokenCatalog> = {
+  en: EN_CATALOG,
+  ar: AR_CATALOG,
+};
 
 export const MCP_HOP = "mcp";
 // DEBUGLOG #6: one KV op takes ≈1–2 s on the trial project, and a warm actor
@@ -42,6 +118,7 @@ export interface ToolCtx {
   adapter: SeedAdapter;
   now: () => number;
   session: Session | null;
+  lang: McpLang;
 }
 
 const SENTINELS = new Set(["none", "unknown"]);
@@ -183,35 +260,22 @@ function siteLabel(site: Site): string {
     : site.label;
 }
 
-function nmsSpeech(site: Site, status: NmsStatus): string {
+function nmsSpeech(site: Site, status: NmsStatus, s: SpokenCatalog): string {
   if (status.state === "up") {
-    return `The ${siteLabel(site)} looks healthy from our side.`;
+    return s.statusUp(site);
   }
-  const device = usable(status.device) ? status.device : "edge router";
+  const device = usable(status.device) ? status.device : s.defaultDevice;
   if (status.state === "degraded") {
-    return `The ${device} at the ${siteLabel(site)} is degraded; our team is on it.`;
+    return s.statusDegraded(site, device);
   }
-  const since = status.since !== null ? formatRiyadhTime(status.since) : "just now";
-  let out = `The ${device} at the ${siteLabel(site)} stopped responding at ${since}`;
-  if (status.alarms.some((a) => a.toLowerCase().includes("lte"))) {
-    out += "; the backup LTE link is also down";
-  }
-  return `${out}.`;
-}
-
-function incidentSpeech(
-  incident: { priority: string; declaredAt: number },
-  siteCount: number,
-  regionLabel: string,
-): string {
-  return `There's an active priority ${incident.priority.slice(1)} incident in ${regionLabel} affecting ${spokenCount(siteCount)} branches since ${formatRiyadhTime(incident.declaredAt)}.`;
-}
-
-function ticketSpeech(ticket: Ticket): string {
-  const dueBy = formatRiyadhTime(
-    ticket.openedAt + responseTargetMinutes(ticket.priority) * 60_000,
+  const since =
+    status.since !== null ? formatRiyadhTime(status.since) : s.sinceFallback;
+  return s.statusDown(
+    site,
+    device,
+    since,
+    status.alarms.some((a) => a.toLowerCase().includes("lte")),
   );
-  return `Ticket ${spellId(ticket.id)} is priority ${ticket.priority.slice(1)}; engineer response due by ${dueBy}.`;
 }
 
 async function resolveTicketArg(
@@ -252,14 +316,15 @@ async function resolveTicketArg(
 }
 
 function refusalOf(ctx: ToolCtx, timers: Timers, tool: string, resolved: NotResolvable): ToolResult {
+  const s = CATALOGS[ctx.lang];
   switch (resolved.kind) {
     case "not_yours":
       denyLog(ctx, timers, tool, resolved.reason, resolved.target);
-      return spoken({ speech: NOT_YOUR_SITE, outcome: "denied" });
+      return spoken({ speech: s.notYourSite, outcome: "denied" });
     case "no_site":
-      return spoken({ speech: NOT_YOUR_SITE, outcome: "fallback" });
+      return spoken({ speech: s.notYourSite, outcome: "fallback" });
     case "not_found":
-      return spoken({ speech: NOT_FOUND, outcome: "ok" });
+      return spoken({ speech: s.notFound, outcome: "ok" });
     case "missing":
       return spoken({
         speech: OPS_ARG_REQUIRED,
@@ -276,6 +341,7 @@ export function registerMcpTools(server: McpServer, base: ToolCtx): void {
     kv: timingKv(base.kv, base.now, timers),
     actors: timingActors(base.actors, base.now, timers),
   };
+  const s = CATALOGS[ctx.lang];
   const wrap = (name: string, handler: ToolHandler): ToolHandler => {
     return async (args) => {
       const started = ctx.now();
@@ -318,12 +384,12 @@ export function registerMcpTools(server: McpServer, base: ToolCtx): void {
     wrap("find_site", async (raw) => {
       const args = raw as { description: string };
       if (needsFallback(ctx)) {
-        return spoken({ speech: SESSION_FALLBACK, outcome: "fallback" });
+        return spoken({ speech: s.sessionFallback, outcome: "fallback" });
       }
       const scope = ctx.scope;
       const customerId = scope === "session" ? (sessionOf(ctx) as Session).customer_id : null;
       if (scope === "session" && customerId === null) {
-        return spoken({ speech: NEED_VERIFY, outcome: "fallback" });
+        return spoken({ speech: s.needVerify, outcome: "fallback" });
       }
       const site =
         scope === "ops"
@@ -332,10 +398,10 @@ export function registerMcpTools(server: McpServer, base: ToolCtx): void {
             ? await ctx.adapter.resolveSite(args.description, customerId)
             : null;
       if (site === null) {
-        return spoken({ speech: NOT_FOUND, outcome: "ok" });
+        return spoken({ speech: s.notFound, outcome: "ok" });
       }
       return spoken({
-        speech: `That's ${site.label}, site ${spellId(site.site_id)}.`,
+        speech: s.findSiteFound(site),
         structured: {
           site_id: site.site_id,
           label: site.label,
@@ -357,13 +423,13 @@ export function registerMcpTools(server: McpServer, base: ToolCtx): void {
     wrap("get_site_status", async (raw) => {
       const args = raw as { site_id?: string };
       if (needsFallback(ctx)) {
-        return spoken({ speech: SESSION_FALLBACK, outcome: "fallback" });
+        return spoken({ speech: s.sessionFallback, outcome: "fallback" });
       }
       const resolved = await resolveSiteArg(ctx, args.site_id);
       if (resolved.kind !== "site") return refusalOf(ctx, timers, "get_site_status", resolved);
       const status = await ctx.adapter.getNmsStatus(resolved.site.site_id);
       return spoken({
-        speech: nmsSpeech(resolved.site, status),
+        speech: nmsSpeech(resolved.site, status, s),
         structured: {
           site_id: resolved.site.site_id,
           label: resolved.site.label,
@@ -387,7 +453,7 @@ export function registerMcpTools(server: McpServer, base: ToolCtx): void {
     wrap("check_known_incidents", async (raw) => {
       const args = raw as { site_id?: string };
       if (needsFallback(ctx)) {
-        return spoken({ speech: SESSION_FALLBACK, outcome: "fallback" });
+        return spoken({ speech: s.sessionFallback, outcome: "fallback" });
       }
       const resolved = await resolveSiteArg(ctx, args.site_id);
       if (resolved.kind !== "site") {
@@ -401,19 +467,24 @@ export function registerMcpTools(server: McpServer, base: ToolCtx): void {
         "mcp.getIncident",
       );
       if (!outcome.ok) {
-        return spoken({ speech: INCIDENT_LOOKUP_FAIL, outcome: "fallback" });
+        return spoken({ speech: s.incidentLookupFail, outcome: "fallback" });
       }
       const incident = outcome.value.incident;
       if (incident === null) {
         return spoken({
-          speech: "No known incidents in your area.",
+          speech: s.noIncidents,
           structured: { ...NONE_IDS, site_count: "0" },
           outcome: "ok",
         });
       }
       const siteCount = Object.keys(incident.sites).length;
       return spoken({
-        speech: incidentSpeech(incident, siteCount, resolved.site.region_label),
+        speech: s.incident(
+          incident.priority.slice(1),
+          resolved.site.region_label,
+          siteCount,
+          formatRiyadhTime(incident.declaredAt),
+        ),
         structured: {
           incident_id: incident.id,
           priority: incident.priority,
@@ -437,7 +508,7 @@ export function registerMcpTools(server: McpServer, base: ToolCtx): void {
     wrap("get_ticket_status", async (raw) => {
       const args = raw as { ticket_id?: string };
       if (needsFallback(ctx)) {
-        return spoken({ speech: SESSION_FALLBACK, outcome: "fallback" });
+        return spoken({ speech: s.sessionFallback, outcome: "fallback" });
       }
       const resolved = await resolveTicketArg(ctx, args.ticket_id);
       if (resolved.kind !== "ticket") {
@@ -452,13 +523,19 @@ export function registerMcpTools(server: McpServer, base: ToolCtx): void {
         (resolved.ticketId !== null && ticket.id !== resolved.ticketId)
       ) {
         return spoken({
-          speech: NO_TICKET,
+          speech: s.noTicket,
           structured: { ...NONE_IDS, ticket: "none" },
           outcome: "ok",
         });
       }
       return spoken({
-        speech: ticketSpeech(ticket),
+        speech: s.ticket(
+          spellId(ticket.id),
+          ticket.priority.slice(1),
+          formatRiyadhTime(
+            ticket.openedAt + responseTargetMinutes(ticket.priority) * 60_000,
+          ),
+        ),
         structured: {
           ticket_id: ticket.id,
           priority: ticket.priority,
@@ -491,16 +568,16 @@ export function registerMcpTools(server: McpServer, base: ToolCtx): void {
         });
       }
       if (needsFallback(ctx)) {
-        return spoken({ speech: SESSION_FALLBACK, outcome: "fallback" });
+        return spoken({ speech: s.sessionFallback, outcome: "fallback" });
       }
       const session = sessionOf(ctx) as Session;
       const resolved = await resolveTicketArg(ctx, args.ticket_id);
       if (resolved.kind === "not_yours") {
         denyLog(ctx, timers, "add_ticket_note", "site_not_writable", resolved.target);
-        return spoken({ speech: WRITE_NOT_ALLOWED, outcome: "denied" });
+        return spoken({ speech: s.writeNotAllowed, outcome: "denied" });
       }
       if (resolved.kind === "no_site") {
-        return spoken({ speech: WRITE_NOT_ALLOWED, outcome: "fallback" });
+        return spoken({ speech: s.writeNotAllowed, outcome: "fallback" });
       }
       if (resolved.kind !== "ticket") {
         return refusalOf(ctx, timers, "add_ticket_note", resolved);
@@ -513,7 +590,7 @@ export function registerMcpTools(server: McpServer, base: ToolCtx): void {
           "site_not_writable",
           args.ticket_id ?? resolved.site.site_id,
         );
-        return spoken({ speech: WRITE_NOT_ALLOWED, outcome: "denied" });
+        return spoken({ speech: s.writeNotAllowed, outcome: "denied" });
       }
       let ticketId = resolved.ticketId;
       if (ticketId === null) {
@@ -522,7 +599,7 @@ export function registerMcpTools(server: McpServer, base: ToolCtx): void {
         });
         if (existing.ticket === null) {
           return spoken({
-            speech: NO_TICKET,
+            speech: s.noTicket,
             structured: { ...NONE_IDS, ticket: "none" },
             outcome: "ok",
           });
@@ -538,7 +615,7 @@ export function registerMcpTools(server: McpServer, base: ToolCtx): void {
           trace_id: traceIdOf(ctx),
         });
         return spoken({
-          speech: `I've added your update to ticket ${spellId(added.ticket.id)}.`,
+          speech: s.noteAdded(spellId(added.ticket.id)),
           structured: {
             ticket_id: added.ticket.id,
             added: added.added ? "true" : "repeat",
@@ -549,13 +626,13 @@ export function registerMcpTools(server: McpServer, base: ToolCtx): void {
       } catch (err) {
         if (err instanceof Error && err.message === "ticket_mismatch") {
           return spoken({
-            speech: NO_TICKET,
+            speech: s.noTicket,
             structured: { ...NONE_IDS, ticket: "none" },
             outcome: "ok",
           });
         }
         return spoken({
-          speech: WRITE_FAIL,
+          speech: s.writeFail,
           outcome: "error",
           errorName: err instanceof Error ? err.name : "Error",
         });

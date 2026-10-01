@@ -16,7 +16,7 @@ import {
   normalizeRequest,
   opsMetaViolation,
 } from "./shim";
-import { MCP_HOP, TOOL_SCHEMAS, registerMcpTools } from "./tools";
+import { MCP_HOP, TOOL_SCHEMAS, registerMcpTools, type McpLang } from "./tools";
 
 export interface McpDeps {
   kv: KvPort;
@@ -42,6 +42,14 @@ function callBodyOf(parsedBody: unknown): CallBody | null {
   if (body === null || typeof body !== "object") return null;
   if (body.method !== "tools/call") return null;
   return body;
+}
+
+function langOf(request: Request): McpLang {
+  try {
+    return new URL(request.url).searchParams.get("lang") === "ar" ? "ar" : "en";
+  } catch {
+    return "en";
+  }
 }
 
 function logRejectedToolCall(
@@ -204,6 +212,7 @@ export async function handleMcp(
     adapter: deps.adapter,
     now: deps.now,
     session,
+    lang: langOf(request),
   });
   const transport = new WebStandardStreamableHTTPServerTransport({
     sessionIdGenerator: undefined,

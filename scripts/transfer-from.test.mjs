@@ -47,3 +47,18 @@ test('apply.mjs --dry-run resolves every placeholder without SANAD_NUMBER', asyn
   );
   assert.ok(stdout.includes('placeholders: all resolved'));
 });
+
+test('apply.mjs --dry-run lists both MCP servers and the Arabic one carries ?lang=ar', async () => {
+  const { stdout } = await execFileP(
+    'node',
+    ['scripts/apply.mjs', '--dry-run'],
+    { cwd: root, env: { ...process.env, SANAD_NUMBER: '' }, timeout: 30000 },
+  );
+  const lines = stdout.split('\n').filter((l) => l.startsWith('mcp_server:'));
+  assert.deepEqual(
+    lines.map((l) => l.split(' ')[0]),
+    ['mcp_server:noc-mcp', 'mcp_server:noc-mcp-ar'],
+  );
+  assert.ok(lines[0].endsWith('/mcp'), `en url: ${lines[0]}`);
+  assert.ok(lines[1].endsWith('/mcp?lang=ar'), `ar url: ${lines[1]}`);
+});

@@ -22,6 +22,7 @@ const PRUNE_PROBE = process.argv.includes('--prune-probe');
 const ASSISTANT_NAME = 'sanad-noc';
 const ASSISTANT_AR_NAME = 'sanad-noc-ar';
 const MCP_NAME = 'noc-mcp';
+const MCP_AR_NAME = 'noc-mcp-ar';
 const SECRET_IDENTIFIER = 'noc_mcp_token';
 const MCP_TOOLS = [
   'find_site',
@@ -88,6 +89,7 @@ async function main() {
     ONCALL_NUMBER: process.env.ONCALL_NUMBER ?? 'DRYRUN_ONCALL_NUMBER',
     SANAD_NUMBER: process.env.SANAD_NUMBER ?? 'DRYRUN_SANAD_NUMBER',
     MCP_ID: 'DRYRUN_noc-mcp',
+    MCP_AR_ID: 'DRYRUN_noc-mcp-ar',
     ASSISTANT_AR_ID: 'DRYRUN_sanad-noc-ar',
   };
   for (const name of toolNames) {
@@ -124,8 +126,10 @@ async function main() {
       const url = tool.webhook?.url ?? '';
       console.log(`tool:${tool.display_name} type=${tool.type} ${url}`);
     }
-    const mcpResolved = resolvePlaceholders(mcp.server, dryVars);
-    console.log(`mcp_server:${mcpResolved.name} ${mcpResolved.url}`);
+    for (const server of [mcp.server, mcp.server_ar]) {
+      const mcpResolved = resolvePlaceholders(server, dryVars);
+      console.log(`mcp_server:${mcpResolved.name} ${mcpResolved.url}`);
+    }
     console.log(`integration_secret:${SECRET_IDENTIFIER} skip-if-exists`);
     resolvePlaceholders(assistantAr, dryVars);
     resolvePlaceholders(assistant, dryVars);
@@ -178,35 +182,52 @@ async function main() {
     exitCode = 1;
   }
 
-  // mcp server
+  // mcp servers (the English registration, then the Arabic one; both upserted
+  // by name before the assistants so ${MCP_ID}/${MCP_AR_ID} resolve)
+  const MCP_DEFS = [
+    { server: mcp.server, name: MCP_NAME, varName: 'MCP_ID', stateKey: 'mcp_server' },
+    { server: mcp.server_ar, name: MCP_AR_NAME, varName: 'MCP_AR_ID', stateKey: 'mcp_server_ar' },
+  ];
+  let mcpList = null;
   try {
-    const resolved = resolvePlaceholders(mcp.server, vars);
-    const list = await listAll('/v2/ai/mcp_servers', telnyx);
-    const existing = findByName(list, 'name', MCP_NAME);
-    let saved;
-    if (existing) {
-      console.log(`exists mcp_server ${existing.id}`);
-      saved = unwrap(
-        await telnyx(`/v2/ai/mcp_servers/${existing.id}`, {
-          method: 'PUT',
-          body: resolved,
-        }),
-      );
-    } else {
-      saved = unwrap(
-        await telnyx('/v2/ai/mcp_servers', { method: 'POST', body: resolved }),
-      );
-      console.log(`created mcp_server ${saved?.id ?? ''}`);
-    }
-    if (saved?.id) {
-      const got = unwrap(await telnyx(`/v2/ai/mcp_servers/${saved.id}`));
-      printDrift('mcp_server', subsetDiff(resolved, got));
-      state.mcp_server = saved.id;
-      vars.MCP_ID = saved.id;
-    }
+    mcpList = await listAll('/v2/ai/mcp_servers', telnyx);
   } catch (err) {
+    // a failed listing must never fall through to a blind create (C1: no
+    // duplicate servers)
     reportFailure('mcp_server', err);
     exitCode = 1;
+  }
+  if (mcpList !== null) {
+    for (const def of MCP_DEFS) {
+      try {
+        const resolved = resolvePlaceholders(def.server, vars);
+        const existing = findByName(mcpList, 'name', def.name);
+        let saved;
+        if (existing) {
+          console.log(`exists mcp_server ${def.name} ${existing.id}`);
+          saved = unwrap(
+            await telnyx(`/v2/ai/mcp_servers/${existing.id}`, {
+              method: 'PUT',
+              body: resolved,
+            }),
+          );
+        } else {
+          saved = unwrap(
+            await telnyx('/v2/ai/mcp_servers', { method: 'POST', body: resolved }),
+          );
+          console.log(`created mcp_server ${def.name} ${saved?.id ?? ''}`);
+        }
+        if (saved?.id) {
+          const got = unwrap(await telnyx(`/v2/ai/mcp_servers/${saved.id}`));
+          printDrift(`mcp_server:${def.name}`, subsetDiff(resolved, got));
+          state[def.stateKey] = saved.id;
+          vars[def.varName] = saved.id;
+        }
+      } catch (err) {
+        reportFailure(`mcp_server:${def.name}`, err);
+        exitCode = 1;
+      }
+    }
   }
 
   // shared tools

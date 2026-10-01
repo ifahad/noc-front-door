@@ -15,5 +15,18 @@
       "get_ticket_status",
       "add_ticket_note"
     ]
+  },
+  "server_ar": {
+    "name": "noc-mcp-ar",
+    "type": "http",
+    "url": "${EDGE_URL}/mcp?lang=ar",
+    "api_key_ref": "noc_mcp_token",
+    "allowed_tools": [
+      "find_site",
+      "get_site_status",
+      "check_known_incidents",
+      "get_ticket_status",
+      "add_ticket_note"
+    ]
   }
 }

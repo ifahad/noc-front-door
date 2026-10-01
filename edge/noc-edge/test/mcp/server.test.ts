@@ -785,3 +785,85 @@ describe("MCP ops scope", () => {
     expect(result.isError).toBe(true);
   });
 });
+
+describe("MCP Arabic (lang=ar)", () => {
+  const AR_FALLBACK =
+    "ما أقدر أوصل لأنظمة الشبكة الحين، بس أقدر أسجّل لك البلاغ.";
+  const AR_NEED_VERIFY =
+    "أقدر أبحث عن الفروع بعد ما نتحقق منك برقم الموقع ورقم السر.";
+  const AR_NOT_FOUND = "ما لقيت هالفرع ضمن فروع شركتكم.";
+  const AR_TICKET =
+    "التذكرة N J D, 1 4 0 1 أولويتها 2، ورد المهندس متوقع قبل الساعة 9:30 AM.";
+
+  it("speaks the Arabic fallback when tools/call carries no _meta", async () => {
+    deps = makeDeps();
+    await seedSession(deps.kv, {});
+    client = await connectClient(deps, MCP_TOKEN, "?lang=ar");
+    const result = await callTool(client, "get_site_status", {}, null);
+    expect(result.isError).not.toBe(true);
+    expect(textOf(result)).toBe(AR_FALLBACK);
+  });
+
+  it("asks for verification in Arabic when the session has no organisation", async () => {
+    deps = makeDeps();
+    await deps.kv.put(kvKey("conv", CONV), "kunscoped00000001");
+    client = await connectClient(deps, MCP_TOKEN, "?lang=ar");
+    const result = await callTool(client, "find_site", {
+      description: "JED zero zero seven",
+    });
+    expect(result.isError).not.toBe(true);
+    expect(textOf(result)).toBe(AR_NEED_VERIFY);
+  });
+
+  it("refuses an unknown site id in Arabic", async () => {
+    deps = makeDeps();
+    await seedSession(deps.kv, {});
+    client = await connectClient(deps, MCP_TOKEN, "?lang=ar");
+    const result = await callTool(client, "get_site_status", { site_id: "RUH-999" });
+    expect(result.isError).not.toBe(true);
+    expect(textOf(result)).toBe(AR_NOT_FOUND);
+  });
+
+  it("reads the ticket in Arabic with the spelled id and the Riyadh time", async () => {
+    deps = makeDeps();
+    const k = await seedSession(deps.kv, {});
+    await seedTicket(deps.actors, k);
+    client = await connectClient(deps, MCP_TOKEN, "?lang=ar");
+    const result = await callTool(client, "get_ticket_status", {});
+    expect(result.isError).not.toBe(true);
+    expect(textOf(result)).toBe(AR_TICKET);
+  });
+
+  it("falls back to English for an unknown lang", async () => {
+    deps = makeDeps();
+    await seedSession(deps.kv, {});
+    client = await connectClient(deps, MCP_TOKEN, "?lang=fr");
+    const result = await callTool(client, "get_site_status", {}, null);
+    expect(result.isError).not.toBe(true);
+    expect(textOf(result)).toBe(FALLBACK);
+  });
+
+  it("rejects an absent bearer with 401 before the SDK under lang=ar", async () => {
+    deps = makeDeps();
+    const response = await handleMcp(
+      new Request(`${MCP_URL}?lang=ar`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify(initializeBody()),
+      }),
+      deps,
+    );
+    expect(response.status).toBe(401);
+    expect((await response.json()) as Record<string, unknown>).toHaveProperty("error");
+  });
+
+  it("keeps the ops write rejection English under lang=ar", async () => {
+    deps = makeDeps();
+    startLogs();
+    client = await connectClient(deps, OPS_TOKEN, "?lang=ar");
+    const result = await callTool(client, "add_ticket_note", { note: "hi" }, null);
+    expect(result.isError).toBe(true);
+    expect(textOf(result)).toBe("add_ticket_note is not available in ops scope.");
+    expect(eventsWith("auth.denied")).toHaveLength(1);
+  });
+});
