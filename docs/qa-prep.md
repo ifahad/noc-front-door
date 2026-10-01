@@ -21,7 +21,7 @@ Facts route by expression, meaning routes by LLM (19 expr / 26 llm / 16 default 
 It sits outside the failure domain on purpose. If it dies: the KV projection ages out (~2 h TTL) and the board goes stale (DEBUGLOG #11), and page *delivery* stalls — the ladder itself keeps running in `RegionState` (platform alarms; `/ops/tick` is only the fallback). `/ops/status` and `/ops/board` stay public either way. Roadmap: move the heal + paging into the platform (RegionState alarms / a scheduled edge job). → [docs/runbook.md](runbook.md) §6, "What we'd do next" below
 
 **Q: Why is MCP in-process in `noc-edge`?**
-The spec's line: a module boundary, not a deployment boundary. A second edge function would add a second cold start (13–14 s measured) for zero isolation benefit; the MCP contract (C4) is preserved per request — a fresh server + transport, POST-only, GET → 405, stateless. → [docs/decisions.md](decisions.md) #11, [docs/walkthrough.md](walkthrough.md) stop 7
+The spec's line: a module boundary, not a deployment boundary. A second edge function would add a second cold start (13–14 s cold starts seen on public actor functions in pre-build research) for zero isolation benefit; the MCP contract (C4) is preserved per request — a fresh server + transport, POST-only, GET → 405, stateless. → [docs/decisions.md](decisions.md) #11, [docs/walkthrough.md](walkthrough.md) stop 7
 
 **Q: Why Kimi-K2.6 for voice? What voice/STT for Saudi Arabic?**
 The voice model is a platform constraint of this challenge (C10), not a free pick. The Arabic line pairs `Telnyx.Bayan.Reem` (Saudi female) with STT `soniox/stt-rt-v5` (auto language detection, Arabic–English code-switching for spoken site IDs). The English A/B is a queued next step: TTS "Ultra" shortlist vs `af_heart`; STT `deepgram/flux` vs nova-3; for Arabic STT, `cohere/ar-stt` (batch — latency risk) or streaming alternatives. → [README.md](../README.md) Known limitations, [DOGFOODING.md](../DOGFOODING.md) model choice
@@ -30,7 +30,7 @@ The voice model is a platform constraint of this challenge (C10), not a free pic
 Yes — live: resolving INC-1004 (2026-09-28) wrote `incidents/INC-1004-2026-09-27T21-46-42Z.json` (926 B) to bucket `noc-reports-fb8131`; `/ops/reports` lists and fetches it and the board carries the `last_report` pointer. (Storage was suspended 09-30 while the balance was negative and restored with the 10-01 top-up.) → [DEBUGLOG.md](../DEBUGLOG.md) #13, [docs/architecture.md](architecture.md) stretch table
 
 **Q: How did you prove the 09-28/29 outage was Telnyx's?**
-It reproduced on three paths our code cannot touch: a brand-new actor id, the host's own increment, and direct KV REST from the dev box (18/18 GETs → 500/10007 while the namespace metadata said `provision_ok`). Onset ran at prober-only load, ~27% of the instance's observed capacity. Our amplifiers were real and fixed (board cache, flag cooldown, hang=down) but started nothing. → [DEBUGLOG.md](../DEBUGLOG.md) #15
+It reproduced on three paths our code cannot touch: a brand-new actor id, the host's own increment, and direct KV REST from the dev box (18/18 GETs → 500/10007 while the namespace metadata said `provision_ok`). Onset ran at prober-only load (~0.7 actor calls/s); even our peak was at most ~27% of the instance's observed 11–13 calls/s. Our amplifiers were real and fixed (board cache, flag cooldown, hang=down) but started nothing. → [DEBUGLOG.md](../DEBUGLOG.md) #15
 
 ## Reviewer probes — one honest answer each
 
