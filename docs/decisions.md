@@ -40,8 +40,8 @@ Tools reach a node two ways: **shared tools** via `shared_tool_ids` + `tools_mod
 | `s_open`, `s_advisory`, `s_join`, `s_pin_retry`, `s_locked`, `s_verify_unavailable`, `s_one_moment`, `s_confirm`, `s_goodbye`, `s_handover`, `s_to_ar` | speak | — (speak nodes carry none) | — |
 | `n_advisory_followup` | prompt | `[]` / replace | reachable (by design) |
 | `n_verify` | prompt | `[capture_details]` / replace — "You do not need find_site here" | reachable |
-| `n_triage`, `n_collect`, `n_status` | prompt | inherit `[capture_details]` / append — `n_collect` also calls `find_site`/`get_site_status`; `n_status` calls `get_ticket_status` by default | reachable |
-| `n_ticket_failed`, `n_wrapup` | prompt | `[]` / replace | reachable |
+| `n_collect`, `n_status` | prompt | inherit `[capture_details]` / append — `n_collect` also calls `find_site`/`get_site_status`; `n_status` calls `get_ticket_status` by default | reachable |
+| `n_triage`, `n_ticket_failed`, `n_wrapup` | prompt | `[]` / replace | reachable |
 | `n_take_message` | prompt | `[capture_details]` / replace | reachable |
 | `t_verify`, `t_open_ticket`, `t_join_incident`, `t_callback`, `t_transfer`, `t_hangup` | tool | one each: `verify_site`, `open_ticket`, `join_incident`, `log_callback`, `transfer_oncall`, `end_call` | n/a |
 

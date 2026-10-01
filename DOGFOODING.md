@@ -121,7 +121,7 @@ The morning's live calls (#9–#13, DEBUGLOG #22) found the Arabic voice path's 
 
 Today's lanes **P3-14…P3-17**, all on GLM-5.3: P3-14 the direct Arabic entry (`3cf56b0`; the page element itself is the Claude-authored front page, `ae31967`), P3-15 the docs flip (`dedf5c2`, `e3abbf9`), P3-16 the shared widget-settings fix (`8e515c2`), P3-17 the demo-day accuracy lanes — the Arabic AI-disclosure opening (`a4cfb8c`), the per-entity root-cause docs (`2b09eb8`), the `timedApi` wrapper fix for Proxy-shaped stubs (`101dd21`) and this demo-day docs lane.
 
-**Corrected split** (supersedes the stale 89-of-112 snapshot): **98 of 126 commits as of `93e210a` carry an `Assisted-by: OpenCode` trailer — 78 GLM-5.3-Flash · 18 GLM-5.3 · 2 Kimi-K3**; the remaining 28 are architect merges/reviews and the Claude-authored front page (`src/demo/page.ts`). Earlier figures in the per-plan sections were snapshots at their own commits.
+**Corrected split** (supersedes the stale 89-of-112 snapshot): **109 of 146 commits as of `edf6f40` carry an `Assisted-by: OpenCode` trailer — 78 GLM-5.3-Flash · 29 GLM-5.3 · 2 Kimi-K3**; the remaining 37 are architect merges/reviews and the Claude-authored front page (`src/demo/page.ts`). Earlier figures in the per-plan sections were snapshots at their own commits.
 
 ## Cost table, the Kimi-K3 burn, and the credit floor
 
