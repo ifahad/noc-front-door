@@ -6,9 +6,9 @@
 
 ## What it is
 
-A KSA managed-services provider's NOC takes 24/7 outage calls from branch staff of its enterprise customers — the **Al-Waha Pharmacies** and **Rawda Cafés** chains. During a regional outage every affected branch calls separately, so the queue fills with **duplicate reports**.
+A KSA managed-services provider's NOC takes 24/7 outage calls from branch staff of its enterprise customers — the **Al-Waha Pharmacies** and **Rawda Cafés** chains. During a regional outage every affected branch calls separately, so the queue fills with **duplicate reports**. Why it matters: the **SLA clock starts when the fault is received**, not when a human finally picks up; and the de-dupe promise is **one ticket per site, one incident per region** — engineers see one clean ticket per fault instead of a queue of duplicates.
 
-**Sanad** verifies the caller by site + PIN, recognises the regional incident, opens or joins tickets, escalates P2→P1 at the third branch, pages on-call if the P1 is unacknowledged, and hands over to a human on request. Telnyx Voice AI (Conversation Workflows) + Edge Compute (Functions, KV, Stateful Actors) + a custom MCP server. Binding design: [spec](docs/superpowers/specs/2026-09-26-noc-front-door-design.md) · decisions: [docs/decisions.md](docs/decisions.md).
+**Sanad** verifies the caller by site + PIN, recognises the regional incident, opens or joins tickets, escalates P2→P1 at the third branch, raises a page if the P1 is unacknowledged (a desktop notification on the operator's box in the demo; Telnyx SMS/voice paging is the production path), and hands over to a human on request. Telnyx Voice AI (Conversation Workflows) + Edge Compute (Functions, KV, Stateful Actors) + a custom MCP server. Binding design: [spec](docs/superpowers/specs/2026-09-26-noc-front-door-design.md) · decisions: [docs/decisions.md](docs/decisions.md) · data residency: [docs/sovereignty.md](docs/sovereignty.md).
 
 ## Try it
 
@@ -32,6 +32,10 @@ The **operator console** is hidden — `#console` or the backtick key: scenario 
 | `/mcp` | MCP server: 5 tools, stateless, `GET` → 405 (C4) | bearer (`401` without; sample in [docs/setup.md](docs/setup.md)) |
 
 Other `/ops/*` routes are operator-only — ops bearer via `node scripts/ops.mjs`, not published. The public line **`+1 512 980 6105`** has been live since the account was verified on 2026-09-28 (DEBUGLOG #1). The MCP bearer is shared privately with reviewers in the submission email (spec §16).
+
+### Production path
+
+In the demo, a P1 page is a desktop notification on the operator's box; the production path is **Telnyx SMS/voice paging** to the on-call rota. Verification in production stays `require_pin=true`, plus **caller-ID trust** for known branch numbers. The public board is read-only and masked for the demo; production puts it behind **board auth** (operator SSO). Data residency: see [docs/sovereignty.md](docs/sovereignty.md).
 
 ## Architecture
 
@@ -85,7 +89,7 @@ Full rationale: [docs/architecture.md](docs/architecture.md).
 | Stateful Actors, read-modify-write (C11) | 10 opens → 1 ticket ([race test](docs/evidence/race-test.txt)) |
 | Observability — logs, signal, minute answer | ≈ ≤30 s alert ([runbook](docs/runbook.md)) |
 | A real debugging story | Found from the call's own trace (#8) |
-| OpenCode + Telnyx Inference | 89 of 112 commits as of `e6c9772` ([DOGFOODING.md](DOGFOODING.md)) |
+| OpenCode + Telnyx Inference | 98 of 126 commits as of `93e210a` (78 GLM-5.3-Flash · 18 GLM-5.3 · 2 Kimi-K3) ([DOGFOODING.md](DOGFOODING.md)) |
 | Public deployment + docs | Live since 2026-09-27 |
 
 Stretch goals:
@@ -115,7 +119,7 @@ Load discipline ([detail](docs/architecture.md)): board cached **30 s from build
 
 ### A real bug, end to end
 
-Voice call #1 (trace `t-5d419f3a98a3240f`): **correct** PIN, but `verify_site` took **7869 ms** — over its 5000 ms timeout — verification failed, no ticket opened. Found from the call's own trace (`tool.verify_site` total_ms vs the timeout). Root cause (DEBUGLOG #6): sequential ~1–2 s KV ops in the tool webhooks. Fix: concurrent KV. Calls #2/#3 verified in **3.6 s**; INC-1002 went **P1 at 3 sites** — one `trace_id` across every hop (`scripts/trace.sh`, DEBUGLOG #8; [voice-calls.md](docs/evidence/voice-calls.md)). Full trail: [DEBUGLOG.md](DEBUGLOG.md) (#1–#20).
+Voice call #1 (trace `t-5d419f3a98a3240f`): **correct** PIN, but `verify_site` took **7869 ms** — over its 5000 ms timeout — verification failed, no ticket opened. Found from the call's own trace (`tool.verify_site` total_ms vs the timeout). Root cause (DEBUGLOG #6): sequential ~1–2 s KV ops in the tool webhooks. Fix: concurrent KV. Calls #2/#3 verified in **3.6 s**; INC-1002 went **P1 at 3 sites** — one `trace_id` across every hop (`scripts/trace.sh`, DEBUGLOG #8; [voice-calls.md](docs/evidence/voice-calls.md)). Full trail: [DEBUGLOG.md](DEBUGLOG.md) (#1–#22).
 
 ## Challenges & solutions
 
@@ -162,8 +166,8 @@ docs/                  Spec, plans, runbook, evidence, setup, architecture, walk
 ## Known limitations
 
 - **Telnyx platform incident 2026-09-28/29** (DEBUGLOG #15) — actor runtime broke 06:14:44Z, KV data plane from 19:06Z, ended ~13:05Z on 09-29; reproduces on paths our code cannot touch.
-- **Per-entity actors: flipped and reverted** — switched on 05:34:28Z on 2026-10-01, reverted to mux at 05:54:53Z: per-entity pongs answered (195–227 ms, 4/4; race 1/10 vs KV 10/10) but `verify_site` 500'd — the per-entity stubs through `noc-edge`'s binding answered ping and not `recordPinAttempt` (stale method list on the binding, most likely — DEBUGLOG #21). Live traffic runs mux behind `flag/actor_mode`; mux stays the instant fallback (`/ops/actor-ping` shows the mode).
+- **Per-entity actors: flipped and reverted** — switched on 05:34:28Z on 2026-10-01, reverted to mux at 05:54:53Z: per-entity pongs answered (195–227 ms, 4/4; race 1/10 vs KV 10/10) but `verify_site` 500'd — our timing wrapper `timedApi` collects method names via `Object.getOwnPropertyNames`, and the SDK's Proxy-shaped actor stub exposes none, so the wrapped port had no business methods while `/ops/actor-ping` and `/dv` used the raw port (DEBUGLOG #21). Live traffic runs mux behind `flag/actor_mode` (held at `mux` with no expiry); mux stays the instant fallback (`/ops/actor-ping` shows the mode); the wrapper fix is prepared on a branch, re-flip after demo day.
 - **Arabic handoff is intermittent on the platform** — call #9 proved the re-verification skip live (`s_ar_open` routed a verified caller to `n_ar_confirm`, no PIN re-ask — DEBUGLOG #22), but #12/#13 went silent >20–30 s under identical config while the Arabic DV webhook answered 1.3–1.5 s every time; a Telnyx voice-runtime issue being reported with the conversation ids (DEBUGLOG #22). The front page's «اتصل بالعربي» button calls `sanad-noc-ar` directly and sidesteps it (voice-tested 2026-10-01, headless fake-microphone run — DEBUGLOG #22).
-- **PII in Telnyx transcripts** — Telnyx stores call transcripts and conversation insights, which contain the PIN as spoken; the assistants do not enable PII redaction. Production answer: enable redaction where available, and move to one-time per-call PINs.
+- **PII in Telnyx transcripts** — Telnyx stores call transcripts and conversation insights, which contain the PIN as spoken; the assistants do not enable PII redaction. Production answer: enable redaction where available, and move to one-time per-call PINs ([docs/sovereignty.md](docs/sovereignty.md)).
 - **KV ~1–2 s/op** (DEBUGLOG #6) → latency-shaped routes; `degraded` ≠ down; keep the prober running (DEBUGLOG #11).
 - **Voice-model A/B pending** — TTS "Ultra" shortlist, STT `deepgram/flux` vs nova-3 (no credit spent).
