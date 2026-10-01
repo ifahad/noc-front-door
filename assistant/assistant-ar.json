@@ -2,6 +2,14 @@
   "name": "sanad-noc-ar",
   "model": "moonshotai/Kimi-K2.6",
   "greeting": "<assistant-speaks-first-with-model-generated-message>",
+  "widget_settings": {
+    "theme": "dark",
+    "position": "static",
+    "default_state": "collapsed",
+    "start_call_text": "كلّم سند",
+    "agent_thinking_text": "سند يفكّر…",
+    "speak_to_interrupt_text": "تكلّم إذا تبي تقاطع"
+  },
   "interruption_settings": {
     "disable_greeting_interruption": true,
     "start_speaking_plan": {
@@ -70,7 +78,7 @@
         "id": "s_ar_open",
         "type": "speak",
         "name": "arabic opening",
-        "message": "حيّاك الله، معك سند من نجد نتووركس، وبنكمل معك بالعربي. للعلم، المكالمة مسجّلة."
+        "message": "حيّاك الله، معك سند من نجد نتووركس. للعلم، المكالمة مسجّلة."
       },
       {
         "id": "n_ar_intake",
