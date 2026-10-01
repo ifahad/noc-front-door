@@ -6,9 +6,9 @@
     "theme": "dark",
     "position": "static",
     "default_state": "collapsed",
-    "start_call_text": "كلّم سند",
-    "agent_thinking_text": "سند يفكّر…",
-    "speak_to_interrupt_text": "تكلّم إذا تبي تقاطع"
+    "start_call_text": "Talk to Sanad",
+    "agent_thinking_text": "Sanad is thinking…",
+    "speak_to_interrupt_text": "Speak to interrupt"
   },
   "interruption_settings": {
     "disable_greeting_interruption": true,

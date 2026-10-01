@@ -438,19 +438,9 @@ test('the Arabic assistant config carries the Arabic voice and STT', () => {
   assert.deepEqual(ar.transcription, { model: 'soniox/stt-rt-v5' });
 });
 
-test('the Arabic call widget carries the English widget keys with Arabic labels', () => {
-  assert.deepEqual(ar.widget_settings, {
-    theme: 'dark',
-    position: 'static',
-    default_state: 'collapsed',
-    start_call_text: 'كلّم سند',
-    agent_thinking_text: 'سند يفكّر…',
-    speak_to_interrupt_text: 'تكلّم إذا تبي تقاطع',
-  });
-  assert.deepEqual(
-    Object.keys(ar.widget_settings).sort(),
-    Object.keys(en.widget_settings).sort(),
-  );
+test('the Arabic widget settings equal the English ones (the widget keeps one settings store per page)', () => {
+  assert.deepEqual(ar.widget_settings, en.widget_settings);
+  assert.deepEqual(Object.keys(ar.widget_settings), Object.keys(en.widget_settings));
 });
 
 test('the Arabic assistant shares the English assistant settings unchanged', () => {
