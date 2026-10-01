@@ -148,29 +148,40 @@ export function newTimers(): Timers {
   return { kv: 0, actor: 0 };
 }
 
+// The per-entity stub built by @telnyx/edge-runtime is a Proxy over an
+// empty target with get/has traps and no ownKeys trap, so enumerating
+// property names finds no business methods. Wrap lazily on access
+// instead: any function property is timed the first time it is read,
+// with this bound to the original api, and everything else passes
+// through untouched.
 function timedApi<T extends object>(api: T, now: () => number, timers: Timers): T {
-  const names = new Set<string>();
-  for (let o: object | null = api; o !== null; o = Object.getPrototypeOf(o)) {
-    for (const name of Object.getOwnPropertyNames(o)) {
-      if (name === "constructor") continue;
-      if (typeof (o as Record<string, unknown>)[name] === "function") names.add(name);
-    }
-  }
-  const out: Record<string, unknown> = {};
-  for (const name of names) {
-    const fn = (api as unknown as Record<string, unknown>)[name] as (
-      ...args: unknown[]
-    ) => unknown;
-    out[name] = async (...args: unknown[]) => {
-      const started = now();
-      try {
-        return await fn.apply(api, args);
-      } finally {
-        timers.actor += now() - started;
+  const cache = new Map<string | symbol, unknown>();
+  return new Proxy(api, {
+    get(target, prop) {
+      const value = Reflect.get(target, prop, target);
+      if (
+        typeof prop === "symbol" ||
+        prop === "constructor" ||
+        typeof value !== "function"
+      ) {
+        return value;
       }
-    };
-  }
-  return out as T;
+      let out = cache.get(prop);
+      if (out === undefined) {
+        const fn = value as (...args: unknown[]) => unknown;
+        out = async (...args: unknown[]) => {
+          const started = now();
+          try {
+            return await fn.apply(api, args);
+          } finally {
+            timers.actor += now() - started;
+          }
+        };
+        cache.set(prop, out);
+      }
+      return out;
+    },
+  });
 }
 
 export function timingKv(kv: KvPort, now: () => number, timers: Timers): KvPort {
