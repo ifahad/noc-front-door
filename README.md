@@ -12,7 +12,7 @@ A KSA managed-services provider's NOC takes 24/7 outage calls from branch staff 
 
 ## Try it
 
-1. Open the production front page: **https://noc-edge-41d2a334-7.telnyxcompute.com/** — **Report an outage**: browser call or dial **+1 512 980 6105** (international from KSA), English or Saudi Arabic; plus the live network status map. `/demo` serves the same page.
+1. Open the production front page: **https://noc-edge-41d2a334-7.telnyxcompute.com/** — **Report an outage**: browser call or dial **+1 512 980 6105** (international from KSA) in English, or the **«اتصل بالعربي»** button for a browser call straight to the Arabic assistant; plus the live network status map. `/demo` serves the same page.
 2. Run **scenario 1** as RUH-114 and watch the board: verify → advisory → **join** → **P2→P1** when the third branch hits. Scenario 2 — **open a new ticket**: call as JED-007 and describe the fault. Scenario 3 — **lockout & human**: call the reserved **DMM-011** (never RUH-114/JED-007), give a wrong PIN three times, then ask for a human (transfer; else callback). One-shot per staging — re-stage first ([pre-flight](docs/setup.md)); the **prober must be running** (DEBUGLOG #11). Script: [DEMO.md](DEMO.md).
 
 | Site | Region | PIN | Scenario |
@@ -40,7 +40,7 @@ flowchart LR
   caller["Caller<br/>(branch staff: browser web call or +1 512 980 6105)"]
   asst["Telnyx AI Assistant sanad-noc<br/>(English) DV webhook · MCP integration"]
   wf["Conversation Workflow"]
-  ar["Telnyx AI Assistant sanad-noc-ar<br/>(Saudi Arabic) MCP via noc-mcp-ar (/mcp?lang=ar)"]
+  ar["Telnyx AI Assistant sanad-noc-ar<br/>(Saudi Arabic) no MCP for the demo (built, detached — DEBUGLOG #22)<br/>direct entry via the «اتصل بالعربي» button"]
   edge["Edge Function noc-edge<br/>/dv · /tools/* · /mcp · /ops/* · / and /demo"]
   mcp["MCP server noc-mcp<br/>5 tools, stateless"]
   kv[("KV noc-kv<br/>flags · sessions · projections")]
@@ -65,8 +65,8 @@ flowchart LR
 - **Actors own the invariants** (C6) — 10 concurrent opens → **1 ticket** ([race test](docs/evidence/race-test.txt)).
 - **KV only projects / caches / flags** (C5) — the prober re-syncs projections.
 - **KV-free voice path** — the site actor is the PIN authority: `verify_site` awaits only the actor, every other KV wait is deadline-bounded, and ticket writes authorise from the actor's own PIN record (`openIfVerified`) even with KV down (DEBUGLOG #19).
-- **Mux mode** (DEBUGLOG #4) — same classes in the one working instance behind `ActorPort`; the per-entity switch is in progress (new instances answered again from 2026-09-30).
-- **Two assistants, one-way handoff** — `sanad-noc` (English) hands the call to `sanad-noc-ar` (Saudi Arabic: voice `Telnyx.Bayan.Reem`, STT `soniox/stt-rt-v5`, its own 16-node workflow, **MCP via `noc-mcp-ar` → `/mcp?lang=ar`**) via `assistant-target` edges from the opening speak node and every English prompt node (a `requireArabicExits` validator rule enforces it). The handoff fires on an explicit Arabic request only; it keeps the conversation, history and variables, and `s_ar_open` routes by carried state — verified → triage, known incident → advisory, ticket open → confirm — so a caller verified in English is never asked for the PIN again. Proven on live call #6 (DEBUGLOG #18); the skip is configured and unit-tested — live proof pending.
+- **Mux mode** (DEBUGLOG #4) — same classes in the one working instance behind `ActorPort`; per-entity was switched on and reverted to mux on 2026-10-01 — pings and the race test answered per-entity, but the business methods 500'd through the binding (DEBUGLOG #21).
+- **Two assistants, one-way handoff** — `sanad-noc` (English) hands the call to `sanad-noc-ar` (Saudi Arabic: voice `Telnyx.Bayan.Reem`, STT `soniox/stt-rt-v5`, its own 16-node workflow; its MCP registration is built and tested but detached for the demo — DEBUGLOG #22). The 8 llm "Arabic" edges route through the speak node `s_to_ar` ("Sure, switching you to Arabic now. One moment, please."), whose one default edge targets the Arabic assistant; `e_sopen_ar` (`route_hint=="arabic"`) targets the assistant directly, and a `requireArabicExits` validator rule enforces an Arabic exit from every English prompt node. The handoff fires on an explicit Arabic request only; it keeps the conversation, history and variables, and `s_ar_open` routes by carried state — verified → triage, known incident → advisory, ticket open → confirm — so a caller verified in English is never asked for the PIN again. First verified EN→AR handoff: call #9 (DEBUGLOG #22). The platform intermittently drops the Arabic assistant's first turn after the handoff (#12/#13, DEBUGLOG #22 — being reported to Telnyx), so the front page also offers the direct Arabic entry («اتصل بالعربي»); phone callers still reach Arabic through the handoff.
 - **`/dv` fail-open** (C3); identity from the signed body (C13); unsigned → 403.
 - **One trace_id per call** (`scripts/trace.sh`).
 
@@ -99,7 +99,7 @@ Stretch goals:
 | Distributed tracing | Built & live | `scripts/trace.sh` |
 | Actor alarms | Built & live | Page `INC-1004:p1` sent 21:51:53Z ([alarms-live.md](docs/evidence/alarms-live.md)) |
 | Incident reports → Cloud Storage | Built & live | INC-1004 report written, listed, fetched 2026-09-28 (DEBUGLOG #13) |
-| Multi-assistant | Built & live | Handoff proven on live call #6 (DEBUGLOG #18); Arabic MCP via `/mcp?lang=ar` |
+| Multi-assistant | Built & live | Handoff proven on live call #6, first verified EN→AR on #9 (DEBUGLOG #18/#22); Arabic MCP built & tested, detached for the demo (decisions #9); direct Arabic entry «اتصل بالعربي» (text-tested, voice test pending) |
 | Live NOC console | Built & live | Production front page + hidden operator console (`#console` / backtick), live 2026-09-28 |
 | Voice-model upgrade | Evaluation pending | Needs live calls (no credit spent) |
 
@@ -119,7 +119,7 @@ Voice call #1 (trace `t-5d419f3a98a3240f`): **correct** PIN, but `verify_site` t
 
 ## Challenges & solutions
 
-- **No new actor instances** (DEBUGLOG #4; lifted for new instances 2026-09-30) → mux host: same classes in the one working instance; alarm fanned out (DEBUGLOG #12); per-entity flip in progress.
+- **No new actor instances** (DEBUGLOG #4; lifted for new instances 2026-09-30) → mux host: same classes in the one working instance; alarm fanned out (DEBUGLOG #12); per-entity flipped and reverted to mux on 2026-10-01 (DEBUGLOG #21).
 - **KV ~1–2 s/op** (DEBUGLOG #6) → concurrency + deadlines; the KV-free voice path makes the actor the PIN authority (DEBUGLOG #19); the prober heals projections (DEBUGLOG #11).
 - **Voice model skipped "say, then call the tool"** → mandatory actions are **tool nodes**, enforced by `flow-validate` on every apply.
 - **No number until verification** (DEBUGLOG #1) → verified 2026-09-28: line `+1 512 980 6105` + browser widget; identified callers via `flag/demo_caller` ([runbook](docs/runbook.md)).
@@ -162,7 +162,8 @@ docs/                  Spec, plans, runbook, evidence, setup, architecture, walk
 ## Known limitations
 
 - **Telnyx platform incident 2026-09-28/29** (DEBUGLOG #15) — actor runtime broke 06:14:44Z, KV data plane from 19:06Z, ended ~13:05Z on 09-29; reproduces on paths our code cannot touch.
-- **Per-entity actors are being switched on today** — live traffic still runs mux behind `flag/actor_mode` (DEBUGLOG #4; new instances answered again from 2026-09-30); mux stays the instant fallback (`/ops/actor-ping` shows the mode).
-- **Arabic re-verification skip** — `s_ar_open` routing is configured and unit-tested, but no verified EN→AR call has been recorded yet (DEBUGLOG #18/#20; TODO-LIVE in [voice-calls.md](docs/evidence/voice-calls.md)).
+- **Per-entity actors: flipped and reverted** — switched on 05:34:28Z on 2026-10-01, reverted to mux at 05:54:53Z: per-entity pongs answered (195–227 ms, 4/4; race 1/10 vs KV 10/10) but `verify_site` 500'd — the per-entity stubs through `noc-edge`'s binding answered ping and not `recordPinAttempt` (stale method list on the binding, most likely — DEBUGLOG #21). Live traffic runs mux behind `flag/actor_mode`; mux stays the instant fallback (`/ops/actor-ping` shows the mode).
+- **Arabic handoff is intermittent on the platform** — call #9 proved the re-verification skip live (`s_ar_open` routed a verified caller to `n_ar_confirm`, no PIN re-ask — DEBUGLOG #22), but #12/#13 went silent >20–30 s under identical config while the Arabic DV webhook answered 1.3–1.5 s every time; a Telnyx voice-runtime issue being reported with the conversation ids (DEBUGLOG #22). The front page's «اتصل بالعربي» button calls `sanad-noc-ar` directly and sidesteps it (voice test pending).
+- **PII in Telnyx transcripts** — Telnyx stores call transcripts and conversation insights, which contain the PIN as spoken; the assistants do not enable PII redaction. Production answer: enable redaction where available, and move to one-time per-call PINs.
 - **KV ~1–2 s/op** (DEBUGLOG #6) → latency-shaped routes; `degraded` ≠ down; keep the prober running (DEBUGLOG #11).
 - **Voice-model A/B pending** — TTS "Ultra" shortlist, STT `deepgram/flux` vs nova-3 (no credit spent).

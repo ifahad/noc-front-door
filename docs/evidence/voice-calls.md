@@ -1,6 +1,6 @@
-# Voice-call evidence (2026-09-27 → 29)
+# Voice-call evidence (2026-09-27 → 2026-10-01)
 
-Live voice calls on the Trial account. Calls #1–#3 and #4 (2026-09-27) were browser web calls — the account had no phone number yet (DEBUGLOG #1); #4 was the first through the public `/demo` widget. Calls #5–#6 (2026-09-28) were PSTN calls to the public line `+1 512 980 6105` (bought after the account was verified). Calls #7a/#7b/#8 (web, 2026-09-29) happened during the platform incident's KV outage. All facts are copied from the SDD ledgers (`.superpowers/sdd/2026-09-26-plan-1-core/progress.md` and `.superpowers/sdd/2026-09-28-plan-3-verified/progress.md`); none are invented. Calls that produced a DEBUGLOG entry link to it.
+Live voice calls on the Trial account. Calls #1–#3 and #4 (2026-09-27) were browser web calls — the account had no phone number yet (DEBUGLOG #1); #4 was the first through the public `/demo` widget. Calls #5–#6 (2026-09-28) were PSTN calls to the public line `+1 512 980 6105` (bought after the account was verified). Calls #7a/#7b/#8 (web, 2026-09-29) happened during the platform incident's KV outage. Calls #9–#13 (2026-10-01, after the restore) cover the Arabic voice path, plus the MCP A/B call and the direct-entry text test — see DEBUGLOG #22; their conversation ids are held for the Telnyx report and are not in the repo. All facts are copied from the SDD ledgers (`.superpowers/sdd/2026-09-26-plan-1-core/progress.md` and `.superpowers/sdd/2026-09-28-plan-3-verified/progress.md`); none are invented. Calls that produced a DEBUGLOG entry link to it.
 
 | Call | UTC time | trace / conversation id | Route | verify_site (ms) | join/open (ms) | Outcome |
 |---|---|---|---|---|---|---|
@@ -13,18 +13,26 @@ Live voice calls on the Trial account. Calls #1–#3 and #4 (2026-09-27) were br
 | #7a | 09-29 01:47 | — (not captured) | Web — handoff DV re-fire at 01:49:36 right after *"…the site is gonna be r u h one one four"* → **false-positive Arabic handoff** (the LLM edge matched "…or just spoke in Arabic"; "ruh" is an Arabic word); the Arabic side replied **in English** ("Go ahead."), `verify_site` 500 (actor 502) → `n_ar_handover` (prompt) hallucinated "Your identity is verified" and called a non-existent tool `check_incidents` | 500 (actor 502) | — | → DEBUGLOG #20; fixed by ruling P3-R10: explicit-request-only handoff, Arabic fixed lines as speak nodes, Arabic-only reply rule |
 | #7b | 09-29 01:50 | — (not captured) | Web — a cold instance in ap-southeast-2 failed every secret read: `config.seed_local_invalid read_failed`, `mcp.auth` denied (401), `tool.sig_fail no_key` (403) | n/a | n/a | Secret store failing on cold instances (platform, DEBUGLOG #15's window; our retry was reverted, #17) → P3-7b: retry without a per-attempt cap, shipped 02:24Z 09-29 |
 | #8 | 09-29 02:28 | — (not captured) | Web — *"Can't verify the pin code and transfer me to an engineer"*: actor `recordPinAttempt` **ok in 430 ms**, but `verify_site` kept waiting on failing KV (conv put 500 `10007`): invocation log **7,797 ms** while the handler logged `total_ms 9,597` (`kv_ms` Σ 55,236) → over the 8000 ms tool timeout → "The request timed out" → `s_verify_unavailable` → transfer ("Origination hangup while transferring") | 7797/9597 — correct PIN, timed out | — | → DEBUGLOG #19: the KV-free voice path — the site actor is the PIN authority, bounded KV, uniform 403s |
+| #9 | 10-01 06:00 | — (ids with Telnyx, not in the repo) | Web — **first verified EN→AR handoff**, with `noc-mcp-ar` attached: verify ok → advisory → join P1 NJD-1403 → MCP `get_ticket_status` → *"can we continue in Arabic"* → `s_to_ar` bridge line → `s_ar_open` routed to `n_ar_confirm` (re-verification skipped, as designed) → the Arabic assistant went silent on the caller's next turn. First Arabic word 40–80 s after the handoff request (Telnyx's second MCP handshake ~41 s after the first; our `/mcp` answered every request ≤1.3 s) | ok | join → NJD-1403 (P1) | Closes the #18/#20 TODO-LIVE (verified skip proven live); the silence and the delay → DEBUGLOG #22 |
+| #10 | 10-01 06:07 | — | Web — same shape with `noc-mcp-ar` attached: the first Arabic word again took 40–80 s | — | — | → DEBUGLOG #22 (Arabic MCP A/B, attached leg) |
+| (A/B) | 10-01 06:15 | — | Web, MCP **detached** (`mcp_servers []`): the EN→AR handoff took **~10 s** (vs 40–80 s attached) | — | — | Product-owner decision: Arabic MCP OFF for the demo; registration stays built and tested (DEBUGLOG #22; decisions #9) |
+| #11 | 10-01 06:25 | — | Web, identical config: Arabic opening **~1 s** after the bridge line | — | — | The handoff works when the platform cooperates — DEBUGLOG #22 |
+| #12 | 10-01 06:39 | — | Web, identical config: silent **>20 s** after the bridge line (Arabic assistant never spoke) | — | — | → DEBUGLOG #22: platform handoff variance |
+| #13 | 10-01 06:43 | — | Web, identical config except the Arabic voice `Humain.sara-ar` (an experiment, reverted to `Telnyx.Bayan.Reem`): silent **>30 s** — the voice is not the cause | — | — | → DEBUGLOG #22: platform handoff variance |
+| Direct entry (text) | 10-01 06:54 | — | Front-page **«اتصل بالعربي»** button → browser call straight to `sanad-noc-ar`: greeting → intake → "Are you H114" → digits fallback → RUH-114 → asks for the PIN | n/a (text) | n/a | Digits fallback proven (DEBUGLOG #22); **live browser voice test of the button PENDING** |
 
-## TODO-LIVE — evidence rows a live call still has to fill (post-restore, 2026-10-01)
+In every #11–#13 call the Arabic DV webhook was answered in 1.3–1.5 s, and text chat with the same Arabic assistant always answers — the silence is the Telnyx voice runtime losing the Arabic assistant's first turn after an assistant-target handoff, to be reported to Telnyx with the conversation ids (DEBUGLOG #22).
 
-No call has been placed since inference was restored (2026-10-01 04:51Z); every row below needs one live call. Planned order: one ~45 min session, `POST /ops/reset` + stage first, `scripts/ops.mjs` + `scripts/trace.sh` outputs recorded here, then the demo PIN toggles cleared.
+## TODO-LIVE — evidence rows a live call still has to fill
+
+Calls resumed after the restore: #9–#13 plus the direct-entry text test (2026-10-01) filled two rows below — in-call MCP after a join (`get_ticket_status`, call #9) and the EN→AR verified PIN skip (call #9, no PIN re-ask). What remains needs one live session: `POST /ops/reset` + stage first, `scripts/ops.mjs` + `scripts/trace.sh` outputs recorded here, then the demo PIN toggles cleared.
 
 | Planned call | Beats | Capture |
 |---|---|---|
 | DV personalisation | `flag/demo_caller c-ahmed` (TTL 600 s) set ≥60 s before the call → greeting uses the caller's name, `dv.route` shows `route_hint=known_incident`, PIN skipped → `s_advisory` | conversation id, `dv.route` line, transcript |
 | Deflection flag off | `flag/deflection_enabled false` → the same identified caller goes to `n_triage` → `n_collect` (MCP `get_site_status`) instead of the advisory | conversation id, new `dv.route` line |
-| MCP in-call | After a join, ask *"what's the status of my ticket?"* → `n_status` → MCP `get_ticket_status` | `mcp.tool` line in the `trace.sh` output |
-| EN→AR verified PIN skip | Verify in English → *"Can we continue in Arabic?"* → `s_ar_open` routes to `n_ar_triage` with **no PIN re-ask** (closes the DEBUGLOG #18/#20 open question) | conversation id, transcript |
-| Per-entity actor call | After the `flag/actor_mode=per-entity` flip: `/ops/actor-ping` shows the mode, one end-to-end call, re-run `scripts/race-test.mjs` | ping output, race-test block |
+| Direct-entry voice test | The «اتصل بالعربي» button over a live browser **voice** call (the text path is proven — 06:54) | conversation id, transcript |
+| Per-entity actor call | Redo the flip **after** the fix: redeploy `noc-edge`, call `recordPinAttempt` on a test site before flipping, then `/ops/actor-ping` shows the mode + one end-to-end call (the 2026-10-01 flip answered ping and the race test per-entity but 500'd the business methods and was reverted — DEBUGLOG #21) | ping output, race-test block, trace |
 
 ## Chat smoke (conversation `cad930bd…`)
 
