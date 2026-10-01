@@ -1,11 +1,21 @@
-import { open, joinIncident, TicketError, type TicketCtx } from "../services/tickets";
-import { get } from "../services/sessions";
+import {
+  joinIncident,
+  open,
+  TicketError,
+  type OpenResult,
+  type TicketCtx,
+} from "../services/tickets";
+import type { Session } from "../../../shared/src/types";
 import { logEvent } from "../log";
 import {
+  TOOL_KV_BUDGET_MS,
   fail,
-  flagsOf,
+  flagsBounded,
   prelude,
+  readSessionBounded,
+  retryKvSession,
   toolError,
+  usable,
   type PreludeOk,
   type ToolDeps,
 } from "./common";
@@ -40,11 +50,15 @@ export async function handleJoinIncident(
     if (pre.k === null) {
       return fail("tool.join_incident", deps, pre, 422, "no_identity");
     }
-    const [session, flags] = await Promise.all([
-      get(pre.deps.kv, pre.k),
-      flagsOf(pre.deps),
-      pre.convPending ?? Promise.resolve(false),
+    // Bound the session and flags reads (E5, E7); the body site_id, preset
+    // by the assistant from verify_site's stored variable, is the site
+    // fallback when KV cannot answer (S1).
+    const [{ session, fromKv, timedOut, pending }, flags] = await Promise.all([
+      readSessionBounded(pre.deps.kv, pre.k, TOOL_KV_BUDGET_MS),
+      flagsBounded(deps, TOOL_KV_BUDGET_MS),
     ]);
+    const rawSite = pre.body.site_id;
+    const bodySite = usable(rawSite) ? rawSite : null;
     const ctx: TicketCtx = {
       actors: pre.deps.actors,
       kv: pre.deps.kv,
@@ -54,23 +68,44 @@ export async function handleJoinIncident(
       trace_id: session.trace_id,
       deferSync: true,
     };
+    const attemptWith = async (s: Session): Promise<OpenResult> => {
+      const sctx: TicketCtx = { ...ctx, trace_id: s.trace_id };
+      try {
+        return await joinIncident(sctx, s, bodySite);
+      } catch (err) {
+        if (!(err instanceof TicketError) || err.code !== "no_active_incident") {
+          throw err;
+        }
+        const sessionSite = s.sites[0];
+        const opened = await open(
+          sctx,
+          s,
+          {
+            site_id: (usable(sessionSite) ? sessionSite : null) ?? bodySite ?? "",
+            symptom: "none",
+            impact: "site_down",
+            service_affecting: "true",
+          },
+          "not_identified",
+        );
+        return {
+          ...opened,
+          ticket_readback: `${NO_INCIDENT_PREFIX} ${opened.ticket_readback}`,
+        };
+      }
+    };
     let result;
     try {
-      result = await joinIncident(ctx, session);
+      result = await attemptWith(session);
     } catch (err) {
-      if (!(err instanceof TicketError) || err.code !== "no_active_incident") {
-        throw err;
-      }
-      result = await open(ctx, session, {
-        site_id: session.sites[0] ?? "",
-        symptom: "none",
-        impact: "site_down",
-        service_affecting: "true",
-      });
-      result = {
-        ...result,
-        ticket_readback: `${NO_INCIDENT_PREFIX} ${result.ticket_readback}`,
-      };
+      // Ruling R-E: a denial wrote nothing, so when the session read only
+      // timed out, wait for it (bounded) and retry once with the KV session.
+      const kvSession =
+        err instanceof TicketError && err.status === 403 && timedOut && pending !== null
+          ? await retryKvSession(pending, deps, pre.started)
+          : null;
+      if (kvSession === null) throw err;
+      result = await attemptWith(kvSession);
     }
     logEvent("tool.join_incident", {
       hop: "tool",
@@ -78,6 +113,7 @@ export async function handleJoinIncident(
       k: pre.k,
       ticket_id: result.ticket_id,
       outcome: "ok",
+      session_src: fromKv ? "kv" : "none",
       kv_ms: pre.kvMs(),
       actor_ms: pre.actorMs(),
       total_ms: pre.deps.now() - pre.started,

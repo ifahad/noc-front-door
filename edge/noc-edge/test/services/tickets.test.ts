@@ -338,6 +338,51 @@ describe("tickets.open", () => {
     },
   );
 
+  it("falls back to the actor proof when the session grants nothing", async () => {
+    const kv = new FakeKv();
+    kv.setNow(T0);
+    const actors = new FakeActorPort();
+    const session = makeSession({
+      identified: false,
+      verified: false,
+      contact_id: null,
+      customer_id: null,
+      sites: [],
+      region: null,
+    });
+    await actors.site("RUH-114").recordPinAttempt({
+      k: session.k,
+      valid: true,
+      fp: ["ab", "cd", "ef", "01", "23", "45", "67", "89"].join(""),
+      trace_id: session.trace_id,
+      at: T0,
+    });
+    const ctx = makeCtx({ kv, actors });
+    const result = await open(ctx, session, SITE_DOWN);
+    expect(result.ticket_id).toBe("NJD-1401");
+    expect(result.created).toBe("true");
+    expect(actors.siteTicket("RUH-114")?.id).toBe("NJD-1401");
+    const granted = eventsWith("auth.actor_proof");
+    expect(granted).toHaveLength(1);
+    expect(granted[0].site_id).toBe("RUH-114");
+    expect(granted[0].outcome).toBe("ok");
+    expect(eventsWith("auth.denied")).toHaveLength(0);
+  });
+
+  it("denies 403 when the actor has no proof and writes no ticket", async () => {
+    const kv = new FakeKv();
+    kv.setNow(T0);
+    const actors = new FakeActorPort();
+    const ctx = makeCtx({ kv, actors });
+    await expect(
+      open(ctx, makeSession({ identified: false, verified: false, sites: [] }), SITE_DOWN),
+    ).rejects.toMatchObject({ status: 403, code: "site_not_writable" });
+    expect(actors.siteTicket("RUH-114") ?? null).toBeNull();
+    const denied = eventsWith("auth.denied");
+    expect(denied).toHaveLength(1);
+    expect(denied[0].reason).toBe("no_actor_proof");
+  });
+
   it("checks the site before the writable-site rule", async () => {
     const kv = new FakeKv();
     kv.setNow(T0);
@@ -398,6 +443,103 @@ describe("tickets.joinIncident", () => {
       status: 422,
       name: "TicketError",
     });
+  });
+
+  it("joins via the body site with an actor proof when the session grants nothing", async () => {
+    const kv = new FakeKv();
+    kv.setNow(T0);
+    const actors = new FakeActorPort();
+    const ctx = makeCtx({ kv, actors });
+    await open(ctx, makeSession(), SITE_DOWN);
+    await open(
+      ctx,
+      makeSession({
+        k: ["2b", "3c", "4d", "5e", "6f", "7a", "8b", "9c"].join(""),
+        trace_id: "t-2",
+        contact_id: "c-sara",
+        sites: ["RUH-121"],
+      }),
+      { site_id: "RUH-121", symptom: "WAN link down", impact: "site_down", service_affecting: "true" },
+    );
+    const joiner = makeSession({
+      identified: false,
+      verified: false,
+      contact_id: null,
+      customer_id: null,
+      sites: [],
+      region: null,
+    });
+    await actors.site("RUH-133").recordPinAttempt({
+      k: joiner.k,
+      valid: true,
+      fp: ["cd", "ef", "01", "23", "45", "67", "89", "ab"].join(""),
+      trace_id: joiner.trace_id,
+      at: T0,
+    });
+    const result = await joinIncident(ctx, joiner, "RUH-133");
+    expect(result.created).toBe("true");
+    expect(result.ticket_id).toBe("NJD-3301");
+    expect(actors.siteTicket("RUH-133")?.id).toBe("NJD-3301");
+  });
+
+  it("prefers the session site over the body site", async () => {
+    const kv = new FakeKv();
+    kv.setNow(T0);
+    const actors = new FakeActorPort();
+    const ctx = makeCtx({ kv, actors });
+    await open(ctx, makeSession(), SITE_DOWN);
+    await open(
+      ctx,
+      makeSession({
+        k: ["2b", "3c", "4d", "5e", "6f", "7a", "8b", "9c"].join(""),
+        trace_id: "t-2",
+        contact_id: "c-sara",
+        sites: ["RUH-121"],
+      }),
+      { site_id: "RUH-121", symptom: "WAN link down", impact: "site_down", service_affecting: "true" },
+    );
+    const joiner = makeSession({
+      k: ["3c", "4d", "5e", "6f", "7a", "8b", "9c", "ad"].join(""),
+      trace_id: "t-3",
+      contact_id: "c-khalid",
+      sites: ["RUH-133"],
+    });
+    const result = await joinIncident(ctx, joiner, "RUH-121");
+    expect(result.ticket_id).toBe("NJD-3301");
+    expect(actors.siteTicket("RUH-133")?.id).toBe("NJD-3301");
+  });
+
+  it("denies not_identified when the body site has no actor proof", async () => {
+    const kv = new FakeKv();
+    kv.setNow(T0);
+    const actors = new FakeActorPort();
+    const ctx = makeCtx({ kv, actors });
+    await open(ctx, makeSession(), SITE_DOWN);
+    await open(
+      ctx,
+      makeSession({
+        k: ["2b", "3c", "4d", "5e", "6f", "7a", "8b", "9c"].join(""),
+        trace_id: "t-2",
+        contact_id: "c-sara",
+        sites: ["RUH-121"],
+      }),
+      { site_id: "RUH-121", symptom: "WAN link down", impact: "site_down", service_affecting: "true" },
+    );
+    await expect(
+      joinIncident(
+        ctx,
+        makeSession({
+          identified: false,
+          verified: false,
+          contact_id: null,
+          customer_id: null,
+          sites: [],
+          region: null,
+        }),
+        "RUH-133",
+      ),
+    ).rejects.toMatchObject({ status: 403, code: "not_identified" });
+    expect(actors.siteTicket("RUH-133") ?? null).toBeNull();
   });
 
   it("joins the active incident with impact site_down and forces region reporting", async () => {

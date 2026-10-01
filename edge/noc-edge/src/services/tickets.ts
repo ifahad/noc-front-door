@@ -1,5 +1,6 @@
 import { canWrite } from "../../../shared/src/authz";
 import { spellId } from "../../../shared/src/ids";
+import type { OpenOrAttachResult } from "../../../noc-actors/src/SiteState";
 import type { Impact, Incident, Session } from "../../../shared/src/types";
 import {
   incidentAffects,
@@ -80,15 +81,18 @@ export interface OpenResult {
   impact: string;
 }
 
+export type AuthDeniedCode = "site_not_writable" | "not_identified";
+
 export async function open(
   ctx: TicketCtx,
   session: Session,
   input: TicketInput,
+  deniedCode: AuthDeniedCode = "site_not_writable",
 ): Promise<OpenResult> {
   if (!usableSite(input.site_id)) {
     throw new TicketError(422, "missing_site_id");
   }
-  return (await openInternal(ctx, session, input)).result;
+  return (await openInternal(ctx, session, input, deniedCode)).result;
 }
 
 interface ReportMeta {
@@ -100,21 +104,23 @@ async function openInternal(
   ctx: TicketCtx,
   session: Session,
   input: TicketInput,
+  deniedCode: AuthDeniedCode = "site_not_writable",
 ): Promise<{ result: OpenResult; report: ReportMeta | null }> {
   if (ctx.flags.fault_open_ticket !== null) {
     throw new TicketError(ctx.flags.fault_open_ticket, "fault_injected");
   }
-  if (!canWrite(session, input.site_id)) {
-    logEvent("auth.denied", {
-      hop: "services/tickets",
-      trace_id: ctx.trace_id,
-      site_id: input.site_id,
-      outcome: "denied",
-    });
-    throw new TicketError(403, "site_not_writable");
-  }
+  const kvGrants = canWrite(session, input.site_id);
   const site = await ctx.adapter.getSite(input.site_id);
   if (site === null) {
+    if (!kvGrants) {
+      logEvent("auth.denied", {
+        hop: "services/tickets",
+        trace_id: ctx.trace_id,
+        site_id: input.site_id,
+        outcome: "denied",
+      });
+      throw new TicketError(403, deniedCode);
+    }
     throw new TicketError(422, "site_unresolvable");
   }
   const impact: Impact = (IMPACTS as readonly string[]).includes(input.impact)
@@ -123,7 +129,7 @@ async function openInternal(
   const symptom = input.symptom.length > 0 ? input.symptom : "none";
   const priority = classify(impact, truthy(input.service_affecting));
   const siteActor = ctx.actors.site(site.site_id);
-  const opened = await siteActor.openOrAttach({
+  const openInput = {
     k: session.k,
     trace_id: ctx.trace_id,
     callerRef: session.contact_id ?? "none",
@@ -133,7 +139,34 @@ async function openInternal(
     priority,
     at: ctx.now,
     siteCode: site.code,
-  });
+  };
+  let opened: OpenOrAttachResult;
+  if (kvGrants) {
+    opened = await siteActor.openOrAttach(openInput);
+  } else {
+    // KV granted nothing (down, slow or simply empty): the site actor is the
+    // authority for "this call verified its PIN" (kvfree design E4).
+    const gated = await siteActor.openIfVerified(openInput);
+    // Ruling R-C: accept the write only on a positive check — anything
+    // without a string ticket.id is a denial, whatever its shape.
+    if ("denied" in gated || typeof gated.ticket?.id !== "string") {
+      logEvent("auth.denied", {
+        hop: "services/tickets",
+        trace_id: ctx.trace_id,
+        site_id: input.site_id,
+        outcome: "denied",
+        reason: "no_actor_proof",
+      });
+      throw new TicketError(403, deniedCode);
+    }
+    logEvent("auth.actor_proof", {
+      hop: "services/tickets",
+      trace_id: ctx.trace_id,
+      site_id: site.site_id,
+      outcome: "ok",
+    });
+    opened = gated;
+  }
   const ticket = opened.ticket;
   let report: ReportMeta | null = null;
   if (ticket.impact === "site_down" && !ticket.regionReported) {
@@ -214,12 +247,26 @@ async function openInternal(
 export async function joinIncident(
   ctx: TicketCtx,
   session: Session,
+  bodySiteId: string | null = null,
 ): Promise<OpenResult> {
   if (ctx.flags.fault_open_ticket !== null) {
     throw new TicketError(ctx.flags.fault_open_ticket, "fault_injected");
   }
-  const siteId = session.sites[0] ?? "";
-  if (!usableSite(siteId) || !(session.identified || session.verified)) {
+  // The KV session site always wins; the body site_id (preset by the
+  // assistant from verify_site's stored variable) is the fallback for when
+  // the session could not be read (kvfree design E4).
+  const sessionSite = session.sites[0];
+  const kvSite = usableSite(sessionSite) ? sessionSite : null;
+  if (kvSite !== null && !(session.identified || session.verified)) {
+    logEvent("auth.denied", {
+      hop: "services/tickets",
+      trace_id: ctx.trace_id,
+      outcome: "denied",
+    });
+    throw new TicketError(403, "not_identified");
+  }
+  const siteId = kvSite ?? (usableSite(bodySiteId) ? bodySiteId : null);
+  if (siteId === null) {
     logEvent("auth.denied", {
       hop: "services/tickets",
       trace_id: ctx.trace_id,
@@ -237,12 +284,17 @@ export async function joinIncident(
   if (incident === null) {
     throw new TicketError(422, "no_active_incident");
   }
-  const joined = await openInternal(ctx, session, {
-    site_id: site.site_id,
-    symptom: incidentSummaryOf(incident),
-    impact: "site_down",
-    service_affecting: "true",
-  });
+  const joined = await openInternal(
+    ctx,
+    session,
+    {
+      site_id: site.site_id,
+      symptom: incidentSummaryOf(incident),
+      impact: "site_down",
+      service_affecting: "true",
+    },
+    "not_identified",
+  );
   const incidentForReadback = joined.report?.incident ?? incident;
   const raisedToP1 = joined.report?.upgraded ?? false;
   const readbackInc = readbackIncident(incidentForReadback, site.region_label);

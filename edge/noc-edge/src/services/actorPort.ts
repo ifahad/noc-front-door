@@ -10,6 +10,7 @@ export type SiteStateApi = Pick<
   | "recordCall"
   | "recordPinAttempt"
   | "openOrAttach"
+  | "openIfVerified"
   | "markRegionReported"
   | "getTicket"
   | "getRecents"

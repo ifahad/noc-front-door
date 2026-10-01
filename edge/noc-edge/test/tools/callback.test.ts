@@ -190,6 +190,43 @@ describe("handleCallback", () => {
     expect(lines[0].outcome).toBe("fallback");
   });
 
+  it("still escalates 200 with a fallback outcome when KV fails", async () => {
+    const keys = await makeKeys();
+    const kv = newKv();
+    kv.failNext(10);
+    const res = await handleCallback(
+      await signedToolRequest("/tools/callback", { callback_note: NOTE, ...presets() }, keys),
+      makeDeps(kv, new FakeActorPort(), keys),
+    );
+    expect(res.status).toBe(200);
+    const out = await jsonOf(res);
+    expect(out.escalated).toBe("true");
+    expect(out.callback_note).toBe("none");
+    const lines = eventsWith("tool.callback");
+    expect(lines).toHaveLength(1);
+    expect(lines[0].outcome).toBe("fallback");
+  });
+
+  it("escalates within budget when KV hangs", { timeout: 20000 }, async () => {
+    const keys = await makeKeys();
+    const hang: import("../../src/services/kvPort").KvPort = {
+      get: () => new Promise<string | null>(() => undefined),
+      put: () => new Promise<void>(() => undefined),
+      delete: () => new Promise<void>(() => undefined),
+      list: () => new Promise<string[]>(() => undefined),
+    };
+    const started = Date.now();
+    const res = await handleCallback(
+      await signedToolRequest("/tools/callback", { callback_note: NOTE, ...presets() }, keys),
+      makeDeps(hang, new FakeActorPort(), keys),
+    );
+    const elapsed = Date.now() - started;
+    expect(res.status).toBe(200);
+    const out = await jsonOf(res);
+    expect(out.escalated).toBe("true");
+    expect(elapsed).toBeLessThan(2500);
+  });
+
   it("links the conversation id to the session key", async () => {
     const keys = await makeKeys();
     const kv = newKv();

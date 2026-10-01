@@ -86,6 +86,7 @@
       "url": "${EDGE_URL}/tools/join-incident",
       "method": "POST",
       "preset_body_fields": {
+        "site_id": "{{site_id}}",
         "call_control_id": "{{call_control_id}}",
         "call_key": "{{call_key}}",
         "trace_id": "{{trace_id}}",

@@ -1,8 +1,9 @@
-import { get } from "../services/sessions";
 import { logEvent } from "../log";
 import {
+  CALLBACK_KV_BUDGET_MS,
   fail,
   prelude,
+  readSessionBounded,
   toolError,
   usable,
   type PreludeOk,
@@ -19,10 +20,13 @@ export async function handleCallback(
     if (pre.k === null) {
       return fail("tool.callback", deps, pre, 422, "no_identity");
     }
-    const [session] = await Promise.all([
-      get(pre.deps.kv, pre.k),
-      pre.convPending ?? Promise.resolve(false),
-    ]);
+    // Bound the session read (E6): with KV down or slow, the tool degrades
+    // to a 200 escalation instead of hanging into a 500.
+    const { session } = await readSessionBounded(
+      pre.deps.kv,
+      pre.k,
+      CALLBACK_KV_BUDGET_MS,
+    );
     const siteId = session.sites[0] ?? null;
     const trace_id = session.trace_id;
     let noted = false;

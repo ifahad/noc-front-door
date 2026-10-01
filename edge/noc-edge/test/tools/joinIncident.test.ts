@@ -4,9 +4,11 @@ import { kvKey } from "../../../shared/src/kvkeys";
 import { putAuth, putDv } from "../../src/services/sessions";
 import type { SiteStateApi } from "../../src/services/actorPort";
 import { handleJoinIncident } from "../../src/tools/joinIncident";
+import { handleVerifySite } from "../../src/tools/verifySite";
 import {
   CCID,
   CONV_ID,
+  PIN,
   T0,
   FakeActorPort,
   eventsWith,
@@ -214,6 +216,70 @@ describe("handleJoinIncident", () => {
       makeDeps(kv, new FakeActorPort(), keys),
     );
     expect(res.status).toBe(503);
+  });
+
+  it("joins via the body site_id and the actor proof when KV fails", async () => {
+    const keys = await makeKeys();
+    const kv = newKv();
+    const actors = new FakeActorPort();
+    await declareIncident(actors);
+    const verified = await handleVerifySite(
+      await signedToolRequest(
+        "/tools/verify-site",
+        { site_id: "RUH-114", pin: PIN, ...presets() },
+        keys,
+      ),
+      makeDeps(kv, actors, keys),
+    );
+    expect(verified.status).toBe(200);
+    kv.failNext(50);
+    const res = await handleJoinIncident(
+      await signedToolRequest(
+        "/tools/join-incident",
+        { ...presets(), site_id: "RUH-114" },
+        keys,
+      ),
+      makeDeps(kv, actors, keys),
+    );
+    expect(res.status).toBe(200);
+    const out = await jsonOf(res);
+    expect(out.ticket_id).toBe("NJD-1401");
+    const granted = eventsWith("auth.actor_proof");
+    expect(granted).toHaveLength(1);
+    expect(granted[0].site_id).toBe("RUH-114");
+  });
+
+  it("returns 403 not_identified when KV fails and the body has no site_id", async () => {
+    const keys = await makeKeys();
+    const kv = newKv();
+    kv.failNext(50);
+    const res = await handleJoinIncident(
+      await signedToolRequest("/tools/join-incident", presets(), keys),
+      makeDeps(kv, new FakeActorPort(), keys),
+    );
+    expect(res.status).toBe(403);
+    const out = await jsonOf(res);
+    expect(out.error).toBe("not_identified");
+  });
+
+  it("returns 403 not_identified when the body site has no proof", async () => {
+    const keys = await makeKeys();
+    const kv = newKv();
+    const actors = new FakeActorPort();
+    await declareIncident(actors);
+    kv.failNext(50);
+    const res = await handleJoinIncident(
+      await signedToolRequest(
+        "/tools/join-incident",
+        { ...presets(), site_id: "RUH-114" },
+        keys,
+      ),
+      makeDeps(kv, actors, keys),
+    );
+    expect(res.status).toBe(403);
+    const out = await jsonOf(res);
+    expect(out.error).toBe("not_identified");
+    expect(actors.siteTicket("RUH-114") ?? null).toBeNull();
   });
 
   it("returns 500 when the region actor fails", async () => {

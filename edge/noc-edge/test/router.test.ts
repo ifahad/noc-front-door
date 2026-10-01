@@ -686,6 +686,70 @@ describe("router tool webhooks", () => {
     expect(sigFails).toHaveLength(4);
   });
 
+  it("answers /tools/verify-site and /tools/open-ticket within budget when KV never settles", { timeout: 30000 }, async () => {
+    const { env, priv } = await makeToolEnv();
+    const muxSites = new Map<string, ReturnType<typeof makeSiteActor>>();
+    const muxRegions = new Map<string, ReturnType<typeof makeRegionActor>>();
+    const call = <A>(
+      table: Map<string, A>,
+      make: (n: string) => A,
+      entity: string,
+      method: string,
+      input?: unknown,
+    ) => {
+      let actor = table.get(entity);
+      if (actor === undefined) {
+        actor = make(entity);
+        table.set(entity, actor);
+      }
+      return (actor as unknown as Record<string, (i?: unknown) => Promise<unknown>>)[method](input);
+    };
+    (env as unknown as { MUX: unknown }).MUX = {
+      idFromName: () => ({
+        site: (entity: string, method: string, input?: unknown) =>
+          call(muxSites, makeSiteActor, entity, method, input),
+        region: (entity: string, method: string, input?: unknown) =>
+          call(muxRegions, makeRegionActor, entity, method, input),
+      }),
+    };
+    (env as unknown as { CACHE: unknown }).CACHE = {
+      get: () => new Promise<string | null>(() => undefined),
+      put: () => new Promise<void>(() => undefined),
+      delete: () => new Promise<void>(() => undefined),
+      list: () => new Promise<string[]>(() => undefined),
+    };
+    const verifyStarted = Date.now();
+    const verify = await route(
+      await signedTool("/tools/verify-site", {
+        site_id: "RUH-114",
+        pin: String(4000 + 114),
+        ...presets(),
+      }, priv),
+      env,
+    );
+    const verifyMs = Date.now() - verifyStarted;
+    expect(verify.status).toBe(200);
+    const verifyOut = (await verify.json()) as Record<string, string>;
+    expect(verifyOut.verify_result).toBe("ok");
+    expect(verifyMs).toBeLessThan(3500);
+    const openStarted = Date.now();
+    const opened = await route(
+      await signedTool("/tools/open-ticket", {
+        site_id: "RUH-114",
+        symptom: "WAN link down",
+        impact: "site_down",
+        service_affecting: "true",
+        ...presets(),
+      }, priv),
+      env,
+    );
+    const openMs = Date.now() - openStarted;
+    expect(opened.status).toBe(200);
+    const openOut = (await opened.json()) as Record<string, string>;
+    expect(openOut.ticket_id).toBe("NJD-1401");
+    expect(openMs).toBeLessThan(4500);
+  });
+
   it("returns 500 on verify_site when PIN_PEPPER is missing", async () => {
     const { env, priv, pub } = await makeToolEnv();
     (env as unknown as { SECRETS: { get: (n: string) => Promise<string | null> } }).SECRETS.get =

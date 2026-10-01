@@ -3,6 +3,7 @@ import { sessionKey } from "../../../shared/src/ids";
 import { kvKey } from "../../../shared/src/kvkeys";
 import type { SiteStateApi } from "../../src/services/actorPort";
 import { handleVerifySite } from "../../src/tools/verifySite";
+import { ENRICH_BUDGET_MS } from "../../src/tools/common";
 import {
   CCID,
   CONV_ID,
@@ -175,9 +176,11 @@ describe("handleVerifySite", () => {
       expect(res.status).toBe(200);
       if (pin !== WRONG_PIN3) {
         expect(out.verify_result).toBe("invalid");
+        expect(out.customer_name).toBe("your organisation");
       } else {
         expect(out.verify_result).toBe("locked");
         expect(out.attempts_left).toBe("0");
+        expect(out.customer_name).toBe("your organisation");
       }
     }
   });
@@ -367,6 +370,93 @@ describe("handleVerifySite", () => {
     const lines = eventsWith("tool.verify_site");
     expect(lines).toHaveLength(1);
     expect(lines[0].outcome).toBe("error");
+  });
+
+  it("answers ok within the enrichment budget when every KV op hangs", { timeout: 20000 }, async () => {
+    const keys = await makeKeys();
+    const hang: import("../../src/services/kvPort").KvPort = {
+      get: () => new Promise<string | null>(() => undefined),
+      put: () => new Promise<void>(() => undefined),
+      delete: () => new Promise<void>(() => undefined),
+      list: () => new Promise<string[]>(() => undefined),
+    };
+    const started = Date.now();
+    const res = await handleVerifySite(
+      await signedToolRequest("/tools/verify-site", verifyFields("t-cc"), keys),
+      makeDeps(hang, new FakeActorPort(), keys),
+    );
+    const elapsed = Date.now() - started;
+    expect(res.status).toBe(200);
+    const out = await jsonOf(res);
+    expect(out.verify_result).toBe("ok");
+    expect(out.route_hint).toBe("verified");
+    expect(out.site_id).toBe("RUH-114");
+    expect(out.customer_name).toBe("Al-Waha Pharmacies");
+    expect(elapsed).toBeLessThan(ENRICH_BUDGET_MS + 1000);
+    const lines = eventsWith("tool.verify_site");
+    expect(lines).toHaveLength(1);
+    expect(lines[0].outcome).toBe("fallback");
+  });
+
+  it("answers ok when every KV op fails", async () => {
+    const keys = await makeKeys();
+    const kv = newKv();
+    kv.failNext(50);
+    const res = await handleVerifySite(
+      await signedToolRequest("/tools/verify-site", verifyFields("t-cc"), keys),
+      makeDeps(kv, new FakeActorPort(), keys),
+    );
+    expect(res.status).toBe(200);
+    const out = await jsonOf(res);
+    expect(out.verify_result).toBe("ok");
+    expect(out.route_hint).toBe("verified");
+    expect(out.site_id).toBe("RUH-114");
+    expect(out.customer_name).toBe("Al-Waha Pharmacies");
+    const lines = eventsWith("tool.verify_site");
+    expect(lines).toHaveLength(1);
+    expect(lines[0].outcome).toBe("fallback");
+  });
+
+  it("does not wait for the conversation link on an invalid PIN", { timeout: 20000 }, async () => {
+    const keys = await makeKeys();
+    const hang: import("../../src/services/kvPort").KvPort = {
+      get: () => new Promise<string | null>(() => undefined),
+      put: () => new Promise<void>(() => undefined),
+      delete: () => new Promise<void>(() => undefined),
+      list: () => new Promise<string[]>(() => undefined),
+    };
+    const started = Date.now();
+    const res = await handleVerifySite(
+      await signedToolRequest(
+        "/tools/verify-site",
+        verifyFields("t-cc", { pin: WRONG_PIN }),
+        keys,
+      ),
+      makeDeps(hang, new FakeActorPort(), keys),
+    );
+    const elapsed = Date.now() - started;
+    expect(res.status).toBe(200);
+    const out = await jsonOf(res);
+    expect(out.verify_result).toBe("invalid");
+    expect(out.customer_name).toBe("your organisation");
+    expect(elapsed).toBeLessThan(500);
+  });
+
+  it("reuses the memoized flags across calls on the same KV binding", async () => {
+    const keys = await makeKeys();
+    const kv = newKv();
+    const deps = makeDeps(kv, new FakeActorPort(), keys);
+    for (let i = 0; i < 2; i++) {
+      const res = await handleVerifySite(
+        await signedToolRequest("/tools/verify-site", verifyFields("t-cc"), keys),
+        deps,
+      );
+      expect(res.status).toBe(200);
+    }
+    const flagGets = kv.calls.filter(
+      (c) => c.op === "get" && c.key === kvKey("flag", "deflection_enabled"),
+    );
+    expect(flagGets).toHaveLength(1);
   });
 
   it("never logs the PIN or a fingerprint", async () => {

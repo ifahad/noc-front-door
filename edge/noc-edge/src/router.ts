@@ -57,6 +57,12 @@ const opsTokenGetters = new WeakMap<NocEdgeEnv, SecretGetter>();
 // webhooks allow seconds; /dv chooses its actor port from the flags read
 // handleDv performs inside its own budget (see routeDv).
 const FLAGS_BUDGET_MS = 2000;
+// Tool webhooks cannot afford the full flags budget before the handler even
+// starts (ruling R-B): 250 ms here keeps /tools/verify-site inside ~3.5 s
+// and /tools/open-ticket inside ~4.5 s when KV hangs. A miss falls back to
+// lastKnownMode ?? ACTOR_MODE_DEFAULT (mux — the only working mode), and the
+// in-flight read keeps filling the memo for later calls.
+const TOOL_FLAGS_BUDGET_MS = 250;
 
 let lastKnownMode: ActorMode | null = null;
 // Quiet canary (final review F26): actor_mode.read is logged only on a memo
@@ -209,7 +215,7 @@ async function routeTool(
   ]);
   return handler(request, {
     kv: bindingKvPort(env.CACHE),
-    actors: (await selectActorPort(env, FLAGS_BUDGET_MS)).port,
+    actors: (await selectActorPort(env, TOOL_FLAGS_BUDGET_MS)).port,
     adapter,
     publicKey: publicKey ?? "",
     pinPepper: pinPepper ?? "",

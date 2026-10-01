@@ -1,9 +1,11 @@
 import { sessionKey, traceId } from "../../../shared/src/ids";
 import { openTicketNote } from "../../../shared/src/readback";
+import { deadline } from "../../../shared/src/timing";
 import { get, linkConversation, putAuth } from "../services/sessions";
 import type { IncidentProjection } from "../services/incidents";
 import { logEvent } from "../log";
 import {
+  ENRICH_BUDGET_MS,
   customersName,
   fail,
   flagsOf,
@@ -84,78 +86,103 @@ export async function handleVerifySite(
     const valid = await pre.deps.adapter.checkPin(pin, site.site_id);
     const fp = await fpOf(pre.deps.pinPepper, k, pin);
     const trace_id = traceId(k);
-    const attemptP = pre.deps.actors.site(site.site_id).recordPinAttempt({
+    // The actor is the only awaited write on the critical path (kvfree E3):
+    // every KV read/write below is enrichment, each bounded by a deadline.
+    const attempt = await pre.deps.actors.site(site.site_id).recordPinAttempt({
       k,
       valid,
       fp,
       trace_id,
       at: deps.now(),
     });
-    const attemptAndConv = await Promise.all([
-      attemptP,
-      pre.convPending ?? Promise.resolve(false),
-    ]);
-    const attempt = attemptAndConv[0];
-    const convLinked = attemptAndConv[1];
     const verified = attempt.result === "ok";
-    let degraded = pre.k !== null && !convLinked;
+    let degraded = false;
     let caller_name = DEFAULTS.caller_name;
     let customer_name = DEFAULTS.customer_name;
     let projection: IncidentProjection | null = null;
     let deflection = false;
     let open_note = DEFAULTS.open_ticket_note;
     if (verified && k !== null) {
+      // Ruling R-D: the seed name is assigned only inside the verified
+      // block, so an invalid or locked PIN never reveals the organisation.
+      customer_name = customersName(site.customer_id) ?? DEFAULTS.customer_name;
       const convId = usable(pre.body.conversation_id)
         ? pre.body.conversation_id
         : null;
-      const results = await Promise.allSettled([
-        putAuth(pre.deps.kv, k, {
-          verified: true,
-          site_id: site.site_id,
-          customer_id: site.customer_id,
-          at: deps.now(),
-        }),
-        minted !== null && convId !== null
-          ? linkConversation(pre.deps.kv, convId, k)
-          : Promise.resolve(),
-        (async () => {
-          const session = await get(pre.deps.kv, k);
-          const contact =
-            session.contact_id !== null
-              ? await pre.deps.adapter.findContactById(session.contact_id)
-              : null;
-          return {
-            caller: str(contact?.name, DEFAULTS.caller_name),
-            customer: str(
-              contact?.customer_name,
-              customersName(site.customer_id) ?? DEFAULTS.customer_name,
-            ),
-          };
-        })(),
-        flagsOf(pre.deps),
-        readProjection(pre.deps.kv, site.region),
-        pre.deps.actors.site(site.site_id).getTicket({ trace_id }),
+      const [authR, linkR, convR, contactR, flagsR, projR, ticketR] = await Promise.all([
+        deadline(
+          putAuth(pre.deps.kv, k, {
+            verified: true,
+            site_id: site.site_id,
+            customer_id: site.customer_id,
+            at: deps.now(),
+          }),
+          ENRICH_BUDGET_MS,
+          "verify.auth",
+        ),
+        deadline(
+          minted !== null && convId !== null
+            ? linkConversation(pre.deps.kv, convId, k)
+            : Promise.resolve(),
+          ENRICH_BUDGET_MS,
+          "verify.conv_minted",
+        ),
+        deadline(
+          pre.convPending ?? Promise.resolve(false),
+          ENRICH_BUDGET_MS,
+          "verify.conv",
+        ),
+        deadline(
+          (async () => {
+            const session = await get(pre.deps.kv, k);
+            const contact =
+              session.contact_id !== null
+                ? await pre.deps.adapter.findContactById(session.contact_id)
+                : null;
+            return {
+              caller: str(contact?.name, DEFAULTS.caller_name),
+              customer: str(
+                contact?.customer_name,
+                customersName(site.customer_id) ?? DEFAULTS.customer_name,
+              ),
+            };
+          })(),
+          ENRICH_BUDGET_MS,
+          "verify.contact",
+        ),
+        // E7: the raw deps KV port, so the 60 s flags memo and the in-flight
+        // dedupe the router already started apply (no fresh reads per call).
+        deadline(flagsOf(deps), ENRICH_BUDGET_MS, "verify.flags"),
+        deadline(
+          readProjection(pre.deps.kv, site.region),
+          ENRICH_BUDGET_MS,
+          "verify.projection",
+        ),
+        deadline(
+          pre.deps.actors.site(site.site_id).getTicket({ trace_id }),
+          ENRICH_BUDGET_MS,
+          "verify.ticket",
+        ),
       ]);
-      const [authR, linkR, contactR, flagsR, projR, ticketR] = results;
-      if (authR.status === "rejected") degraded = true;
-      if (linkR.status === "rejected") degraded = true;
-      if (contactR.status === "rejected") {
+      if (!authR.ok) degraded = true;
+      if (!linkR.ok) degraded = true;
+      if (!contactR.ok) {
         degraded = true;
       } else {
         caller_name = contactR.value.caller;
         customer_name = contactR.value.customer;
       }
-      if (flagsR.status === "rejected") {
+      if (!flagsR.ok) {
         degraded = true;
       } else {
         deflection = flagsR.value.deflection_enabled;
       }
-      if (projR.status === "rejected") {
+      if (!projR.ok) {
         degraded = true;
       } else {
         projection = projR.value;
       }
-      if (ticketR.status === "rejected") {
+      if (!ticketR.ok) {
         degraded = true;
       } else {
         open_note =
@@ -163,6 +190,9 @@ export async function handleVerifySite(
             ? openTicketNote({ id: ticketR.value.ticket.id })
             : "none";
       }
+      // The conversation rule is unchanged: a pre-existing call identity is
+      // degraded when its conversation link could not be confirmed.
+      if (pre.k !== null && !(convR.ok && convR.value)) degraded = true;
     }
     const call_key =
       k !== null && minted === null

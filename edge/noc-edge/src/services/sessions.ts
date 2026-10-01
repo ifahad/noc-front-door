@@ -69,6 +69,22 @@ export async function get(kv: KvPort, k: string): Promise<Session> {
   };
 }
 
+// The session used when the KV read cannot be trusted to answer: nothing
+// identified, nothing verified, no sites. Safe because every grant
+// downstream (canWrite, the actor proof) fails closed on it.
+export function emptySession(k: string): Session {
+  return {
+    k,
+    trace_id: traceId(k),
+    identified: false,
+    verified: false,
+    contact_id: null,
+    customer_id: null,
+    sites: [],
+    region: null,
+  };
+}
+
 export async function linkConversation(
   kv: KvPort,
   convId: string,

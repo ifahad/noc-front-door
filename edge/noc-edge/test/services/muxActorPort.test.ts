@@ -71,6 +71,26 @@ describe("muxActorPort", () => {
     ]);
   });
 
+  it("routes openIfVerified through the demo instance", async () => {
+    const { env, calls } = muxEnv();
+    const port = muxActorPort(env);
+    const input = {
+      k: "c-a",
+      trace_id: "t-3",
+      callerRef: "none",
+      symptom: "WAN link down",
+      impact: "site_down" as const,
+      serviceAffecting: true,
+      priority: "P2" as const,
+      at: 1500,
+      siteCode: "RUH",
+    };
+    await port.site("RUH-114").openIfVerified(input);
+    expect(calls).toEqual([
+      { kind: "site", name: "RUH-114", method: "openIfVerified", input },
+    ]);
+  });
+
   it("routes every region method through the same demo instance", async () => {
     const { env, idNames, calls } = muxEnv();
     const port = muxActorPort(env);

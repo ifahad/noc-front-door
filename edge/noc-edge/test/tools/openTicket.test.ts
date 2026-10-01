@@ -4,9 +4,13 @@ import { kvKey } from "../../../shared/src/kvkeys";
 import { putAuth, putDv } from "../../src/services/sessions";
 import type { SiteStateApi } from "../../src/services/actorPort";
 import { handleOpenTicket } from "../../src/tools/openTicket";
+import { handleVerifySite } from "../../src/tools/verifySite";
+import { TOOL_KV_BUDGET_MS } from "../../src/tools/common";
+import { SlowKv } from "../fakes/slow";
 import {
   CCID,
   CONV_ID,
+  PIN,
   T0,
   FakeActorPort,
   eventsWith,
@@ -211,6 +215,146 @@ describe("handleOpenTicket", () => {
     );
     expect(res.status).toBe(200);
     expect(eventsWith("tool.ccid_mismatch")).toHaveLength(1);
+  });
+
+  it("opens a ticket from the actor proof when every KV op fails after a successful verify", async () => {
+    const keys = await makeKeys();
+    const kv = newKv();
+    const actors = new FakeActorPort();
+    const verified = await handleVerifySite(
+      await signedToolRequest(
+        "/tools/verify-site",
+        { site_id: "RUH-114", pin: PIN, ...presets() },
+        keys,
+      ),
+      makeDeps(kv, actors, keys),
+    );
+    expect(verified.status).toBe(200);
+    kv.failNext(50);
+    const res = await handleOpenTicket(
+      await signedToolRequest("/tools/open-ticket", fields(), keys),
+      makeDeps(kv, actors, keys),
+    );
+    expect(res.status).toBe(200);
+    const out = await jsonOf(res);
+    expect(out.ticket_id).toBe("NJD-1401");
+    const granted = eventsWith("auth.actor_proof");
+    expect(granted).toHaveLength(1);
+    expect(granted[0].site_id).toBe("RUH-114");
+  });
+
+  it("opens via the actor proof within budget when KV hangs", { timeout: 20000 }, async () => {
+    const keys = await makeKeys();
+    const actors = new FakeActorPort();
+    const verified = await handleVerifySite(
+      await signedToolRequest(
+        "/tools/verify-site",
+        { site_id: "RUH-114", pin: PIN, ...presets() },
+        keys,
+      ),
+      makeDeps(newKv(), actors, keys),
+    );
+    expect(verified.status).toBe(200);
+    const hang: import("../../src/services/kvPort").KvPort = {
+      get: () => new Promise<string | null>(() => undefined),
+      put: () => new Promise<void>(() => undefined),
+      delete: () => new Promise<void>(() => undefined),
+      list: () => new Promise<string[]>(() => undefined),
+    };
+    const started = Date.now();
+    const res = await handleOpenTicket(
+      await signedToolRequest("/tools/open-ticket", fields(), keys),
+      makeDeps(hang, actors, keys),
+    );
+    const elapsed = Date.now() - started;
+    expect(res.status).toBe(200);
+    const out = await jsonOf(res);
+    expect(out.ticket_id).toBe("NJD-1401");
+    expect(elapsed).toBeLessThan(TOOL_KV_BUDGET_MS + 1500);
+  });
+
+  it("denies 403 site_not_writable when KV fails and the call never verified", async () => {
+    const keys = await makeKeys();
+    const kv = newKv();
+    kv.failNext(50);
+    const res = await handleOpenTicket(
+      await signedToolRequest("/tools/open-ticket", fields(), keys),
+      makeDeps(kv, new FakeActorPort(), keys),
+    );
+    expect(res.status).toBe(403);
+    const out = await jsonOf(res);
+    expect(out.error).toBe("site_not_writable");
+  });
+
+  it("denies 403 when the proof is for another site", async () => {
+    const keys = await makeKeys();
+    const kv = newKv();
+    const actors = new FakeActorPort();
+    const verified = await handleVerifySite(
+      await signedToolRequest(
+        "/tools/verify-site",
+        { site_id: "RUH-114", pin: PIN, ...presets() },
+        keys,
+      ),
+      makeDeps(kv, actors, keys),
+    );
+    expect(verified.status).toBe(200);
+    kv.failNext(50);
+    const res = await handleOpenTicket(
+      await signedToolRequest("/tools/open-ticket", fields({ site_id: "RUH-121" }), keys),
+      makeDeps(kv, actors, keys),
+    );
+    expect(res.status).toBe(403);
+  });
+
+  it("denies 403 when the proof is for another call", async () => {
+    const keys = await makeKeys();
+    const kv = newKv();
+    const actors = new FakeActorPort();
+    const verified = await handleVerifySite(
+      await signedToolRequest(
+        "/tools/verify-site",
+        { site_id: "RUH-114", pin: PIN, ...presets({ conversation_id: "CONV-A" }) },
+        keys,
+      ),
+      makeDeps(kv, actors, keys),
+    );
+    expect(verified.status).toBe(200);
+    kv.failNext(50);
+    const res = await handleOpenTicket(
+      await signedToolRequest(
+        "/tools/open-ticket",
+        fields({ call_control_id: "CC-OTHER-CALL", trace_id: "t-other" }),
+        keys,
+        { ccid: "CC-OTHER-CALL" },
+      ),
+      makeDeps(kv, actors, keys),
+    );
+    expect(res.status).toBe(403);
+  });
+
+  it("opens an identified-only session behind a 3000 ms KV on the bounded retry", { timeout: 20000 }, async () => {
+    const keys = await makeKeys();
+    const slow = new SlowKv(newKv(), 3000);
+    await putDv(slow, K, {
+      trace_id: `t-${K}`,
+      identified: true,
+      contact_id: "c-ahmed",
+      customer_id: "c-alwaha",
+      sites: ["RUH-114"],
+      region: "riyadh-north",
+    });
+    const started = Date.now();
+    const res = await handleOpenTicket(
+      await signedToolRequest("/tools/open-ticket", fields(), keys),
+      makeDeps(slow, new FakeActorPort(), keys),
+    );
+    const elapsed = Date.now() - started;
+    expect(res.status).toBe(200);
+    const out = await jsonOf(res);
+    expect(out.ticket_id).toBe("NJD-1401");
+    expect(elapsed).toBeGreaterThanOrEqual(2400);
+    expect(elapsed).toBeLessThan(4500);
   });
 
   it("returns 500 when the actor fails", async () => {

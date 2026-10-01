@@ -117,6 +117,63 @@ expect(ms).toBeLessThan(3000);
 expect(ms).toBeLessThan(3500);
   });
 
+  it(
+    "verify_site answers under 3500 ms when every KV op takes 5000 ms",
+    { timeout: 20000 },
+    async () => {
+      const keys = await makeKeys();
+      const slow = new SlowKv(newKv(), 5000);
+      const actors = new SlowActorPort(new FakeActorPort());
+      const { ms, out, status } = await timedJson(
+        handleVerifySite(
+          await signedToolRequest(
+            "/tools/verify-site",
+            { site_id: "RUH-114", pin: PIN, ...presets() },
+            keys,
+          ),
+          makeDeps(slow, actors, keys),
+        ),
+      );
+      expect(status).toBe(200);
+      expect(out.verify_result).toBe("ok");
+      expect(out.route_hint).toBe("verified");
+      expect(ms).toBeLessThan(3500);
+    },
+  );
+
+  it(
+    "open_ticket via the actor proof answers under 4500 ms when every KV op takes 5000 ms",
+    { timeout: 30000 },
+    async () => {
+      const keys = await makeKeys();
+      const fast = newKv();
+      const actors = new FakeActorPort();
+      const verified = await handleVerifySite(
+        await signedToolRequest(
+          "/tools/verify-site",
+          { site_id: "RUH-114", pin: PIN, ...presets() },
+          keys,
+        ),
+        makeDeps(fast, actors, keys),
+      );
+      expect(verified.status).toBe(200);
+      const slow = new SlowKv(newKv(), 5000);
+      const { ms, out, status } = await timedJson(
+        handleOpenTicket(
+          await signedToolRequest(
+            "/tools/open-ticket",
+            { ...SITE_DOWN_FIELDS, ...presets() },
+            keys,
+          ),
+          makeDeps(slow, actors, keys),
+        ),
+      );
+      expect(status).toBe(200);
+      expect(out.ticket_id).toBe("NJD-1401");
+      expect(ms).toBeLessThan(4500);
+    },
+  );
+
   it("callback responds under 2500 ms with a site ticket to note", { timeout: 30000 }, async () => {
     const keys = await makeKeys();
     const kv = await seededSlowKv();

@@ -74,6 +74,7 @@ const SITE_METHODS: SiteMethod[] = [
   "recordCall",
   "recordPinAttempt",
   "openOrAttach",
+  "openIfVerified",
   "markRegionReported",
   "getTicket",
   "getRecents",

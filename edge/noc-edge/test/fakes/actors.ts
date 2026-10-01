@@ -72,6 +72,7 @@ const SITE_METHODS = [
   "recordCall",
   "recordPinAttempt",
   "openOrAttach",
+  "openIfVerified",
   "markRegionReported",
   "getTicket",
   "getRecents",
