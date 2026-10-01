@@ -55,7 +55,7 @@ flowchart LR
   caller --> asst
   asst --> wf
   wf -->|"④ one-way assistant-target handoff<br/>(voice_mode distinct)"| ar
-  wf -->|"① POST /dv at call start (fail-open ≤ 2500 ms)"| edge
+  wf -->|"① POST /dv at call start (fail-open ≤ 4500 ms)"| edge
   wf -->|"② POST /tools/* from tool nodes"| edge
   wf -->|"③ POST /mcp from prompt nodes"| mcp
   mcp -.->|"in-process"| edge
