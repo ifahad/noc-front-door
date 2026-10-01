@@ -13,7 +13,7 @@ A KSA managed-services provider's NOC takes 24/7 outage calls from branch staff 
 ## Try it
 
 1. Open the production front page: **https://noc-edge-41d2a334-7.telnyxcompute.com/** — **Report an outage**: browser call or dial **+1 512 980 6105** (international from KSA) in English, or the **«اتصل بالعربي»** button for a browser call straight to the Arabic assistant; plus the live network status map. `/demo` serves the same page.
-2. Run **scenario 1** as RUH-114 and watch the board: verify → advisory → **join** → **P2→P1** when the third branch hits. Scenario 2 — **open a new ticket**: call as JED-007 and describe the fault. Scenario 3 — **lockout & human**: call the reserved **DMM-011** (never RUH-114/JED-007), give a wrong PIN three times, then ask for a human (transfer; else callback). One-shot per staging — re-stage first ([pre-flight](docs/setup.md)); the **prober must be running** (DEBUGLOG #11). Script: [DEMO.md](DEMO.md).
+2. Run **scenario 1** as RUH-114 and watch the board: verify → advisory → **join** → **P2→P1** when the third branch hits. Scenario 2 — **open a new ticket**: call as JED-007 and describe the fault. Scenario 3 — **lockout & human**: call the reserved **DMM-011** (never RUH-114/JED-007), give three different wrong PINs (a repeated PIN is not counted twice) — Sanad locks verification and transfers to the on-call engineer (else takes a callback message). One-shot per staging — re-stage first ([pre-flight](docs/setup.md)); the **prober must be running** (DEBUGLOG #11). Script: [DEMO.md](DEMO.md).
 
 | Site | Region | PIN | Scenario |
 |---|---|---|---|
@@ -89,7 +89,7 @@ Full rationale: [docs/architecture.md](docs/architecture.md).
 | Stateful Actors, read-modify-write (C11) | 10 opens → 1 ticket ([race test](docs/evidence/race-test.txt)) |
 | Observability — logs, signal, minute answer | ≈ ≤30 s alert ([runbook](docs/runbook.md)) |
 | A real debugging story | Found from the call's own trace (#8) |
-| OpenCode + Telnyx Inference | 98 of 126 commits as of `93e210a` (78 GLM-5.3-Flash · 18 GLM-5.3 · 2 Kimi-K3) ([DOGFOODING.md](DOGFOODING.md)) |
+| OpenCode + Telnyx Inference | 109 of 146 commits as of `edf6f40` (78 GLM-5.3-Flash · 29 GLM-5.3 · 2 Kimi-K3) ([DOGFOODING.md](DOGFOODING.md)) |
 | Public deployment + docs | Live since 2026-09-27 |
 
 Stretch goals:
@@ -119,7 +119,7 @@ Load discipline ([detail](docs/architecture.md)): board cached **30 s from build
 
 ### A real bug, end to end
 
-Voice call #1 (trace `t-5d419f3a98a3240f`): **correct** PIN, but `verify_site` took **7869 ms** — over its 5000 ms timeout — verification failed, no ticket opened. Found from the call's own trace (`tool.verify_site` total_ms vs the timeout). Root cause (DEBUGLOG #6): sequential ~1–2 s KV ops in the tool webhooks. Fix: concurrent KV. Calls #2/#3 verified in **3.6 s**; INC-1002 went **P1 at 3 sites** — one `trace_id` across every hop (`scripts/trace.sh`, DEBUGLOG #8; [voice-calls.md](docs/evidence/voice-calls.md)). Full trail: [DEBUGLOG.md](DEBUGLOG.md) (#1–#22).
+Voice call #1 (trace `t-5d419f3a98a3240f`): **correct** PIN, but `verify_site` took **7869 ms** — over its 5000 ms timeout — verification failed, no ticket opened. Found from the call's own trace (`tool.verify_site` total_ms vs the timeout). Root cause (DEBUGLOG #6): sequential ~1–2 s KV ops in the tool webhooks. Fix: concurrent KV. Calls #2/#3 verified in **3.6 s**; INC-1002 went **P1 at 3 sites** — one `trace_id` across every hop (`scripts/trace.sh`, DEBUGLOG #8; [voice-calls.md](docs/evidence/voice-calls.md)). Full trail: [DEBUGLOG.md](DEBUGLOG.md) (#1–#24).
 
 ## Challenges & solutions
 

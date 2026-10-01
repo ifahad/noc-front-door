@@ -94,7 +94,7 @@ The public board is a **projection view**: the front page's board (region cards,
 | A signal beyond logs | `scripts/prober.mjs`, `GET /ops/status`, `GET /ops/health/deep` | Prober alerting + degraded≠down semantics (runbook §1) |
 | "Know within a minute" answer | `scripts/prober.mjs` — 10 s interval, 2 consecutive failures ≈ ≤30 s worst case (edge-function outages: KV, actors, MCP server, config; assistant-level failures surface in the Portal + `trace.sh`) | [runbook](runbook.md) |
 | A real debugging story | `DEBUGLOG.md` #5–#18 | KV latency found by our own logs within a minute (#5); the voice-call failure chain (#8); review catches #13–#14; the platform incident RCA (#15) and the live-call findings #16–#18 |
-| OpenCode + Telnyx Inference as the coding model | `opencode.jsonc`, `AGENTS.md` | [`DOGFOODING.md`](../DOGFOODING.md): 98 of 126 commits as of `93e210a` carry `Assisted-by: OpenCode` (78 GLM-5.3-Flash · 18 GLM-5.3 · 2 Kimi-K3) (`git log --grep 'Assisted-by: OpenCode'`), ≈$0.25–0.30 per Flash run; the cost table and the Kimi-K3 credit-floor lesson |
+| OpenCode + Telnyx Inference as the coding model | `opencode.jsonc`, `AGENTS.md` | [`DOGFOODING.md`](../DOGFOODING.md): 109 of 146 commits as of `edf6f40` carry `Assisted-by: OpenCode` (78 GLM-5.3-Flash · 29 GLM-5.3 · 2 Kimi-K3) (`git log --grep 'Assisted-by: OpenCode'`), ≈$0.25–0.30 per Flash run; the cost table and the Kimi-K3 credit-floor lesson |
 | Public deployment | https://noc-edge-41d2a334-7.telnyxcompute.com (`/`, `/demo`, `/ops/status`) | Live since 2026-09-27 |
 | Docs | `README.md`, `docs/runbook.md`, `DEBUGLOG.md`, `DOGFOODING.md`, `docs/evidence/` | This repo |
 
