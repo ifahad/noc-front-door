@@ -260,6 +260,12 @@
         "type": "tool",
         "name": "log callback",
         "shared_tool_id": "${TOOL_log_callback}"
+      },
+      {
+        "id": "s_to_ar",
+        "type": "speak",
+        "name": "to arabic",
+        "message": "Sure, switching you to Arabic now. One moment, please."
       }
     ],
     "edges": [
@@ -395,9 +401,8 @@
         "id": "e_naf_ar",
         "start_node_id": "n_advisory_followup",
         "target": {
-          "type": "assistant",
-          "assistant_id": "${ASSISTANT_AR_ID}",
-          "voice_mode": "distinct"
+          "type": "node",
+          "node_id": "s_to_ar"
         },
         "condition": {
           "type": "llm",
@@ -606,9 +611,8 @@
         "id": "e_nverify_ar",
         "start_node_id": "n_verify",
         "target": {
-          "type": "assistant",
-          "assistant_id": "${ASSISTANT_AR_ID}",
-          "voice_mode": "distinct"
+          "type": "node",
+          "node_id": "s_to_ar"
         },
         "condition": {
           "type": "llm",
@@ -988,9 +992,8 @@
         "id": "e_ntri_ar",
         "start_node_id": "n_triage",
         "target": {
-          "type": "assistant",
-          "assistant_id": "${ASSISTANT_AR_ID}",
-          "voice_mode": "distinct"
+          "type": "node",
+          "node_id": "s_to_ar"
         },
         "condition": {
           "type": "llm",
@@ -1078,9 +1081,8 @@
         "id": "e_ncoll_ar",
         "start_node_id": "n_collect",
         "target": {
-          "type": "assistant",
-          "assistant_id": "${ASSISTANT_AR_ID}",
-          "voice_mode": "distinct"
+          "type": "node",
+          "node_id": "s_to_ar"
         },
         "condition": {
           "type": "llm",
@@ -1300,9 +1302,8 @@
         "id": "e_ntf_ar",
         "start_node_id": "n_ticket_failed",
         "target": {
-          "type": "assistant",
-          "assistant_id": "${ASSISTANT_AR_ID}",
-          "voice_mode": "distinct"
+          "type": "node",
+          "node_id": "s_to_ar"
         },
         "condition": {
           "type": "llm",
@@ -1349,9 +1350,8 @@
         "id": "e_nstat_ar",
         "start_node_id": "n_status",
         "target": {
-          "type": "assistant",
-          "assistant_id": "${ASSISTANT_AR_ID}",
-          "voice_mode": "distinct"
+          "type": "node",
+          "node_id": "s_to_ar"
         },
         "condition": {
           "type": "llm",
@@ -1415,9 +1415,8 @@
         "id": "e_nwrap_ar",
         "start_node_id": "n_wrapup",
         "target": {
-          "type": "assistant",
-          "assistant_id": "${ASSISTANT_AR_ID}",
-          "voice_mode": "distinct"
+          "type": "node",
+          "node_id": "s_to_ar"
         },
         "condition": {
           "type": "llm",
@@ -1508,9 +1507,8 @@
         "id": "e_ntake_ar",
         "start_node_id": "n_take_message",
         "target": {
-          "type": "assistant",
-          "assistant_id": "${ASSISTANT_AR_ID}",
-          "voice_mode": "distinct"
+          "type": "node",
+          "node_id": "s_to_ar"
         },
         "condition": {
           "type": "llm",
@@ -1535,6 +1533,18 @@
         "target": {
           "type": "node",
           "node_id": "n_wrapup"
+        },
+        "condition": {
+          "type": "default"
+        }
+      },
+      {
+        "id": "e_stoar_1",
+        "start_node_id": "s_to_ar",
+        "target": {
+          "type": "assistant",
+          "assistant_id": "${ASSISTANT_AR_ID}",
+          "voice_mode": "distinct"
         },
         "condition": {
           "type": "default"

@@ -56,6 +56,7 @@ export function validateFlow(
   const nodes = Array.isArray(flow.nodes) ? flow.nodes : [];
   const edges = Array.isArray(flow.edges) ? flow.edges : [];
   const nodeIds = new Set();
+  const nodesById = new Map();
   for (const node of nodes) {
     if (!node?.id) {
       errors.push('nodes: node without id');
@@ -65,6 +66,7 @@ export function validateFlow(
       errors.push(`duplicate node id "${node.id}"`);
     }
     nodeIds.add(node.id);
+    nodesById.set(node.id, node);
   }
   const edgeIds = new Set();
   for (const edge of edges) {
@@ -217,19 +219,31 @@ export function validateFlow(
     }
   }
   if (requireArabicExits) {
+    const isArabicAssistantTarget = (target) =>
+      target?.type === 'assistant' &&
+      target.assistant_id === arabicAssistantId &&
+      target.voice_mode === 'distinct';
     for (const node of nodes) {
       if (!node?.id || !nodeIds.has(node.id)) continue;
       if (node.type !== 'prompt') continue;
       if (arabicExitExemptions.includes(node.id)) continue;
-      const hasArabicExit = edges.some(
-        (e) =>
-          e?.start_node_id === node.id &&
-          e.condition?.type === 'llm' &&
-          /\bArabic\b/i.test(String(e.condition?.prompt ?? '')) &&
-          e.target?.type === 'assistant' &&
-          e.target?.assistant_id === arabicAssistantId &&
-          e.target?.voice_mode === 'distinct',
-      );
+      const hasArabicExit = edges.some((e) => {
+        if (
+          e?.start_node_id !== node.id ||
+          e.condition?.type !== 'llm' ||
+          !/\bArabic\b/i.test(String(e.condition?.prompt ?? ''))
+        ) {
+          return false;
+        }
+        if (isArabicAssistantTarget(e.target)) return true;
+        if (e.target?.type !== 'node') return false;
+        const bridge = nodesById.get(e.target.node_id);
+        if (!bridge || bridge.type !== 'speak') return false;
+        const bridgeDefaults = edges.filter(
+          (de) => de?.start_node_id === bridge.id && de.condition?.type === 'default',
+        );
+        return bridgeDefaults.length === 1 && isArabicAssistantTarget(bridgeDefaults[0].target);
+      });
       if (!hasArabicExit) {
         errors.push(
           `prompt node "${node.id}" has no Arabic exit (needs an llm edge mentioning Arabic that hands off to ${arabicAssistantId} with voice_mode distinct)`,

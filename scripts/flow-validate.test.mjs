@@ -239,8 +239,8 @@ const realAssistant = async () => {
 
 test('validateFlow with human exits accepts the split English assistant flow', async () => {
   const assistant = await realAssistant();
-  assert.equal(assistant.conversation_flow.nodes.length, 24);
-  assert.equal(assistant.conversation_flow.edges.length, 60);
+  assert.equal(assistant.conversation_flow.nodes.length, 25);
+  assert.equal(assistant.conversation_flow.edges.length, 61);
   assert.deepEqual(
     validateFlow(assistant.conversation_flow, {
       requireHumanExits: true,
@@ -628,4 +628,60 @@ test('requireArabicExits accepts the real English flow Arabic handoffs', async (
     requireArabicExits: true,
   });
   assert.deepEqual(errors, []);
+});
+
+const bridgeSpeakNode = (id) => ({
+  id,
+  type: 'speak',
+  name: 'to arabic',
+  message: 'Switching you now.',
+});
+
+const bridgeDefaultEdge = (id, from, voiceMode = 'distinct') => ({
+  id,
+  start_node_id: from,
+  target: {
+    type: 'assistant',
+    assistant_id: '${ASSISTANT_AR_ID}',
+    voice_mode: voiceMode,
+  },
+  condition: { type: 'default' },
+});
+
+test('requireArabicExits passes an Arabic llm edge bridged through a speak node', () => {
+  const flow = promptFlow(
+    [promptNode('n1'), bridgeSpeakNode('s_bridge'), promptNode('n2')],
+    [
+      edge('e_ar1', 'n1', llm_(AR_EXIT_PROMPT), 's_bridge'),
+      bridgeDefaultEdge('e_bridge_1', 's_bridge'),
+      arExitEdge('e_ar2', 'n2'),
+    ],
+  );
+  assert.deepEqual(validateFlow(flow, { requireArabicExits: true }), []);
+});
+
+test('requireArabicExits rejects a bridge whose speak node default targets a node', () => {
+  const flow = promptFlow(
+    [promptNode('n1'), bridgeSpeakNode('s_bridge'), promptNode('n2')],
+    [
+      edge('e_ar1', 'n1', llm_(AR_EXIT_PROMPT), 's_bridge'),
+      edge('e_bridge_1', 's_bridge', default_(), 'n2'),
+      arExitEdge('e_ar2', 'n2'),
+    ],
+  );
+  const errs = validateFlow(flow, { requireArabicExits: true });
+  assert.ok(errs.some((e) => e.includes('n1') && e.includes('Arabic exit')));
+});
+
+test('requireArabicExits rejects a bridge whose speak node uses voice_mode unified', () => {
+  const flow = promptFlow(
+    [promptNode('n1'), bridgeSpeakNode('s_bridge'), promptNode('n2')],
+    [
+      edge('e_ar1', 'n1', llm_(AR_EXIT_PROMPT), 's_bridge'),
+      bridgeDefaultEdge('e_bridge_1', 's_bridge', 'unified'),
+      arExitEdge('e_ar2', 'n2'),
+    ],
+  );
+  const errs = validateFlow(flow, { requireArabicExits: true });
+  assert.ok(errs.some((e) => e.includes('n1') && e.includes('Arabic exit')));
 });
