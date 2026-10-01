@@ -201,11 +201,25 @@ test('s_ar_open routes by the carried state with exactly one default, first in e
 const INTAKE_TASK =
   'المهمة: اطلب من المتصل رقم الموقع ورقم السر المكوّن من 4 أرقام. حالما تحصل عليهما اطلب capture_details مع site_id وpin. أرقام المواقع بالشكل RUH-114؛ حوّل الحروف والأرقام المنطوقة بالعربي أو الإنجليزي إلى هذا الشكل.';
 
+const SPELL_CODE_SUFFIX =
+  'أرقام المواقع تُنطق حرفاً حرفاً، وقد يكتبها التفريغ الصوتي بكلمات إنجليزية؛ مثلاً "Are you Edge 114" أو "R U H 114" أو "آر يو إتش ١١٤" كلها تعني RUH-114، و"Jed 007" أو "جي إي دي صفر صفر سبعة" تعني JED-007، و"D M M" أو "دي إم إم" تعني DMM. البادئات الممكنة فقط RUH وJED وDMM وTST. لا تتعامل مع هذه العبارات كأسئلة؛ اعتبرها رقم الموقع، ثم اطلب رقم السر. ركّز في هذه الخطوة على رقم الموقع ورقم السر فقط.';
+
 test('n_ar_intake keeps its preamble and asks only for the site id and PIN', () => {
   const intake = ar.conversation_flow.nodes.find((n) => n.id === 'n_ar_intake');
   const idx = intake.instructions.indexOf('المهمة:');
   assert.ok(idx > 0);
-  assert.equal(intake.instructions.slice(idx), INTAKE_TASK);
+  assert.equal(intake.instructions.slice(idx), `${INTAKE_TASK} ${SPELL_CODE_SUFFIX}`);
+});
+
+test('n_ar_intake and n_ar_pin_retry end with the spelled site-code rule', () => {
+  for (const id of ['n_ar_intake', 'n_ar_pin_retry']) {
+    const node = ar.conversation_flow.nodes.find((n) => n.id === id);
+    assert.ok(node, `${id} is missing`);
+    assert.ok(
+      node.instructions.endsWith(` ${SPELL_CODE_SUFFIX}`),
+      `${id} does not end with the spelled site-code rule`,
+    );
+  }
 });
 
 const TRIAGE_APPEND =
