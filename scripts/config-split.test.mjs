@@ -264,7 +264,7 @@ test('n_ar_triage tells the model a carried verified caller needs no re-verifica
   assert.ok(triage.instructions.endsWith(TRIAGE_APPEND));
 });
 
-test('the Arabic assistant uses the noc-mcp-ar server while the English one keeps noc-mcp', () => {
+test('the Arabic assistant has no MCP servers while the English one keeps noc-mcp', () => {
   const allowedTools = [
     'find_site',
     'get_site_status',
@@ -272,9 +272,7 @@ test('the Arabic assistant uses the noc-mcp-ar server while the English one keep
     'get_ticket_status',
     'add_ticket_note',
   ];
-  assert.deepEqual(ar.mcp_servers, [
-    { id: '${MCP_AR_ID}', allowed_tools: allowedTools },
-  ]);
+  assert.deepEqual(ar.mcp_servers, []);
   assert.deepEqual(en.mcp_servers, [
     { id: '${MCP_ID}', allowed_tools: allowedTools },
   ]);
@@ -381,29 +379,25 @@ test('every Arabic prompt node replies in Arabic only, right before its task', (
     const count = n.instructions.split(AR_REPLY_RULE).length - 1;
     assert.equal(count, 1, `node ${n.id} carries the reply-in-Arabic rule ${count} times`);
     assert.ok(
-      n.instructions.includes(`${AR_REPLY_RULE} ${AR_TOOLS_RULE} المهمة:`),
-      `node ${n.id} does not place the reply-in-Arabic rule, then the tools rule, before المهمة:`,
+      n.instructions.includes(`${AR_REPLY_RULE} المهمة:`),
+      `node ${n.id} does not place the reply-in-Arabic rule directly before المهمة:`,
     );
   }
 });
 
-test('every Arabic prompt node carries the search-and-ticket tools rule exactly once', () => {
-  const prompts = ar.conversation_flow.nodes.filter((n) => n.type === 'prompt');
-  assert.equal(prompts.length, 6);
-  for (const n of prompts) {
-    const count = n.instructions.split(AR_TOOLS_RULE).length - 1;
-    assert.equal(count, 1, `node ${n.id} carries the tools rule ${count} times`);
-  }
-  const speakAndToolNodes = ar.conversation_flow.nodes.filter(
-    (n) => n.type !== 'prompt',
-  );
-  for (const n of speakAndToolNodes) {
+test('no Arabic node or instructions-ar.md mentions the search-and-ticket tools rule', () => {
+  for (const n of ar.conversation_flow.nodes) {
     assert.equal(
       typeof n.instructions === 'string' && n.instructions.includes(AR_TOOLS_RULE),
       false,
       `node ${n.id} unexpectedly carries the tools rule`,
     );
   }
+  assert.equal(
+    ar.instructions.includes(AR_TOOLS_RULE),
+    false,
+    'instructions-ar.md still carries the tools rule',
+  );
 });
 
 test('every Arabic edge stays inside the Arabic flow (one-way handoff)', () => {
