@@ -1,6 +1,6 @@
 # Voice-call evidence (2026-09-27 → 2026-10-01)
 
-Live voice calls on the Trial account. Calls #1–#3 and #4 (2026-09-27) were browser web calls — the account had no phone number yet (DEBUGLOG #1); #4 was the first through the public `/demo` widget. Calls #5–#6 (2026-09-28) were PSTN calls to the public line `+1 512 980 6105` (bought after the account was verified). Calls #7a/#7b/#8 (web, 2026-09-29) happened during the platform incident's KV outage. Calls #9–#13 (2026-10-01, after the restore) cover the Arabic voice path, plus the MCP A/B call and the direct-entry text test — see DEBUGLOG #22; their conversation ids are held for the Telnyx report and are not in the repo. All facts are copied from the SDD ledgers (`.superpowers/sdd/2026-09-26-plan-1-core/progress.md` and `.superpowers/sdd/2026-09-28-plan-3-verified/progress.md`); none are invented. Calls that produced a DEBUGLOG entry link to it.
+Live voice calls on the Trial account. Calls #1–#3 and #4 (2026-09-27) were browser web calls — the account had no phone number yet (DEBUGLOG #1); #4 was the first through the public `/demo` widget. Calls #5–#6 (2026-09-28) were PSTN calls to the public line `+1 512 980 6105` (bought after the account was verified). Calls #7a/#7b/#8 (web, 2026-09-29) happened during the platform incident's KV outage. Calls #9–#13 (2026-10-01, after the restore) cover the Arabic voice path, plus the MCP A/B call and the direct-entry text and voice tests — see DEBUGLOG #22; their conversation ids are held for the Telnyx report and are not in the repo. All facts are copied from the SDD ledgers (`.superpowers/sdd/2026-09-26-plan-1-core/progress.md` and `.superpowers/sdd/2026-09-28-plan-3-verified/progress.md`); none are invented. Calls that produced a DEBUGLOG entry link to it.
 
 | Call | UTC time | trace / conversation id | Route | verify_site (ms) | join/open (ms) | Outcome |
 |---|---|---|---|---|---|---|
@@ -19,19 +19,20 @@ Live voice calls on the Trial account. Calls #1–#3 and #4 (2026-09-27) were br
 | #11 | 10-01 06:25 | — | Web, identical config: Arabic opening **~1 s** after the bridge line | — | — | The handoff works when the platform cooperates — DEBUGLOG #22 |
 | #12 | 10-01 06:39 | — | Web, identical config: silent **>20 s** after the bridge line (Arabic assistant never spoke) | — | — | → DEBUGLOG #22: platform handoff variance |
 | #13 | 10-01 06:43 | — | Web, identical config except the Arabic voice `Humain.sara-ar` (an experiment, reverted to `Telnyx.Bayan.Reem`): silent **>30 s** — the voice is not the cause | — | — | → DEBUGLOG #22: platform handoff variance |
-| Direct entry (text) | 10-01 06:54 | — | Front-page **«اتصل بالعربي»** button → browser call straight to `sanad-noc-ar`: greeting → intake → "Are you H114" → digits fallback → RUH-114 → asks for the PIN | n/a (text) | n/a | Digits fallback proven (DEBUGLOG #22); **live browser voice test of the button PENDING** |
+| Direct entry (text) | 10-01 06:54 | — | Front-page **«اتصل بالعربي»** button → browser call straight to `sanad-noc-ar`: greeting → intake → "Are you H114" → digits fallback → RUH-114 → asks for the PIN | n/a (text) | n/a | Digits fallback proven (DEBUGLOG #22) |
+| Direct entry (voice) | 10-01 06:59 | — | Headless Chromium with a fake microphone on the live page: **«اتصل بالعربي»** → call active 3.0 s after the click → the Arabic opening «حيّاك الله، معك سند من نجد نتووركس. للعلم، المكالمة مسجّلة.» spoken at 5.6 s → Sanad asks for the site ID and PIN; the English button on the same page reached the English assistant (English greeting) | n/a (fake mic) | n/a | Direct entry proven over voice (DEBUGLOG #22); a live human call is still to be recorded |
 
 In every #11–#13 call the Arabic DV webhook was answered in 1.3–1.5 s, and text chat with the same Arabic assistant always answers — the silence is the Telnyx voice runtime losing the Arabic assistant's first turn after an assistant-target handoff, to be reported to Telnyx with the conversation ids (DEBUGLOG #22).
 
 ## TODO-LIVE — evidence rows a live call still has to fill
 
-Calls resumed after the restore: #9–#13 plus the direct-entry text test (2026-10-01) filled two rows below — in-call MCP after a join (`get_ticket_status`, call #9) and the EN→AR verified PIN skip (call #9, no PIN re-ask). What remains needs one live session: `POST /ops/reset` + stage first, `scripts/ops.mjs` + `scripts/trace.sh` outputs recorded here, then the demo PIN toggles cleared.
+Calls resumed after the restore: #9–#13 plus the direct-entry text (06:54) and headless voice (06:59) tests (2026-10-01) filled two rows below — in-call MCP after a join (`get_ticket_status`, call #9) and the EN→AR verified PIN skip (call #9, no PIN re-ask). What remains needs one live session: `POST /ops/reset` + stage first, `scripts/ops.mjs` + `scripts/trace.sh` outputs recorded here, then the demo PIN toggles cleared.
 
 | Planned call | Beats | Capture |
 |---|---|---|
 | DV personalisation | `flag/demo_caller c-ahmed` (TTL 600 s) set ≥60 s before the call → greeting uses the caller's name, `dv.route` shows `route_hint=known_incident`, PIN skipped → `s_advisory` | conversation id, `dv.route` line, transcript |
 | Deflection flag off | `flag/deflection_enabled false` → the same identified caller goes to `n_triage` → `n_collect` (MCP `get_site_status`) instead of the advisory | conversation id, new `dv.route` line |
-| Direct-entry voice test | The «اتصل بالعربي» button over a live browser **voice** call (the text path is proven — 06:54) | conversation id, transcript |
+| Direct-entry live human call | The «اتصل بالعربي» button over a live human **voice** call (the text 06:54 and headless fake-microphone 06:59 tests are proven) | conversation id, transcript |
 | Per-entity actor call | Redo the flip **after** the fix: redeploy `noc-edge`, call `recordPinAttempt` on a test site before flipping, then `/ops/actor-ping` shows the mode + one end-to-end call (the 2026-10-01 flip answered ping and the race test per-entity but 500'd the business methods and was reverted — DEBUGLOG #21) | ping output, race-test block, trace |
 
 ## Chat smoke (conversation `cad930bd…`)

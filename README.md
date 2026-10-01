@@ -99,7 +99,7 @@ Stretch goals:
 | Distributed tracing | Built & live | `scripts/trace.sh` |
 | Actor alarms | Built & live | Page `INC-1004:p1` sent 21:51:53Z ([alarms-live.md](docs/evidence/alarms-live.md)) |
 | Incident reports → Cloud Storage | Built & live | INC-1004 report written, listed, fetched 2026-09-28 (DEBUGLOG #13) |
-| Multi-assistant | Built & live | Handoff proven on live call #6, first verified EN→AR on #9 (DEBUGLOG #18/#22); Arabic MCP built & tested, detached for the demo (decisions #9); direct Arabic entry «اتصل بالعربي» (text-tested, voice test pending) |
+| Multi-assistant | Built & live | Handoff proven on live call #6, first verified EN→AR on #9 (DEBUGLOG #18/#22); Arabic MCP built & tested, detached for the demo (decisions #9); direct Arabic entry «اتصل بالعربي» (text- and voice-tested 2026-10-01, DEBUGLOG #22) |
 | Live NOC console | Built & live | Production front page + hidden operator console (`#console` / backtick), live 2026-09-28 |
 | Voice-model upgrade | Evaluation pending | Needs live calls (no credit spent) |
 
@@ -163,7 +163,7 @@ docs/                  Spec, plans, runbook, evidence, setup, architecture, walk
 
 - **Telnyx platform incident 2026-09-28/29** (DEBUGLOG #15) — actor runtime broke 06:14:44Z, KV data plane from 19:06Z, ended ~13:05Z on 09-29; reproduces on paths our code cannot touch.
 - **Per-entity actors: flipped and reverted** — switched on 05:34:28Z on 2026-10-01, reverted to mux at 05:54:53Z: per-entity pongs answered (195–227 ms, 4/4; race 1/10 vs KV 10/10) but `verify_site` 500'd — the per-entity stubs through `noc-edge`'s binding answered ping and not `recordPinAttempt` (stale method list on the binding, most likely — DEBUGLOG #21). Live traffic runs mux behind `flag/actor_mode`; mux stays the instant fallback (`/ops/actor-ping` shows the mode).
-- **Arabic handoff is intermittent on the platform** — call #9 proved the re-verification skip live (`s_ar_open` routed a verified caller to `n_ar_confirm`, no PIN re-ask — DEBUGLOG #22), but #12/#13 went silent >20–30 s under identical config while the Arabic DV webhook answered 1.3–1.5 s every time; a Telnyx voice-runtime issue being reported with the conversation ids (DEBUGLOG #22). The front page's «اتصل بالعربي» button calls `sanad-noc-ar` directly and sidesteps it (voice test pending).
+- **Arabic handoff is intermittent on the platform** — call #9 proved the re-verification skip live (`s_ar_open` routed a verified caller to `n_ar_confirm`, no PIN re-ask — DEBUGLOG #22), but #12/#13 went silent >20–30 s under identical config while the Arabic DV webhook answered 1.3–1.5 s every time; a Telnyx voice-runtime issue being reported with the conversation ids (DEBUGLOG #22). The front page's «اتصل بالعربي» button calls `sanad-noc-ar` directly and sidesteps it (voice-tested 2026-10-01, headless fake-microphone run — DEBUGLOG #22).
 - **PII in Telnyx transcripts** — Telnyx stores call transcripts and conversation insights, which contain the PIN as spoken; the assistants do not enable PII redaction. Production answer: enable redaction where available, and move to one-time per-call PINs.
 - **KV ~1–2 s/op** (DEBUGLOG #6) → latency-shaped routes; `degraded` ≠ down; keep the prober running (DEBUGLOG #11).
 - **Voice-model A/B pending** — TTS "Ultra" shortlist, STT `deepgram/flux` vs nova-3 (no credit spent).
