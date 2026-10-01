@@ -112,6 +112,17 @@ The account became **verified**, unlocking the phone line and the second assista
 - **Multi-agent root-cause analysis:** during the Telnyx platform incident (DEBUGLOG #15) a read-only multi-agent RCA (workflow `wf_9af00a79-9ff`) pulled the full 24 h of logs (20,536 invocations, 109,897 runtime lines), split platform cause (actor runtime + KV data plane) from our amplifiers, and ran a dedicated **challenger lane** whose corrections were folded back in — it caught an undercount of ~4–5× (single 250-record page vs paged windows), a misread host log, and rejected several planned fixes that would have broken the documented detection contract (10 s prober cadence and 30 s paging kept; 60 s sync throttle reduced to 30 s).
 - **Spend — inference is the cost driver** (usage reports): 2026-09-27 inference **13.10 USD**, edge-compute 0.95, ai-voice-assistant 0.70; 2026-09-28 inference **1.06**, edge-compute 0.25, ai-voice-assistant 0.10. The overnight balance drop was OpenCode authoring, **not** the 10 s prober — keep the prober. Latest ledger balance: **11.35 USD** after buying the number.
 
+## 2026-10-01 — live finding → Telnyx-model fix
+
+The morning's live calls (#9–#13, DEBUGLOG #22) found the Arabic voice path's defects, and each finding became a same-day lane authored on a Telnyx-hosted model. Every lane below ran on **GLM-5.3** — prompt-, config- and prose-sensitive work where structure matters, not the Flash default. (Per-lane wall times and step counts live in the gitignored SDD run records, `.superpowers/sdd/2026-09-28-plan-3-verified/*.oclog`; the commits are the repo's own record.)
+
+- **The bridge-node lane** (`9afa938`): the English model kept taking the Arabic transition **without speaking** — ~10 s of dead air on live calls — so the fix is a deterministic speak node, `s_to_ar` ("Sure, switching you to Arabic now. One moment, please."), whose one default edge hands off to the Arabic assistant; the 8 llm "Arabic" edges retarget it (decisions #16). A model behaviour you cannot prompt away reliably becomes graph structure instead.
+- **The digits-resolver lane** (`79f4a2f` first attempt — English-word spelling patterns, superseded; `9b3e950` shipped): `soniox/stt-rt-v5` writes the spoken "آر يو إتش واحد واحد أربعة" as "Are you H114" — the letters never survive Arabic STT — so `resolveSiteGlobal` gained a unique-3-digit fallback (ASCII or Arabic-Indic digits) and the Arabic intake/pin-retry prompts pass what they hear (decisions #17; proven on the 06:54 direct-entry text test).
+
+Today's lanes **P3-14…P3-17**, all on GLM-5.3: P3-14 the direct Arabic entry (`3cf56b0`; the page element itself is the Claude-authored front page, `ae31967`), P3-15 the docs flip (`dedf5c2`, `e3abbf9`), P3-16 the shared widget-settings fix (`8e515c2`), P3-17 the demo-day accuracy lanes — the Arabic AI-disclosure opening (`a4cfb8c`), the per-entity root-cause docs (`2b09eb8`), the `timedApi` wrapper fix for Proxy-shaped stubs (`101dd21`) and this demo-day docs lane.
+
+**Corrected split** (supersedes the stale 89-of-112 snapshot): **98 of 126 commits as of `93e210a` carry an `Assisted-by: OpenCode` trailer — 78 GLM-5.3-Flash · 18 GLM-5.3 · 2 Kimi-K3**; the remaining 28 are architect merges/reviews and the Claude-authored front page (`src/demo/page.ts`). Earlier figures in the per-plan sections were snapshots at their own commits.
+
 ## Cost table, the Kimi-K3 burn, and the credit floor
 
 Where the money actually went (usage reports; total spend since 2026-09-26 is **$31.44**, of which **$27.22** is Telnyx inference):
