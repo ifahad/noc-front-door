@@ -99,7 +99,7 @@ Stretch goals: actor alarms, live NOC console, object-storage reports, Arabic mo
 
 ## Plan 3 build (2026-09-28 → 29)
 
-The account became **verified**, unlocking the phone line and the second assistant. OpenCode-authored commits on top of Plan 2: **12** (77 total as of c7943f8). Same architect/implementer/reviewer split; GLM-5.3 (Flash) implementer lanes.
+The account became **verified**, unlocking the phone line and the second assistant. OpenCode-authored commits on top of c7943f8: **12** (89 of 112 total as of `e6c9772`). Same architect/implementer/reviewer split; GLM-5.3 (Flash) implementer lanes, plus one Kimi-K3 lane for the KV-free fix.
 
 - **Verified-account work:** bought the US number (balance 12.45 → 11.35 USD), built `sanad-noc-ar` as a true second assistant reached by a one-way workflow handoff, applied both assistants live, and shipped the production front page with its hidden operator console.
 - **Parallel lanes:** P3-3a (assistant config/validator) and P3-3b (edge) ran concurrently in worktrees `wt-p3-3a`/`wt-p3-3b`; P3-4a/b/c (Arabic opening + prober hang classification / edge throttles / flags cooldown) launched together from `11e7296` — same pattern as Plan 1's R17/R27 and Plan 2's lanes.
@@ -111,3 +111,25 @@ The account became **verified**, unlocking the phone line and the second assista
   - **The 150 ms regression that came from a review suggestion:** the secret-read review finding ("no per-attempt timeout") was fixed with a **150 ms** cap nobody had measured — `SECRETS.get` really takes > 150 ms, so every secret read failed and the signed routes + MCP auth failed closed for ~1 h (DEBUGLOG #17). Caught within minutes by the new `secret.read_failed` logging; the rollback API timed out twice, so a revert-forward (`a94722c`) shipped.
 - **Multi-agent root-cause analysis:** during the Telnyx platform incident (DEBUGLOG #15) a read-only multi-agent RCA (workflow `wf_9af00a79-9ff`) pulled the full 24 h of logs (20,536 invocations, 109,897 runtime lines), split platform cause (actor runtime + KV data plane) from our amplifiers, and ran a dedicated **challenger lane** whose corrections were folded back in — it caught an undercount of ~4–5× (single 250-record page vs paged windows), a misread host log, and rejected several planned fixes that would have broken the documented detection contract (10 s prober cadence and 30 s paging kept; 60 s sync throttle reduced to 30 s).
 - **Spend — inference is the cost driver** (usage reports): 2026-09-27 inference **13.10 USD**, edge-compute 0.95, ai-voice-assistant 0.70; 2026-09-28 inference **1.06**, edge-compute 0.25, ai-voice-assistant 0.10. The overnight balance drop was OpenCode authoring, **not** the 10 s prober — keep the prober. Latest ledger balance: **11.35 USD** after buying the number.
+
+## Cost table, the Kimi-K3 burn, and the credit floor
+
+Where the money actually went (usage reports; total spend since 2026-09-26 is **$31.44**, of which **$27.22** is Telnyx inference):
+
+| Date | Inference (OpenCode) | Edge Compute | AI voice assistant | Balance notes |
+|---|---|---|---|---|
+| 2026-09-26 | ≈$0.22 measured (T1–T5 + fix rounds) | — | — | $5.00 promo → $4.78 |
+| 2026-09-27 | **13.10** | 0.95 (prober, calls) | 0.70 (browser calls #1–#4) | $25 top-up → 25.24 |
+| 2026-09-28 | **1.06** | 0.25 | 0.10 (PSTN calls #5/#6) | number bought 12.45 → 11.35 |
+| 2026-09-29 | **≈$11 in one ~11-min Kimi-K3 lane** (88 steps, 10.0M cache-read tokens) | — | — (inference suspended) | 10.69 → **−0.75** → suspended |
+
+- **Per call:** the 09-28 usage report billed $0.10 of AI voice-assistant for a day that included PSTN calls #5/#6 and the browser handoff calls — the voice line costs pennies per call; edge-compute for the same day was $0.25 (the prober included). Inference for *coding*, not voice, is the cost driver.
+- **The Kimi-K3 suspension:** the KV-free lane (P3-8) ran on `telnyx/moonshotai/Kimi-K3` per the product decision; the ~11-minute run burned ≈ **$11** and took the balance from 10.69 to **−0.75 USD**. The account was then refused inference for **all** models (403 20015 "User account is not enabled for inference" — so the voice assistants could not run either), and Cloud Storage returned `403 UserSuspended` (09-30 10:43Z). Both restored with the 2026-10-01 04:51Z top-up (balance 34.21 USD); the lane was finished by GLM-5.3.
+- **Lesson — set a credit floor:** Plan 1 already had one for *cheap* lanes (R18: stop dispatching below $0.35, hard stop below $0.25). That floor is meaningless against a single expensive model: an unattended 11-minute run exceeded the entire remaining balance. Standing practice now: a **~$10 floor** for any OpenCode lane, model-aware (check pricing before dispatch — K3's per-token price is ~20× the Flash lane), and read the balance after every lane.
+
+## Model choices (coding lanes)
+
+- **GLM-5.3-Flash** — the default implementer for mechanical tasks (scaffolds, tests, config, docs): ≈$0.25–0.30 per run, fix rounds $0.02–0.14. The workhorse for Plans 1–2 and most of Plan 3.
+- **GLM-5.3** — design- and prose-sensitive lanes (the NOC wall backend, README v2, this documentation lane): ~10× the Flash price, visibly better structured output.
+- **Kimi-K3** — one lane (the KV-free voice path), chosen by product decision for its reasoning depth; the pricing lesson above came from it.
+- **Voice model** — `moonshotai/Kimi-K2.6` on the assistants is a **platform constraint of this challenge (C10)**, not a coding-model choice; the Arabic line's voice (`Telnyx.Bayan.Reem`) and STT (`soniox/stt-rt-v5`) are picks, and the English TTS/STT A/B is still queued (no credit spent on it).
